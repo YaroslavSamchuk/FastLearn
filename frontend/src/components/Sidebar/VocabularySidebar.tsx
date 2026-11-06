@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { BookOpen, Search, Volume2, Trash2, X, Download, Upload } from 'lucide-react';
+import { Search, Volume2, Trash2, X, Download, Upload } from 'lucide-react';
 import type { WordRecord, WordStatus } from '../../types';
 import { SpeechService } from '../../services/speech';
 import { StorageService } from '../../services/storage';
@@ -60,7 +60,7 @@ export const VocabularySidebar: React.FC<VocabularySidebarProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `fastlearn-dansk-anki-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.download = `fastlearn-anki-${new Date().toISOString().slice(0, 10)}.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -85,10 +85,10 @@ export const VocabularySidebar: React.FC<VocabularySidebarProps> = ({
       if (content) {
         const ok = StorageService.importAllData(content);
         if (ok) {
-          alert('Дані успішно імпортовано!');
+          alert('Дані імпортовано');
           onReloadWords();
         } else {
-          alert('Помилка при читанні файлу бекапу.');
+          alert('Помилка при читанні файлу');
         }
       }
     };
@@ -101,78 +101,82 @@ export const VocabularySidebar: React.FC<VocabularySidebarProps> = ({
     <div className="fixed inset-0 z-50 flex justify-end">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/40 backdrop-blur-[1px]"
+        className="fixed inset-0 bg-stone-900/40 backdrop-blur-[2px] transition-opacity"
         onClick={onClose}
       />
 
       {/* Drawer */}
-      <div className="relative w-96 max-w-full bg-white h-full border-l-2 border-black p-4 flex flex-col z-10 shadow-[-6px_0px_0px_0px_#000000]">
+      <div className="relative w-full sm:w-96 bg-white h-full border-l border-stone-200 p-4 flex flex-col z-10 shadow-xl max-w-full">
         {/* Header */}
-        <div className="flex items-center justify-between border-b-2 border-black pb-3 mb-3">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-black" />
-            <h2 className="font-bold text-base tracking-tight font-mono uppercase">
-              Словник (LingQ)
-            </h2>
-          </div>
+        <div className="flex items-center justify-between pb-3 mb-3 border-b border-stone-200">
+          <h2 className="font-semibold text-base text-stone-900 tracking-tight">
+            Словник слів
+          </h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-black hover:text-white border border-black transition-colors"
+            className="p-1.5 text-stone-400 hover:text-stone-900 rounded transition-colors"
+            aria-label="Закрити"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Stats bar */}
-        <div className="grid grid-cols-3 gap-1 mb-3 text-center text-xs font-mono">
-          <div className="p-1.5 bg-zinc-100 border border-black">
-            <div className="text-[10px] text-zinc-500 uppercase">Всього</div>
-            <div className="font-bold text-sm">{stats.total}</div>
+        {/* Quiet Stats row */}
+        <div className="grid grid-cols-3 gap-1.5 mb-3 text-center text-xs">
+          <div className="p-2 bg-stone-50 rounded-lg border border-stone-100">
+            <div className="text-[10px] text-stone-400 font-mono">Всього</div>
+            <div className="font-semibold text-sm text-stone-900">{stats.total}</div>
           </div>
-          <div className="p-1.5 bg-yellow-100 border border-black">
-            <div className="text-[10px] text-yellow-800 uppercase">Вчу</div>
-            <div className="font-bold text-sm text-yellow-950">{stats.learning}</div>
+          <div className="p-2 bg-amber-50 rounded-lg border border-amber-100">
+            <div className="text-[10px] text-amber-700 font-mono">Вчу</div>
+            <div className="font-semibold text-sm text-amber-950">{stats.learning}</div>
           </div>
-          <div className="p-1.5 bg-emerald-100 border border-black">
-            <div className="text-[10px] text-emerald-800 uppercase">Знаю</div>
-            <div className="font-bold text-sm text-emerald-950">{stats.known}</div>
+          <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-100">
+            <div className="text-[10px] text-emerald-700 font-mono">Знаю</div>
+            <div className="font-semibold text-sm text-emerald-950">{stats.known}</div>
           </div>
         </div>
 
         {/* Search */}
-        <div className="relative mb-3">
+        <div className="relative mb-2.5">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Пошук слова чи перекладу..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs bg-zinc-50 border-2 border-black focus:outline-none focus:bg-white font-mono"
+            className="w-full pl-8 pr-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:border-stone-900 focus:bg-white transition-colors"
           />
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-zinc-500" />
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-stone-400" />
         </div>
 
-        {/* Filter buttons */}
+        {/* Filter tabs */}
         <div className="flex gap-1 mb-3">
           <button
             onClick={() => setFilterStatus('all')}
-            className={`flex-1 py-1 text-xs font-mono border border-black transition-all ${
-              filterStatus === 'all' ? 'bg-black text-white font-bold' : 'bg-zinc-100 hover:bg-zinc-200'
+            className={`flex-1 py-1 text-xs rounded-md font-mono transition-colors ${
+              filterStatus === 'all'
+                ? 'bg-stone-900 text-white font-medium'
+                : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
             }`}
           >
             Всі ({stats.total})
           </button>
           <button
             onClick={() => setFilterStatus(1)}
-            className={`flex-1 py-1 text-xs font-mono border border-black transition-all ${
-              filterStatus === 1 ? 'bg-yellow-300 font-bold' : 'bg-zinc-100 hover:bg-yellow-100'
+            className={`flex-1 py-1 text-xs rounded-md font-mono transition-colors ${
+              filterStatus === 1
+                ? 'bg-amber-400 text-amber-950 font-medium'
+                : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
             }`}
           >
             Вчу ({stats.learning})
           </button>
           <button
             onClick={() => setFilterStatus(3)}
-            className={`flex-1 py-1 text-xs font-mono border border-black transition-all ${
-              filterStatus === 3 ? 'bg-emerald-300 font-bold' : 'bg-zinc-100 hover:bg-emerald-100'
+            className={`flex-1 py-1 text-xs rounded-md font-mono transition-colors ${
+              filterStatus === 3
+                ? 'bg-emerald-500 text-white font-medium'
+                : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
             }`}
           >
             Знаю ({stats.known})
@@ -180,83 +184,76 @@ export const VocabularySidebar: React.FC<VocabularySidebarProps> = ({
         </div>
 
         {/* Words list */}
-        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+        <div className="flex-1 overflow-y-auto space-y-1.5 pr-0.5">
           {filteredWords.length === 0 ? (
-            <div className="text-center py-10 text-xs font-mono text-zinc-400">
-              {words.length === 0
-                ? 'Словник порожній. Клікайте на слова у діалозі, щоб додавати їх!'
-                : 'Нічого не знайдено за запитом.'}
+            <div className="text-center py-12 text-xs text-stone-400">
+              {words.length === 0 ? 'Словник порожній' : 'Нічого не знайдено'}
             </div>
           ) : (
             filteredWords.map((w) => {
-              let statusBg = 'bg-blue-100';
-              if (w.status === 1) statusBg = 'bg-yellow-200';
-              if (w.status === 2) statusBg = 'bg-yellow-100';
-              if (w.status === 3) statusBg = 'bg-emerald-200';
-
               return (
                 <div
                   key={w.word_clean}
-                  className="p-2 border-2 border-black bg-zinc-50 hover:bg-white transition-all shadow-[1px_1px_0px_0px_#000] flex flex-col gap-1"
+                  className="p-2.5 rounded-lg border border-stone-200 bg-white hover:border-stone-300 transition-colors flex flex-col gap-1"
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold text-sm tracking-tight text-zinc-950">
+                      <span className="font-semibold text-sm text-stone-900">
                         {w.word}
                       </span>
                       <button
                         onClick={() => SpeechService.speak(w.word, { rate: speechRate })}
-                        className="p-0.5 hover:bg-zinc-200 border border-black"
+                        className="p-1 text-stone-400 hover:text-stone-900 transition-colors"
                         title="Озвучити"
                       >
-                        <Volume2 className="w-3 h-3 text-black" />
+                        <Volume2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
-                    <div className="flex items-center gap-1">
-                      <span className={`text-[10px] font-mono px-1.5 py-0.5 border border-black ${statusBg}`}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-100 text-stone-600">
                         {w.status === 3 ? 'Знаю' : w.status === 0 ? 'Нове' : `Вчу ${w.status}`}
                       </span>
                       <button
                         onClick={() => onDeleteWord(w.word_clean)}
-                        className="p-0.5 hover:bg-red-500 hover:text-white border border-black transition-colors"
-                        title="Видалити зі словника"
+                        className="p-1 text-stone-300 hover:text-red-600 transition-colors"
+                        title="Видалити"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
 
-                  <div className="text-xs text-zinc-700 font-sans">
-                    {w.translation_uk || <span className="text-zinc-400 italic">Без перекладу</span>}
+                  <div className="text-xs text-stone-600 font-sans">
+                    {w.translation_uk || <span className="text-stone-400 italic">Без перекладу</span>}
                   </div>
 
-                  {/* Quick status switch */}
-                  <div className="flex items-center gap-1 pt-1 mt-1 border-t border-zinc-200">
-                    <span className="text-[10px] font-mono text-zinc-400">Статус:</span>
+                  {/* Level buttons */}
+                  <div className="flex items-center gap-1 pt-1.5 mt-1 border-t border-stone-100">
+                    <span className="text-[10px] text-stone-400 font-mono mr-1">Рівень:</span>
                     <button
                       onClick={() => onUpdateStatus(w.word_clean, 1)}
-                      className={`px-1 text-[10px] font-mono border border-black ${
-                        w.status === 1 ? 'bg-yellow-400 font-bold' : 'bg-white hover:bg-yellow-100'
+                      className={`px-2 py-0.5 text-[10px] font-mono rounded ${
+                        w.status === 1 ? 'bg-amber-300 text-amber-950 font-bold' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                       }`}
                     >
                       1
                     </button>
                     <button
                       onClick={() => onUpdateStatus(w.word_clean, 2)}
-                      className={`px-1 text-[10px] font-mono border border-black ${
-                        w.status === 2 ? 'bg-yellow-200 font-bold' : 'bg-white hover:bg-yellow-100'
+                      className={`px-2 py-0.5 text-[10px] font-mono rounded ${
+                        w.status === 2 ? 'bg-amber-100 text-amber-900 font-bold' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                       }`}
                     >
                       2
                     </button>
                     <button
                       onClick={() => onUpdateStatus(w.word_clean, 3)}
-                      className={`px-1 text-[10px] font-mono border border-black ${
-                        w.status === 3 ? 'bg-emerald-300 font-bold' : 'bg-white hover:bg-emerald-100'
+                      className={`px-2 py-0.5 text-[10px] font-mono rounded ${
+                        w.status === 3 ? 'bg-emerald-500 text-white font-bold' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                       }`}
                     >
-                      ✓ Знаю
+                      Знаю
                     </button>
                   </div>
                 </div>
@@ -265,27 +262,25 @@ export const VocabularySidebar: React.FC<VocabularySidebarProps> = ({
           )}
         </div>
 
-        {/* Footer actions: Anki & Backup */}
-        <div className="pt-3 border-t-2 border-black flex flex-col gap-2">
+        {/* Footer actions */}
+        <div className="pt-3 border-t border-stone-200 flex flex-col gap-2">
           <button
             onClick={handleExportAnki}
-            className="brutal-btn w-full py-1.5 bg-yellow-300 text-black text-xs font-mono font-bold flex items-center justify-center gap-1.5 cursor-pointer"
-            title="Експорт словника у файл для імпорту в Anki"
+            className="w-full py-2 bg-stone-900 hover:bg-black text-white text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Експорт в Anki (TSV/CSV)</span>
+            <span>Експорт в Anki (TSV)</span>
           </button>
 
           <div className="flex gap-2">
             <button
               onClick={handleExportJson}
-              className="flex-1 py-1 bg-zinc-100 hover:bg-zinc-200 border border-black text-[11px] font-mono flex items-center justify-center gap-1"
+              className="flex-1 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-mono flex items-center justify-center gap-1 transition-colors"
             >
-              <Download className="w-3 h-3" />
               <span>Бекап JSON</span>
             </button>
 
-            <label className="flex-1 py-1 bg-zinc-100 hover:bg-zinc-200 border border-black text-[11px] font-mono flex items-center justify-center gap-1 cursor-pointer">
+            <label className="flex-1 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-xs font-mono flex items-center justify-center gap-1 cursor-pointer transition-colors">
               <Upload className="w-3 h-3" />
               <span>Імпорт JSON</span>
               <input type="file" accept=".json" onChange={handleImportJson} className="hidden" />

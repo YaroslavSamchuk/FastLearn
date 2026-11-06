@@ -1,5 +1,5 @@
 import React from 'react';
-import { Volume2, Sparkles, AlertCircle } from 'lucide-react';
+import { Volume2, CheckCircle2 } from 'lucide-react';
 import type { ChatMessage, WordMap } from '../../types';
 import { InteractiveText } from '../LingQ/InteractiveText';
 import { SpeechService } from '../../services/speech';
@@ -32,89 +32,86 @@ export const MessageItem: React.FC<MessageItemProps> = ({
   };
 
   return (
-    <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} mb-5`}>
-      {/* Header bar: metadata badge */}
-      <div className="flex items-center gap-2 mb-1 text-[11px] font-mono text-zinc-500">
-        <span className="font-bold text-black uppercase">
-          {isUser ? '[ВИ]' : '[DANSK TUTOR]'}
+    <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} mb-4 sm:mb-5`}>
+      {/* Header bar: role and timestamp */}
+      <div className="flex items-center gap-2 mb-1 text-[11px] font-mono text-stone-500 px-1">
+        <span className="font-semibold text-stone-800">
+          {isUser ? 'Ви' : 'Тьютор'}
         </span>
         {message.model_used && !isUser && (
-          <span className="bg-zinc-100 px-1 border border-zinc-300 text-zinc-700">
-            {message.model_used}
+          <span className="text-[10px] text-stone-400">
+            {message.model_used.replace('gemini-', '')}
           </span>
         )}
-        <span>{message.timestamp}</span>
+        <span className="text-[10px] text-stone-400">{message.timestamp}</span>
         {!isUser && (
           <button
             onClick={handleSpeakFull}
-            className="p-0.5 hover:bg-zinc-200 border border-black transition-colors"
-            title="Озвучити все повідомлення датською"
+            className="p-1 hover:text-stone-950 text-stone-400 transition-colors"
+            title="Озвучити відповідь"
+            aria-label="Озвучити репліку"
           >
-            <Volume2 className="w-3.5 h-3.5 text-black" />
+            <Volume2 className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
 
-      {/* Message content card */}
+      {/* Message bubble card */}
       <div
-        className={`max-w-[85%] md:max-w-[75%] p-3.5 brutal-border ${
+        className={`w-full max-w-[92%] sm:max-w-[80%] md:max-w-[72%] p-3 sm:p-3.5 rounded-lg border text-sm sm:text-base leading-relaxed ${
           isUser
-            ? 'bg-zinc-100 text-zinc-950 brutal-shadow'
-            : 'bg-white text-zinc-950 brutal-shadow'
+            ? 'bg-stone-900 text-white border-stone-900'
+            : 'bg-white text-stone-900 border-stone-200 shadow-sm'
         }`}
       >
-        <div className="text-base leading-relaxed">
-          <InteractiveText
-            text={message.content}
-            wordsMap={wordsMap}
-            onWordClick={onWordClick}
-            onPhraseSelect={onPhraseSelect}
-            selectedPhrase={selectedPhrase}
-          />
-        </div>
+        <InteractiveText
+          text={message.content}
+          wordsMap={wordsMap}
+          onWordClick={onWordClick}
+          onPhraseSelect={onPhraseSelect}
+          selectedPhrase={selectedPhrase}
+        />
 
-        {/* Pedagogical Correction Block */}
+        {/* Pedagogical Correction Block (Only for AI feedback) */}
         {message.correction && message.correction.has_correction && (
-          <div className="mt-3.5 pt-3 border-t-2 border-black bg-amber-50/70 p-2.5 brutal-border-sm">
-            <div className="flex items-center gap-1.5 text-xs font-mono font-bold uppercase text-amber-900 mb-2">
-              <AlertCircle className="w-4 h-4 text-amber-600" />
-              <span>Зворотний звʼязок та виправлення:</span>
+          <div className="mt-3 pt-3 border-t border-amber-200/80 bg-amber-50/70 -mx-3 -mb-3 p-3 rounded-b-lg text-xs space-y-2">
+            <div className="flex items-center gap-1.5 font-mono text-[11px] font-semibold text-amber-900">
+              <CheckCircle2 className="w-3.5 h-3.5 text-amber-700" />
+              <span>Корекція виразу</span>
             </div>
 
-            {/* What you meant */}
+            {/* What user meant */}
             {message.correction.what_you_meant_uk && (
-              <div className="text-xs mb-1.5">
-                <span className="font-semibold text-zinc-700 font-mono">💡 Мали на увазі: </span>
-                <span className="text-zinc-900 italic">«{message.correction.what_you_meant_uk}»</span>
+              <div className="text-stone-700 leading-snug">
+                <span className="text-stone-500 font-mono text-[11px] block">Мали на увазі:</span>
+                <span className="text-stone-900">{message.correction.what_you_meant_uk}</span>
               </div>
             )}
 
             {/* Natural Danish */}
             {message.correction.natural_danish && (
-              <div className="text-xs mb-1.5 flex items-baseline gap-1.5 bg-white p-1.5 border border-black">
-                <span className="font-semibold text-emerald-800 font-mono flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-emerald-600" />
-                  Природніше датською:
-                </span>
-                <span className="font-bold text-zinc-950">
-                  {message.correction.natural_danish}
-                </span>
+              <div className="flex items-center justify-between gap-2 bg-white/90 p-2 rounded border border-amber-200/80">
+                <div>
+                  <span className="text-amber-800 font-mono text-[10px] block">Природніше датською:</span>
+                  <span className="font-medium text-stone-950 text-xs sm:text-sm">
+                    {message.correction.natural_danish}
+                  </span>
+                </div>
                 <button
                   onClick={() => handleSpeakCorrection(message.correction!.natural_danish)}
-                  className="p-0.5 hover:bg-zinc-100 border border-black ml-auto"
+                  className="p-1 hover:bg-stone-100 rounded text-stone-700 shrink-0"
                   title="Озвучити правильний варіант"
                 >
-                  <Volume2 className="w-3.5 h-3.5 text-black" />
+                  <Volume2 className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
 
-            {/* Explanation rule */}
+            {/* Rule explanation */}
             {message.correction.explanation_uk && (
-              <div className="text-xs text-zinc-700 mt-1 leading-snug">
-                <span className="font-semibold font-mono text-zinc-800">ℹ️ Правило: </span>
+              <p className="text-[11px] text-stone-600 leading-normal">
                 {message.correction.explanation_uk}
-              </div>
+              </p>
             )}
           </div>
         )}

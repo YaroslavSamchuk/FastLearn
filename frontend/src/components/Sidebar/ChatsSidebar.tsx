@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, MessageSquare, Trash2, X } from 'lucide-react';
+import { Plus, Trash2, X } from 'lucide-react';
 import type { ChatSession } from '../../types';
 
 interface ChatsSidebarProps {
@@ -27,45 +27,43 @@ export const ChatsSidebar: React.FC<ChatsSidebarProps> = ({
     <div className="fixed inset-0 z-50 flex">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/40 backdrop-blur-[1px]"
+        className="fixed inset-0 bg-stone-900/40 backdrop-blur-[2px] transition-opacity"
         onClick={onClose}
       />
 
       {/* Drawer */}
-      <div className="relative w-80 max-w-full bg-white h-full border-r-2 border-black p-4 flex flex-col z-10 shadow-[6px_0px_0px_0px_#000000]">
+      <div className="relative w-full sm:w-80 bg-white h-full border-r border-stone-200 p-4 flex flex-col z-10 shadow-xl max-w-full">
         {/* Header */}
-        <div className="flex items-center justify-between border-b-2 border-black pb-3 mb-4">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-black" />
-            <h2 className="font-bold text-base tracking-tight font-mono uppercase">
-              Діалоги
-            </h2>
-          </div>
+        <div className="flex items-center justify-between pb-3 mb-3 border-b border-stone-200">
+          <h2 className="font-semibold text-base text-stone-900 tracking-tight">
+            Діалоги
+          </h2>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-black hover:text-white border border-black transition-colors"
+            className="p-1.5 text-stone-400 hover:text-stone-900 rounded transition-colors"
+            aria-label="Закрити"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* New chat button */}
+        {/* New chat action */}
         <button
           onClick={() => {
             onCreateChat();
             onClose();
           }}
-          className="brutal-btn w-full py-2 bg-black text-white text-xs font-mono font-bold flex items-center justify-center gap-2 mb-4 cursor-pointer"
+          className="w-full py-2 px-3 bg-stone-900 hover:bg-black text-white text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 mb-3 transition-colors cursor-pointer"
         >
           <Plus className="w-4 h-4" />
-          <span>Нова розмова</span>
+          <span>Нова бесіда</span>
         </button>
 
         {/* Chat list */}
-        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+        <div className="flex-1 overflow-y-auto space-y-1.5 pr-0.5">
           {chats.length === 0 ? (
-            <div className="text-center py-10 text-xs font-mono text-zinc-400">
-              Немає збережених розмов. Створіть нову!
+            <div className="text-center py-12 text-xs text-stone-400">
+              Немає збережених діалогів
             </div>
           ) : (
             chats.map((c) => {
@@ -82,17 +80,17 @@ export const ChatsSidebar: React.FC<ChatsSidebarProps> = ({
                     onSelectChat(c.id);
                     onClose();
                   }}
-                  className={`p-2.5 border-2 border-black transition-all cursor-pointer flex items-center justify-between group ${
+                  className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-center justify-between group ${
                     isActive
-                      ? 'bg-yellow-200 font-bold shadow-[2px_2px_0px_0px_#000]'
-                      : 'bg-zinc-50 hover:bg-zinc-100 shadow-[1px_1px_0px_0px_#000]'
+                      ? 'bg-stone-100 border-stone-300 font-medium'
+                      : 'bg-white hover:bg-stone-50 border-stone-100 text-stone-700'
                   }`}
                 >
                   <div className="flex-1 min-w-0 pr-2">
-                    <div className="text-sm truncate text-zinc-950 font-sans">
+                    <div className="text-sm truncate text-stone-900">
                       {c.title || 'Бесіда датською'}
                     </div>
-                    <div className="text-[10px] font-mono text-zinc-500 mt-0.5">
+                    <div className="text-[10px] font-mono text-stone-400 mt-0.5">
                       {dateStr}
                     </div>
                   </div>
@@ -100,12 +98,13 @@ export const ChatsSidebar: React.FC<ChatsSidebarProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm('Видалити цю бесіду?')) {
+                      if (confirm('Видалити цей діалог?')) {
                         onDeleteChat(c.id);
                       }
                     }}
-                    className="p-1 opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white border border-black transition-all"
+                    className="p-1.5 text-stone-400 hover:text-red-600 rounded transition-colors"
                     title="Видалити"
+                    aria-label="Видалити діалог"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -115,9 +114,9 @@ export const ChatsSidebar: React.FC<ChatsSidebarProps> = ({
           )}
         </div>
 
-        {/* Footer info */}
-        <div className="pt-3 border-t-2 border-black text-[10px] font-mono text-zinc-500">
-          Всі повідомлення зберігаються у вашому браузері.
+        {/* Footer */}
+        <div className="pt-3 border-t border-stone-200 text-[11px] text-stone-400 text-center font-mono">
+          Збережено локально у браузері
         </div>
       </div>
     </div>

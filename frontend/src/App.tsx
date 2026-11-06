@@ -3,9 +3,7 @@ import {
   MessageSquare,
   BookOpen,
   Settings,
-  Plus,
-  Sparkles,
-  Trash2
+  Plus
 } from 'lucide-react';
 import type { AppSettings, ChatMessage, ChatSession, WordMap, WordRecord, WordStatus } from './types';
 import { StorageService } from './services/storage';
@@ -22,10 +20,7 @@ import { SettingsModal } from './components/Modal/SettingsModal';
 import { ApiKeyBanner } from './components/Modal/ApiKeyBanner';
 
 export const App: React.FC = () => {
-  // App settings
   const [settings, setSettings] = useState<AppSettings>(() => StorageService.getSettings());
-
-  // Chats & active chat
   const [chats, setChats] = useState<ChatSession[]>(() => StorageService.getChats());
   const [activeChatId, setActiveChatId] = useState<string | null>(() => {
     const saved = StorageService.getActiveChatId();
@@ -34,31 +29,26 @@ export const App: React.FC = () => {
     return existing[0]?.id || null;
   });
 
-  // Current messages
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     const active = StorageService.getActiveChatId();
     if (active) return StorageService.getMessages(active);
     return [];
   });
 
-  // Vocabulary & LingQ map
   const [wordsMap, setWordsMap] = useState<WordMap>(() => StorageService.getWordsMap());
   const [wordsList, setWordsList] = useState<WordRecord[]>(() => StorageService.getWordRecords());
 
-  // UI State
   const [loading, setLoading] = useState(false);
   const [isChatsOpen, setIsChatsOpen] = useState(false);
   const [isVocabOpen, setIsVocabOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Active word popover
   const [activeWordPopover, setActiveWordPopover] = useState<{
     word: string;
     contextSentence: string;
     targetRect: DOMRect | null;
   } | null>(null);
 
-  // Active phrase selection bar
   const [activeSelectionBar, setActiveSelectionBar] = useState<{
     phrase: string;
     targetRect: DOMRect | null;
@@ -66,14 +56,13 @@ export const App: React.FC = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize first chat if none exists
   useEffect(() => {
     if (chats.length === 0) {
       const initialChat = StorageService.createChat('Знайомство з датською');
       const initialGreeting: ChatMessage = {
         id: 'msg_welcome',
         role: 'model',
-        content: 'Hej! Velkommen til FastLearn. Jeg er din personlige dansklærer. Hvordan går det i dag?',
+        content: 'Hej! Velkommen til FastLearn. Jeg er din dansklærer. Hvordan har du det i dag?',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         model_used: settings.model,
       };
@@ -84,12 +73,10 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  // Handle switching active chat
   const handleSelectChat = (id: string) => {
     setActiveChatId(id);
     StorageService.setActiveChatId(id);
@@ -97,7 +84,6 @@ export const App: React.FC = () => {
     setMessages(msgs);
   };
 
-  // Handle creating a new chat
   const handleCreateChat = () => {
     const newChat = StorageService.createChat();
     const updatedChats = StorageService.getChats();
@@ -107,7 +93,7 @@ export const App: React.FC = () => {
     const greeting: ChatMessage = {
       id: 'msg_' + Math.random().toString(36).substring(2, 9),
       role: 'model',
-      content: 'Hej! Hvad vil du tale om i dag? Vi kan tale om vejret, mad, arbejde eller din hverdag.',
+      content: 'Hej! Hvad vil du tale om i dag? Vi kan tale om hverdagen, vejret eller mad.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       model_used: settings.model,
     };
@@ -115,7 +101,6 @@ export const App: React.FC = () => {
     setMessages([greeting]);
   };
 
-  // Handle deleting a chat
   const handleDeleteChat = (id: string) => {
     StorageService.deleteChat(id);
     const updatedChats = StorageService.getChats();
@@ -130,16 +115,6 @@ export const App: React.FC = () => {
     }
   };
 
-  // Clear current chat
-  const handleClearChat = () => {
-    if (!activeChatId) return;
-    if (confirm('Очистити історію цієї бесіди?')) {
-      StorageService.saveMessages(activeChatId, []);
-      setMessages([]);
-    }
-  };
-
-  // Sending message to Gemini
   const handleSendMessage = async (userText: string) => {
     if (!userText.trim() || loading || !activeChatId) return;
 
@@ -199,7 +174,6 @@ export const App: React.FC = () => {
     }
   };
 
-  // Word Click -> Open Popover
   const handleWordClick = (word: string, contextSentence: string, targetRect: DOMRect) => {
     setActiveSelectionBar(null);
     setActiveWordPopover({
@@ -209,7 +183,6 @@ export const App: React.FC = () => {
     });
   };
 
-  // Update Word Status & details
   const handleUpdateWordStatus = (
     word: string,
     status: WordStatus,
@@ -229,7 +202,6 @@ export const App: React.FC = () => {
     setWordsList(StorageService.getWordRecords());
   };
 
-  // Phrase selection
   const handlePhraseSelect = (phraseText: string, targetRect: DOMRect) => {
     setActiveWordPopover(null);
     setActiveSelectionBar({
@@ -238,26 +210,23 @@ export const App: React.FC = () => {
     });
   };
 
-  // Save selected phrase to vocabulary
   const handleSavePhrase = (phrase: string, translation: string) => {
     const clean = cleanDanishWord(phrase);
     StorageService.saveWord({
       word: phrase,
       word_clean: clean,
-      status: 1, // Learning
+      status: 1,
       translation_uk: translation,
     });
     setWordsMap(StorageService.getWordsMap());
     setWordsList(StorageService.getWordRecords());
   };
 
-  // Settings update
   const handleSaveSettings = (updated: Partial<AppSettings>) => {
     const finalSettings = StorageService.saveSettings(updated);
     setSettings(finalSettings);
   };
 
-  // Delete word from vocabulary
   const handleDeleteWord = (wordClean: string) => {
     StorageService.deleteWord(wordClean);
     setWordsMap(StorageService.getWordsMap());
@@ -267,146 +236,111 @@ export const App: React.FC = () => {
   const activeChat = chats.find((c) => c.id === activeChatId);
 
   return (
-    <div className="flex flex-col h-screen bg-[#f8f8f6] text-black antialiased selection:bg-black selection:text-white">
-      {/* Top Header */}
-      <header className="border-b-2 border-black bg-white sticky top-0 z-40 brutal-shadow">
-        <div className="max-w-5xl mx-auto px-4 py-2.5 flex items-center justify-between">
-          {/* Logo & Status badge */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 font-mono font-bold tracking-tighter text-lg">
-              <span className="text-xl">🇩🇰</span>
-              <span className="bg-black text-white px-1.5 py-0.5">FASTLEARN</span>
-            </div>
-            <div className="hidden sm:flex items-center gap-1.5 text-xs font-mono text-zinc-500">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>DANSK AI</span>
-            </div>
-          </div>
-
-          {/* Center info */}
-          <div className="hidden md:flex items-center gap-2 text-xs font-mono">
-            <span className="bg-yellow-200 border border-black px-1.5 py-0.5 font-bold">
-              [{settings.level}]
+    <div className="flex flex-col h-screen bg-[#fbfbfa] text-stone-900 antialiased selection:bg-stone-900 selection:text-white">
+      {/* Sleek, Single-Tier Calm Header */}
+      <header className="border-b border-stone-200/80 bg-white/90 backdrop-blur-md sticky top-0 z-40">
+        <div className="max-w-2xl mx-auto px-3 sm:px-4 h-12 flex items-center justify-between">
+          {/* Brand & Active Chat */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="font-semibold text-sm tracking-tight text-stone-900 shrink-0">
+              FastLearn
             </span>
-            <span className="bg-zinc-100 border border-black px-1.5 py-0.5 text-zinc-700">
-              {settings.model}
-            </span>
-            <span className="bg-zinc-100 border border-black px-1.5 py-0.5 text-zinc-700">
-              СЛІВ: {wordsList.length}
-            </span>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex items-center gap-1.5">
+            <span className="text-stone-300">/</span>
             <button
               onClick={() => setIsChatsOpen(true)}
-              className="brutal-btn px-2.5 py-1.5 bg-zinc-100 text-xs font-mono flex items-center gap-1.5 cursor-pointer"
-              title="Список діалогів"
+              className="text-xs text-stone-600 hover:text-stone-900 truncate max-w-[120px] sm:max-w-[200px] text-left transition-colors"
+              title="Перемкнути розмову"
             >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Діалоги</span>
-              <span className="font-bold">({chats.length})</span>
+              {activeChat?.title || 'Діалог'}
+            </button>
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-stone-100 text-stone-600 shrink-0">
+              {settings.level}
+            </span>
+          </div>
+
+          {/* Action Icons */}
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <button
+              onClick={handleCreateChat}
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
+              title="Новий діалог"
+              aria-label="Нова бесіда"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => setIsChatsOpen(true)}
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors relative"
+              title="Всі розмови"
+              aria-label="Діалоги"
+            >
+              <MessageSquare className="w-4 h-4" />
             </button>
 
             <button
               onClick={() => setIsVocabOpen(true)}
-              className="brutal-btn px-2.5 py-1.5 bg-yellow-200 text-xs font-mono flex items-center gap-1.5 cursor-pointer"
-              title="Словник слів LingQ"
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors flex items-center gap-1 text-xs font-mono"
+              title="Словник слів"
+              aria-label="Словник"
             >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Словник</span>
-              <span className="font-bold">({wordsList.length})</span>
+              <BookOpen className="w-4 h-4" />
+              {wordsList.length > 0 && (
+                <span className="text-[11px] text-stone-600 font-medium">
+                  {wordsList.length}
+                </span>
+              )}
             </button>
 
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className={`brutal-btn p-1.5 text-xs font-mono flex items-center justify-center cursor-pointer relative ${
-                !settings.apiKey ? 'bg-amber-300 animate-bounce' : 'bg-zinc-100'
-              }`}
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors relative"
               title="Налаштування"
+              aria-label="Налаштування"
             >
-              <Settings className="w-4 h-4 text-black" />
+              <Settings className="w-4 h-4" />
               {!settings.apiKey && (
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-600 rounded-full border border-black" />
+                <span className="absolute top-1 right-1 w-2 h-2 bg-amber-500 rounded-full" />
               )}
             </button>
           </div>
         </div>
       </header>
 
-      {/* Banner if Gemini key is missing */}
+      {/* Gentle notice if Gemini key is missing */}
       {!settings.apiKey && (
         <ApiKeyBanner onOpenSettings={() => setIsSettingsOpen(true)} />
       )}
 
-      {/* Active Conversation Sub-header */}
-      <div className="bg-zinc-100 border-b-2 border-black px-4 py-1.5">
-        <div className="max-w-5xl mx-auto flex items-center justify-between text-xs font-mono">
-          <div className="flex items-center gap-2 truncate">
-            <span className="text-zinc-500 font-bold uppercase">[ПОТОЧНИЙ ТРЕК]:</span>
-            <span className="font-bold text-zinc-950 truncate">
-              {activeChat?.title || 'Діалог'}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={handleCreateChat}
-              className="px-2 py-0.5 bg-white hover:bg-zinc-200 border border-black flex items-center gap-1 transition-colors text-black"
-              title="Створити нову тему"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Нова бесіда</span>
-            </button>
-            {messages.length > 0 && (
-              <button
-                onClick={handleClearChat}
-                className="px-2 py-0.5 hover:bg-red-500 hover:text-white border border-black transition-colors"
-                title="Очистити поточний чат"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Main Conversation Stream */}
-      <main className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="max-w-3xl mx-auto">
-          {/* Welcome Screen / Empty State */}
+      <main className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-6">
+        <div className="max-w-2xl mx-auto">
+          {/* Calm Minimalist Empty State */}
           {messages.length === 0 ? (
-            <div className="p-8 border-2 border-black bg-white brutal-shadow-lg text-center my-6">
-              <div className="text-4xl mb-3">🇩🇰</div>
-              <h2 className="text-xl font-bold font-mono uppercase tracking-tight mb-2">
-                Ласкаво просимо до FastLearn
+            <div className="py-12 sm:py-20 text-center max-w-md mx-auto">
+              <h2 className="text-base sm:text-lg font-semibold text-stone-900 tracking-tight mb-1.5">
+                Практика датської мови
               </h2>
-              <p className="text-sm text-zinc-600 max-w-md mx-auto mb-6 leading-relaxed">
-                Живий діалог з ШІ датською мовою у стилі <strong>LingQ</strong>. Клікайте на будь-яке слово, щоб дізнатися переклад, синоніми та статус вивчення.
+              <p className="text-xs sm:text-sm text-stone-500 mb-6 leading-relaxed">
+                Живий діалог у форматі LingQ. Клікайте на будь-яке слово датською для перекладу, синонімів та вивчення.
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-left text-xs font-mono mb-6">
-                <div className="p-2.5 border border-black bg-blue-50">
-                  <div className="font-bold text-blue-900 mb-1">1. Нові слова</div>
-                  <div className="text-zinc-600">Виділені синім. Клікніть для перекладу та озвучки.</div>
-                </div>
-                <div className="p-2.5 border border-black bg-yellow-50">
-                  <div className="font-bold text-yellow-900 mb-1">2. Словник LingQ</div>
-                  <div className="text-zinc-600">Відзначайте слова рівнями [1], [2], [✓ Знаю].</div>
-                </div>
-                <div className="p-2.5 border border-black bg-emerald-50">
-                  <div className="font-bold text-emerald-900 mb-1">3. Корекція помилок</div>
-                  <div className="text-zinc-600">ШІ миттєво виправляє помилки та вчить ідіомам.</div>
-                </div>
+              <div className="space-y-1.5">
+                {[
+                  'Hej! Hvordan har du det i dag?',
+                  'Fortæl mig lidt om København',
+                  'Hvad er en typisk dansk tradition?',
+                ].map((promptText, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleSendMessage(promptText)}
+                    className="w-full p-2.5 bg-white hover:bg-stone-50 border border-stone-200 text-stone-700 text-xs sm:text-sm rounded-lg transition-colors text-left flex items-center justify-between group"
+                  >
+                    <span>{promptText}</span>
+                    <span className="text-stone-400 group-hover:text-stone-900 text-xs font-mono">→</span>
+                  </button>
+                ))}
               </div>
-
-              <button
-                onClick={() => handleSendMessage('Hej! Hvordan har du det?')}
-                className="brutal-btn px-6 py-2.5 bg-black text-white text-xs font-mono font-bold inline-flex items-center gap-2 cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4 text-yellow-300" />
-                <span>Почати розмову: «Hej! Hvordan har du det?»</span>
-              </button>
             </div>
           ) : (
             messages.map((msg) => (
@@ -424,9 +358,9 @@ export const App: React.FC = () => {
 
           {/* Loading indicator */}
           {loading && (
-            <div className="flex items-center gap-2 mb-4 text-xs font-mono text-zinc-500">
-              <span className="w-2 h-2 bg-black animate-ping" />
-              <span>ШІ пише відповідь датською...</span>
+            <div className="flex items-center gap-2 mb-4 text-xs font-mono text-stone-400 px-1">
+              <span className="w-1.5 h-1.5 bg-stone-900 rounded-full animate-ping" />
+              <span>Тьютор друкує...</span>
             </div>
           )}
 
@@ -435,7 +369,7 @@ export const App: React.FC = () => {
       </main>
 
       {/* Docked Chat Input */}
-      <footer className="sticky bottom-0 z-30 max-w-3xl mx-auto w-full px-4 pb-3">
+      <footer className="sticky bottom-0 z-30 w-full">
         <ChatInput
           onSendMessage={handleSendMessage}
           loading={loading}
@@ -446,7 +380,7 @@ export const App: React.FC = () => {
         />
       </footer>
 
-      {/* Overlays: Word Popover */}
+      {/* Word Popover / Bottom Sheet */}
       {activeWordPopover && (
         <WordPopover
           word={activeWordPopover.word}
@@ -466,7 +400,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Overlays: Selection Bar for phrases */}
+      {/* Selection Bar */}
       {activeSelectionBar && (
         <SelectionBar
           phraseText={activeSelectionBar.phrase}

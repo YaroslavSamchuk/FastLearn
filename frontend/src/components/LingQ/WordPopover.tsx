@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Volume2, X, Check, Loader2, Sparkles } from 'lucide-react';
+import { Volume2, X, Check, Loader2 } from 'lucide-react';
 import type { WordStatus } from '../../types';
 import { SpeechService } from '../../services/speech';
 import { GeminiService } from '../../services/gemini';
@@ -40,18 +40,24 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [selectedStatus, setSelectedStatus] = useState<WordStatus>(currentStatus);
   const [isEditingTranslation, setIsEditingTranslation] = useState<boolean>(false);
+  const [isMobile, setIsMobile] = useState<boolean>(() => typeof window !== 'undefined' && window.innerWidth < 640);
 
-  // Play audio for the word on open
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Pronounce word on open
   useEffect(() => {
     SpeechService.speak(word, { rate: speechRate });
   }, [word, speechRate]);
 
-  // Load details (from local dict or Gemini API)
+  // Load word details
   useEffect(() => {
     let isCancelled = false;
 
     const loadDetails = async () => {
-      // 1. Check local dictionary
       const local = lookupLocalWord(clean);
       if (local) {
         if (!savedTranslation) setTranslation(local.translation);
@@ -60,7 +66,6 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
         if (local.explanation) setExplanation(local.explanation);
       }
 
-      // 2. If translation not yet known or to get rich synonyms from Gemini
       if (!savedTranslation && apiKey) {
         setLoading(true);
         try {
@@ -90,7 +95,7 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
     };
   }, [word, clean, contextSentence, apiKey, model, savedTranslation]);
 
-  // Keyboard shortcut support: 1, 2, 3, 4, Esc
+  // Desktop keyboard shortcuts: 1, 2, 3, 0, Esc
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -107,7 +112,7 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isEditingTranslation, translation, synonyms]);
 
-  // Outside click to close
+  // Click outside to dismiss
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
@@ -127,12 +132,12 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
     SpeechService.speak(word, { rate: speechRate });
   };
 
-  // Calculate popover positioning relative to target element
+  // Desktop coordinates calculation
   const getCoordinates = () => {
-    if (!targetRect) return { top: 100, left: 20 };
+    if (!targetRect || isMobile) return { top: 0, left: 0 };
 
-    const popoverWidth = 320;
-    const padding = 12;
+    const popoverWidth = 300;
+    const padding = 16;
 
     let left = targetRect.left;
     if (left + popoverWidth > window.innerWidth - padding) {
@@ -140,10 +145,9 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
     }
     if (left < padding) left = padding;
 
-    // Prefer below target element, fallback to above if near viewport bottom
     let top = targetRect.bottom + 8;
-    if (top + 260 > window.innerHeight && targetRect.top > 260) {
-      top = targetRect.top - 270;
+    if (top + 240 > window.innerHeight && targetRect.top > 250) {
+      top = targetRect.top - 250;
     }
 
     return { top: Math.max(padding, top), left };
@@ -151,51 +155,64 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
 
   const coords = getCoordinates();
 
-  return (
+  const popoverContent = (
     <div
       ref={popoverRef}
-      style={{ top: `${coords.top}px`, left: `${coords.left}px` }}
-      className="fixed z-50 w-80 bg-white border-2 border-black shadow-[4px_4px_0px_0px_#000000] p-4 text-zinc-950 font-sans"
+      style={!isMobile ? { top: `${coords.top}px`, left: `${coords.left}px` } : undefined}
+      className={`${
+        isMobile
+          ? 'fixed bottom-0 inset-x-0 z-50 bg-white rounded-t-2xl border-t border-stone-300 p-4 pb-safe shadow-2xl max-w-md mx-auto animate-in slide-in-from-bottom-6 duration-200'
+          : 'fixed z-50 w-76 bg-white rounded-lg border border-stone-300 p-3.5 shadow-lg'
+      } text-stone-900 font-sans`}
     >
+      {/* Mobile drag handle indicator */}
+      {isMobile && (
+        <div className="w-10 h-1 bg-stone-300 rounded-full mx-auto mb-3" />
+      )}
+
       {/* Header: Word & Audio button */}
-      <div className="flex items-start justify-between border-b-2 border-black pb-2.5 mb-3">
-        <div className="flex items-baseline gap-2">
-          <span className="text-xl font-bold tracking-tight text-black">{word}</span>
+      <div className="flex items-center justify-between pb-2 mb-2 border-b border-stone-200">
+        <div className="flex items-center gap-2">
+          <span className="text-lg font-semibold tracking-tight text-stone-900">
+            {word}
+          </span>
           <button
             onClick={handlePlayAudio}
-            className="p-1 hover:bg-zinc-100 border border-black transition-colors"
-            title="Озвучити датською"
+            className="p-1 text-stone-500 hover:text-stone-950 rounded transition-colors"
+            title="Озвучити"
+            aria-label="Озвучити слово"
           >
-            <Volume2 className="w-4 h-4 text-black" />
+            <Volume2 className="w-4 h-4" />
           </button>
+          {pos && (
+            <span className="text-[10px] font-mono text-stone-500 bg-stone-100 px-1 py-0.5 rounded">
+              {pos}
+            </span>
+          )}
         </div>
         <button
           onClick={onClose}
-          className="p-1 hover:bg-black hover:text-white border border-black transition-colors"
+          className="p-1 text-stone-400 hover:text-stone-800 rounded transition-colors"
+          aria-label="Закрити"
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* Translation row */}
       <div className="mb-3">
-        <div className="flex items-center justify-between text-xs font-mono uppercase text-zinc-500 mb-1">
-          <span>Переклад (UA)</span>
-          {pos && <span className="bg-zinc-100 px-1 border border-zinc-400 text-zinc-700">{pos}</span>}
-        </div>
-
         {loading ? (
-          <div className="flex items-center gap-2 py-1 text-sm text-zinc-500 font-mono">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>Аналіз Gemini...</span>
+          <div className="flex items-center gap-1.5 py-1 text-xs text-stone-500 font-mono">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-stone-400" />
+            <span>Переклад...</span>
           </div>
         ) : isEditingTranslation ? (
-          <div className="flex gap-1.5">
+          <div className="flex gap-1.5 mt-1">
             <input
               type="text"
               value={translation}
               onChange={(e) => setTranslation(e.target.value)}
-              className="flex-1 px-2 py-1 text-sm border-2 border-black focus:outline-none bg-yellow-50"
+              className="flex-1 px-2.5 py-1 text-xs sm:text-sm border border-stone-300 rounded focus:outline-none focus:border-stone-900"
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -209,7 +226,7 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
                 setIsEditingTranslation(false);
                 onUpdateStatus(word, selectedStatus, translation, synonyms);
               }}
-              className="px-2 py-1 bg-black text-white text-xs font-mono border-2 border-black"
+              className="px-2.5 py-1 bg-stone-900 text-white text-xs rounded"
             >
               <Check className="w-3.5 h-3.5" />
             </button>
@@ -217,85 +234,100 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
         ) : (
           <div
             onClick={() => setIsEditingTranslation(true)}
-            className="text-base font-semibold text-zinc-900 cursor-pointer hover:bg-yellow-50 p-1 rounded-none border border-transparent hover:border-black transition-all flex items-center justify-between group"
-            title="Клікніть щоб відредагувати переклад"
+            className="text-sm sm:text-base font-medium text-stone-900 cursor-pointer hover:bg-stone-50 p-1 -mx-1 rounded transition-colors flex items-center justify-between group"
+            title="Клікніть щоб редагувати"
           >
-            <span>{translation || <span className="text-zinc-400 font-normal italic">Немає перекладу</span>}</span>
-            <span className="text-[10px] font-mono text-zinc-400 opacity-0 group-hover:opacity-100">змінити</span>
+            <span>{translation || <span className="text-stone-400 font-normal italic">Немає перекладу</span>}</span>
+            <span className="text-[10px] text-stone-400 opacity-60">змінити</span>
           </div>
         )}
 
         {explanation && (
-          <p className="text-xs text-zinc-600 mt-1 italic leading-tight">
-            ℹ️ {explanation}
+          <p className="text-[11px] text-stone-500 mt-1 leading-snug">
+            {explanation}
           </p>
         )}
       </div>
 
-      {/* Synonyms section */}
+      {/* Synonyms */}
       {synonyms.length > 0 && (
-        <div className="mb-3 pt-2 border-t border-zinc-200">
-          <div className="text-[11px] font-mono uppercase text-zinc-500 mb-1 flex items-center gap-1">
-            <Sparkles className="w-3 h-3 text-amber-500" />
-            <span>Синоніми (DA):</span>
+        <div className="mb-3 pt-2 border-t border-stone-100">
+          <div className="text-[10px] font-mono text-stone-400 uppercase tracking-wider mb-1.5">
+            Синоніми:
           </div>
           <div className="flex flex-wrap gap-1">
             {synonyms.slice(0, 4).map((syn, idx) => (
               <button
                 key={idx}
                 onClick={() => SpeechService.speak(syn, { rate: speechRate })}
-                className="text-xs px-1.5 py-0.5 bg-zinc-100 hover:bg-zinc-200 border border-black font-mono transition-colors"
-                title="Клікніть для озвучення"
+                className="text-xs px-2 py-0.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded transition-colors flex items-center gap-1"
               >
-                {syn} 🔊
+                <span>{syn}</span>
+                <Volume2 className="w-2.5 h-2.5 text-stone-400" />
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {/* Status Buttons (LingQ 4 Levels) */}
-      <div className="pt-2 border-t-2 border-black">
-        <div className="flex items-center justify-between text-[10px] font-mono uppercase text-zinc-500 mb-1.5">
-          <span>Рівень вивчення</span>
-          <span>Гарячі клавіші [1-3, 0]</span>
-        </div>
-
-        <div className="grid grid-cols-4 gap-1">
+      {/* Status level tabs (LingQ) */}
+      <div className="pt-2 border-t border-stone-200">
+        <div className="grid grid-cols-4 gap-1 sm:gap-1.5">
           <button
             onClick={() => handleSetStatus(0)}
-            className={`py-1 text-xs font-mono border-2 border-black transition-all ${
-              selectedStatus === 0 ? 'bg-blue-200 font-bold shadow-[1px_1px_0px_0px_#000]' : 'bg-white hover:bg-blue-50'
+            className={`py-1.5 text-xs font-mono rounded transition-colors ${
+              selectedStatus === 0
+                ? 'bg-sky-100 text-sky-900 font-medium ring-1 ring-sky-300'
+                : 'bg-stone-50 hover:bg-stone-100 text-stone-600'
             }`}
           >
             Нове
           </button>
           <button
             onClick={() => handleSetStatus(1)}
-            className={`py-1 text-xs font-mono border-2 border-black transition-all ${
-              selectedStatus === 1 ? 'bg-yellow-300 font-bold shadow-[1px_1px_0px_0px_#000]' : 'bg-white hover:bg-yellow-50'
+            className={`py-1.5 text-xs font-mono rounded transition-colors ${
+              selectedStatus === 1
+                ? 'bg-amber-100 text-amber-900 font-medium ring-1 ring-amber-300'
+                : 'bg-stone-50 hover:bg-stone-100 text-stone-600'
             }`}
           >
             Вчу 1
           </button>
           <button
             onClick={() => handleSetStatus(2)}
-            className={`py-1 text-xs font-mono border-2 border-black transition-all ${
-              selectedStatus === 2 ? 'bg-yellow-100 font-bold shadow-[1px_1px_0px_0px_#000]' : 'bg-white hover:bg-yellow-50'
+            className={`py-1.5 text-xs font-mono rounded transition-colors ${
+              selectedStatus === 2
+                ? 'bg-yellow-100 text-yellow-900 font-medium ring-1 ring-yellow-300'
+                : 'bg-stone-50 hover:bg-stone-100 text-stone-600'
             }`}
           >
             Вчу 2
           </button>
           <button
             onClick={() => handleSetStatus(3)}
-            className={`py-1 text-xs font-mono border-2 border-black transition-all ${
-              selectedStatus === 3 ? 'bg-emerald-300 font-bold shadow-[1px_1px_0px_0px_#000]' : 'bg-white hover:bg-emerald-50'
+            className={`py-1.5 text-xs font-mono rounded transition-colors ${
+              selectedStatus === 3
+                ? 'bg-emerald-100 text-emerald-900 font-medium ring-1 ring-emerald-300'
+                : 'bg-stone-50 hover:bg-stone-100 text-stone-600'
             }`}
           >
-            ✓ Знаю
+            Знаю
           </button>
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <>
+      {/* Mobile backdrop */}
+      {isMobile && (
+        <div
+          className="fixed inset-0 z-40 bg-stone-900/30 backdrop-blur-[1px] animate-in fade-in"
+          onClick={onClose}
+        />
+      )}
+      {popoverContent}
+    </>
   );
 };

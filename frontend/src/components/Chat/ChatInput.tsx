@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Sparkles } from 'lucide-react';
+import { ArrowUp, Loader2 } from 'lucide-react';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -11,17 +11,15 @@ interface ChatInputProps {
 }
 
 const QUICK_STARTERS = [
-  'Hej! Hvordan har du det?',
+  'Hej! Hvordan går det?',
   'Hvad laver du i dag?',
-  'Fortæl mig lidt om København.',
-  'Kan du hjælpe mig med at øve dansk?',
+  'Fortæl mig om København',
+  'Kan du rette mine fejl?',
 ];
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSendMessage,
   loading,
-  level,
-  model,
   hasApiKey,
   onOpenSettings,
 }) => {
@@ -29,7 +27,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (!loading && inputRef.current) {
+    if (!loading && inputRef.current && window.innerWidth > 640) {
       inputRef.current.focus();
     }
   }, [loading]);
@@ -60,34 +58,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
     e.target.style.height = 'auto';
-    e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
   };
 
   return (
-    <div className="border-t-2 border-black bg-white p-3 brutal-shadow-md">
-      {/* Quick starter phrases */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-2 no-scrollbar">
-        <span className="text-[10px] font-mono text-zinc-400 uppercase whitespace-nowrap flex items-center gap-1">
-          <Sparkles className="w-3 h-3 text-amber-500" />
-          Підказки:
-        </span>
-        {QUICK_STARTERS.map((starter, idx) => (
-          <button
-            key={idx}
-            onClick={() => {
-              setText(starter);
-              if (inputRef.current) inputRef.current.focus();
-            }}
-            className="text-xs font-sans px-2 py-0.5 bg-zinc-50 hover:bg-zinc-200 border border-black whitespace-nowrap transition-colors"
-          >
-            {starter}
-          </button>
-        ))}
-      </div>
+    <div className="w-full bg-white/95 backdrop-blur-md border-t border-stone-200/90 pt-2 pb-safe px-3 sm:px-4">
+      <div className="max-w-2xl mx-auto">
+        {/* Quick starter chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-2 no-scrollbar scroll-smooth">
+          {QUICK_STARTERS.map((starter, idx) => (
+            <button
+              key={idx}
+              onClick={() => {
+                setText(starter);
+                if (inputRef.current) inputRef.current.focus();
+              }}
+              className="text-xs px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-full whitespace-nowrap transition-colors shrink-0"
+            >
+              {starter}
+            </button>
+          ))}
+        </div>
 
-      {/* Input row */}
-      <div className="flex items-end gap-2">
-        <div className="flex-1 relative">
+        {/* Input box */}
+        <div className="flex items-end gap-2 bg-stone-50 border border-stone-300 rounded-2xl p-1.5 focus-within:border-stone-900 focus-within:bg-white transition-colors">
           <textarea
             ref={inputRef}
             rows={1}
@@ -96,44 +90,24 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={
               hasApiKey
-                ? 'Напишіть репліку датською або запитання... (Enter для відправки)'
-                : 'Введіть Gemini API ключ для початку діалогу...'
+                ? 'Напишіть датською...'
+                : 'Введіть Gemini ключ для бесіди...'
             }
-            className="w-full resize-none p-2.5 text-sm bg-zinc-50 border-2 border-black focus:outline-none focus:bg-white placeholder:text-zinc-400 font-sans leading-normal max-h-36"
+            className="flex-1 resize-none px-2.5 py-1.5 text-sm bg-transparent focus:outline-none placeholder:text-stone-400 font-sans leading-relaxed max-h-32"
           />
-        </div>
 
-        <button
-          onClick={handleSend}
-          disabled={loading || !text.trim()}
-          className="brutal-btn px-4 py-2.5 bg-black text-white text-sm font-mono flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-        >
-          {loading ? (
-            <>
+          <button
+            onClick={handleSend}
+            disabled={loading || !text.trim()}
+            className="w-8 h-8 rounded-full bg-stone-900 text-white flex items-center justify-center transition-opacity disabled:opacity-30 disabled:cursor-not-allowed shrink-0 cursor-pointer"
+            aria-label="Надіслати"
+          >
+            {loading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>ШІ...</span>
-            </>
-          ) : (
-            <>
-              <Send className="w-4 h-4" />
-              <span>Надіслати</span>
-            </>
-          )}
-        </button>
-      </div>
-
-      {/* Footer bar */}
-      <div className="flex items-center justify-between mt-2 pt-1 text-[10px] font-mono text-zinc-500">
-        <div className="flex items-center gap-2">
-          <span className="bg-zinc-100 px-1 border border-zinc-400 text-black font-bold">
-            [{level}]
-          </span>
-          <span className="text-zinc-600">
-            {model}
-          </span>
-        </div>
-        <div className="text-zinc-400">
-          Shift+Enter: новий рядок • Enter: відправити
+            ) : (
+              <ArrowUp className="w-4 h-4" />
+            )}
+          </button>
         </div>
       </div>
     </div>
