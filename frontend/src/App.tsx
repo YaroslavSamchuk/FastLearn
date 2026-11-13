@@ -3,13 +3,16 @@ import {
   MessageSquare,
   BookOpen,
   Settings,
-  Plus
+  Plus,
+  LogIn
 } from 'lucide-react';
 import type { AppSettings, ChatMessage, ChatSession, WordMap, WordRecord, WordStatus } from './types';
+import type { AntigravityUser } from 'antigravity-client';
 import { StorageService } from './services/storage';
 import { GeminiService } from './services/gemini';
 import { SpeechService } from './services/speech';
 import { cleanDanishWord } from './services/dictionary';
+import { checkAuthStatus, handleAuthRedirect, loginWithGoogle, logoutUser } from './services/antigravity';
 import { MessageItem } from './components/Chat/MessageItem';
 import { ChatInput } from './components/Chat/ChatInput';
 import { WordPopover } from './components/LingQ/WordPopover';
@@ -43,6 +46,10 @@ export const App: React.FC = () => {
   const [isVocabOpen, setIsVocabOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
+  // Google OAuth Auth State via AntigravityClient
+  const [user, setUser] = useState<AntigravityUser | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+
   const [activeWordPopover, setActiveWordPopover] = useState<{
     word: string;
     contextSentence: string;
@@ -55,6 +62,26 @@ export const App: React.FC = () => {
   } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Initialize OAuth & Check Session
+  useEffect(() => {
+    async function initAuth() {
+      // 1. Check if returning from Google OAuth redirect
+      const redirectedUser = await handleAuthRedirect();
+      if (redirectedUser) {
+        setUser(redirectedUser);
+        setIsAuthenticated(true);
+        return;
+      }
+
+      // 2. Check existing session
+      const status = await checkAuthStatus();
+      setIsAuthenticated(status.isAuthenticated);
+      setUser(status.user);
+    }
+
+    initAuth();
+  }, []);
 
   useEffect(() => {
     if (chats.length === 0) {
@@ -76,6 +103,20 @@ export const App: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  const handleLoginGoogle = async () => {
+    try {
+      await loginWithGoogle();
+    } catch (err: any) {
+      alert(`Помилка авторизації: ${err.message}`);
+    }
+  };
+
+  const handleLogoutGoogle = async () => {
+    await logoutUser();
+    setIsAuthenticated(false);
+    setUser(null);
+  };
 
   const handleSelectChat = (id: string) => {
     setActiveChatId(id);
@@ -162,7 +203,7 @@ export const App: React.FC = () => {
       const errorMsg: ChatMessage = {
         id: 'msg_' + Date.now() + '_err',
         role: 'model',
-        content: `Beklager, der opstod en fejl: ${err?.message || 'Не вдалося отримати відповідь від Gemini.'}`,
+        content: `Beklager, der opstod en fejl: ${err?.message || 'Не вдалося отримати відповідь від ШІ.'}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         model_used: 'error',
       };
@@ -234,6 +275,7 @@ export const App: React.FC = () => {
   };
 
   const activeChat = chats.find((c) => c.id === activeChatId);
+  const isAuthorized = isAuthenticated || Boolean(settings.apiKey?.trim());
 
   return (
     <div className="flex flex-col h-screen bg-[#fbfbfa] text-stone-900 antialiased selection:bg-stone-900 selection:text-white">
@@ -248,7 +290,7 @@ export const App: React.FC = () => {
             <span className="text-stone-300">/</span>
             <button
               onClick={() => setIsChatsOpen(true)}
-              className="text-xs text-stone-600 hover:text-stone-900 truncate max-w-[120px] sm:max-w-[200px] text-left transition-colors"
+              className="text-xs text-stone-600 hover:text-stone-900 truncate max-w-[110px] sm:max-w-[180px] text-left transition-colors cursor-pointer"
               title="Перемкнути розмову"
             >
               {activeChat?.title || 'Діалог'}
@@ -258,11 +300,42 @@ export const App: React.FC = () => {
             </span>
           </div>
 
-          {/* Action Icons */}
+          {/* Action Icons & Auth User */}
           <div className="flex items-center gap-1 sm:gap-1.5">
+            {/* Direct Google Login / Profile button in header */}
+            {isAuthenticated && user ? (
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-full hover:bg-stone-100 text-xs text-stone-700 transition-colors mr-1 cursor-pointer"
+                title={`${user.name || user.email} (Google OAuth)`}
+              >
+                {user.picture ? (
+                  <img src={user.picture} alt="Avatar" className="w-5 h-5 rounded-full border border-stone-200" />
+                ) : (
+                  <div className="w-5 h-5 rounded-full bg-stone-900 text-white flex items-center justify-center font-bold text-[10px]">
+                    {(user.name?.[0] || user.email?.[0] || 'G').toUpperCase()}
+                  </div>
+                )}
+                <span className="hidden sm:inline font-medium text-[11px] truncate max-w-[90px]">
+                  {user.name?.split(' ')[0] || 'Google'}
+                </span>
+              </button>
+            ) : (
+              !settings.apiKey && (
+                <button
+                  onClick={handleLoginGoogle}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-medium transition-colors mr-1 cursor-pointer shadow-sm"
+                  title="Увійти через Google OAuth без API ключів"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline text-[11px]">Увійти</span>
+                </button>
+              )
+            )}
+
             <button
               onClick={handleCreateChat}
-              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors"
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors cursor-pointer"
               title="Новий діалог"
               aria-label="Нова бесіда"
             >
@@ -271,7 +344,7 @@ export const App: React.FC = () => {
 
             <button
               onClick={() => setIsChatsOpen(true)}
-              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors relative"
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors relative cursor-pointer"
               title="Всі розмови"
               aria-label="Діалоги"
             >
@@ -280,7 +353,7 @@ export const App: React.FC = () => {
 
             <button
               onClick={() => setIsVocabOpen(true)}
-              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors flex items-center gap-1 text-xs font-mono"
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors flex items-center gap-1 text-xs font-mono cursor-pointer"
               title="Словник слів"
               aria-label="Словник"
             >
@@ -294,12 +367,12 @@ export const App: React.FC = () => {
 
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors relative"
+              className="p-1.5 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-md transition-colors relative cursor-pointer"
               title="Налаштування"
               aria-label="Налаштування"
             >
               <Settings className="w-4 h-4" />
-              {!settings.apiKey && (
+              {!isAuthorized && (
                 <span className="absolute top-1 right-1 w-2 h-2 bg-amber-500 rounded-full" />
               )}
             </button>
@@ -307,9 +380,12 @@ export const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Gentle notice if Gemini key is missing */}
-      {!settings.apiKey && (
-        <ApiKeyBanner onOpenSettings={() => setIsSettingsOpen(true)} />
+      {/* Gentle notice if user is not authenticated and has no API key */}
+      {!isAuthorized && (
+        <ApiKeyBanner
+          onLoginGoogle={handleLoginGoogle}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+        />
       )}
 
       {/* Main Conversation Stream */}
@@ -334,7 +410,7 @@ export const App: React.FC = () => {
                   <button
                     key={i}
                     onClick={() => handleSendMessage(promptText)}
-                    className="w-full p-2.5 bg-white hover:bg-stone-50 border border-stone-200 text-stone-700 text-xs sm:text-sm rounded-lg transition-colors text-left flex items-center justify-between group"
+                    className="w-full p-2.5 bg-white hover:bg-stone-50 border border-stone-200 text-stone-700 text-xs sm:text-sm rounded-lg transition-colors text-left flex items-center justify-between group cursor-pointer"
                   >
                     <span>{promptText}</span>
                     <span className="text-stone-400 group-hover:text-stone-900 text-xs font-mono">→</span>
@@ -375,7 +451,7 @@ export const App: React.FC = () => {
           loading={loading}
           level={settings.level}
           model={settings.model}
-          hasApiKey={Boolean(settings.apiKey)}
+          hasAuth={isAuthorized}
           onOpenSettings={() => setIsSettingsOpen(true)}
         />
       </footer>
@@ -444,6 +520,10 @@ export const App: React.FC = () => {
       <SettingsModal
         isOpen={isSettingsOpen}
         settings={settings}
+        user={user}
+        isAuthenticated={isAuthenticated}
+        onLoginGoogle={handleLoginGoogle}
+        onLogoutGoogle={handleLogoutGoogle}
         onSave={handleSaveSettings}
         onClose={() => setIsSettingsOpen(false)}
       />

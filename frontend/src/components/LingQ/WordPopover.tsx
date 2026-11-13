@@ -66,7 +66,7 @@ export const WordPopover: React.FC<WordPopoverProps> = ({
         if (local.explanation) setExplanation(local.explanation);
       }
 
-      if (!savedTranslation && apiKey) {
+      if (!savedTranslation) {
         setLoading(true);
         try {
           const res = await GeminiService.translateWord({

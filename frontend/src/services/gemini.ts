@@ -1,18 +1,13 @@
 import type { ChatMessage, CorrectionData, TranslationResult } from '../types';
 import { cleanDanishWord, lookupLocalWord } from './dictionary';
+import { ag, ANTIGRAVITY_MODELS, DEFAULT_ANTIGRAVITY_MODEL } from './antigravity';
 
-export const AVAILABLE_MODELS = [
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: 'Рекомендована: блискавична і точна' },
-  { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', desc: 'Надлегка та економна' },
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', desc: 'Стабільна перевірена версія' },
-  { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', desc: 'Максимальна якість аналізу' },
-];
-
-export const DEFAULT_MODEL = 'gemini-2.5-flash';
+export const AVAILABLE_MODELS = ANTIGRAVITY_MODELS;
+export const DEFAULT_MODEL = DEFAULT_ANTIGRAVITY_MODEL;
 
 const GEMINI_API_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-interface GeminiResponse {
+interface GeminiLegacyResponse {
   candidates?: Array<{
     content?: {
       parts?: Array<{
@@ -37,11 +32,30 @@ const cleanJsonString = (raw: string): string => {
 
 export class GeminiService {
   /**
-   * Quick verification test for the entered API key.
+   * Quick verification test for the current connection (OAuth or API Key).
    */
-  static async testApiKey(apiKey: string, model: string = DEFAULT_MODEL): Promise<{ success: boolean; message: string }> {
+  static async testConnection(apiKey?: string, model: string = DEFAULT_MODEL): Promise<{ success: boolean; message: string }> {
+    const isAuth = await ag.isAuthenticated();
+    if (isAuth) {
+      try {
+        const user = await ag.getUser();
+        const res = await ag.chat({
+          model: model as any,
+          prompt: 'Ping. Svar kun "OK".',
+          temperature: 0.1,
+          maxTokens: 10,
+        });
+        return {
+          success: true,
+          message: `OAuth успішно підключено (${user.email || user.name || 'Авторизовано'})! Відповідь моделі: ${res.text.trim()}`,
+        };
+      } catch (err: any) {
+        return { success: false, message: `Помилка Google OAuth з'єднання: ${err?.message || 'Невідома помилка'}` };
+      }
+    }
+
     if (!apiKey || !apiKey.trim()) {
-      return { success: false, message: 'Ключ API не може бути порожнім.' };
+      return { success: false, message: 'Немає активної Google сесії та не вказано API ключ.' };
     }
 
     try {
@@ -61,10 +75,14 @@ export class GeminiService {
         return { success: false, message: errMsg };
       }
 
-      return { success: true, message: 'Ключ успішно підключено та перевірено!' };
+      return { success: true, message: 'API ключ успішно підключено та перевірено!' };
     } catch (err: any) {
       return { success: false, message: err?.message || 'Помилка мережі при зʼєднанні з Google API.' };
     }
+  }
+
+  static async testApiKey(apiKey: string, model: string = DEFAULT_MODEL) {
+    return this.testConnection(apiKey, model);
   }
 
   /**
@@ -78,7 +96,7 @@ export class GeminiService {
     level = 'A1',
     userNotes = '',
   }: {
-    apiKey: string;
+    apiKey?: string;
     model?: string;
     userMessage: string;
     history?: ChatMessage[];
@@ -88,8 +106,10 @@ export class GeminiService {
     danish_reply: string;
     correction?: CorrectionData | null;
   }> {
-    if (!apiKey?.trim()) {
-      throw new Error('API ключ Gemini не вказано. Перейдіть до налаштувань та збережіть ключ.');
+    const isAuth = await ag.isAuthenticated();
+
+    if (!isAuth && !apiKey?.trim()) {
+      throw new Error('Потрібна авторизація. Увійдіть через Google або збережіть API ключ у налаштуваннях.');
     }
 
     const systemPrompt = `Ти — доброзичливий, лаконічний і уважний співрозмовник-носій датської мови (Danish language tutor).
@@ -123,12 +143,65 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
   "explanation_uk": ""
 }`;
 
-    // Format previous turns for context
     const recentHistory = history.slice(-16);
-    const conversationContents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
 
-    // System instruction passed via first turn or system_instruction if supported
-    // For standard v1beta REST payload compatibility, prepend to context
+    // Primary path: Use AntigravityClient via Google OAuth
+    if (isAuth) {
+      try {
+        const formattedMessages = [
+          ...recentHistory.map((m) => ({
+            role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+            content: m.content,
+          })),
+          {
+            role: 'user' as const,
+            content: userMessage,
+          },
+        ];
+
+        const res = await ag.chat({
+          model: model as any,
+          system: systemPrompt,
+          messages: formattedMessages,
+          response_format: { type: 'json_object' },
+          temperature: 0.7,
+        });
+
+        const rawText = res.text;
+        if (!rawText) {
+          throw new Error('Отримано порожню відповідь від Antigravity');
+        }
+
+        try {
+          const parsed = JSON.parse(cleanJsonString(rawText));
+          return {
+            danish_reply: parsed.danish_reply || 'Hej! Godt at se dig.',
+            correction: parsed.has_correction
+              ? {
+                  has_correction: true,
+                  what_you_meant_uk: parsed.what_you_meant_uk || '',
+                  natural_danish: parsed.natural_danish || '',
+                  explanation_uk: parsed.explanation_uk || '',
+                }
+              : null,
+          };
+        } catch {
+          return {
+            danish_reply: rawText.replace(/```json|```/g, '').trim(),
+            correction: null,
+          };
+        }
+      } catch (err: any) {
+        console.error('Antigravity chat failed:', err);
+        // If API key is available, attempt fallback, otherwise rethrow
+        if (!apiKey?.trim()) {
+          throw new Error(`Помилка Antigravity: ${err?.message || 'Не вдалося надіслати запит'}`);
+        }
+      }
+    }
+
+    // Secondary / Legacy path: Direct API Key
+    const conversationContents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
     for (const msg of recentHistory) {
       conversationContents.push({
         role: msg.role === 'user' ? 'user' : 'model',
@@ -136,7 +209,6 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
       });
     }
 
-    // Add current user message with tutor instruction wrapping
     conversationContents.push({
       role: 'user',
       parts: [
@@ -146,7 +218,7 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
       ],
     });
 
-    const url = `${GEMINI_API_ENDPOINT}/${model}:generateContent?key=${apiKey.trim()}`;
+    const url = `${GEMINI_API_ENDPOINT}/${model}:generateContent?key=${apiKey!.trim()}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -165,7 +237,7 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
       throw new Error(`Помилка Gemini: ${detail}`);
     }
 
-    const data: GeminiResponse = await res.json();
+    const data: GeminiLegacyResponse = await res.json();
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!rawText) {
@@ -186,7 +258,6 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
           : null,
       };
     } catch {
-      // Fallback if model output wasn't valid JSON despite prompt
       return {
         danish_reply: rawText.replace(/```json|```/g, '').trim(),
         correction: null,
@@ -203,33 +274,24 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
     word,
     contextSentence,
   }: {
-    apiKey: string;
+    apiKey?: string;
     model?: string;
     word: string;
     contextSentence?: string;
   }): Promise<TranslationResult> {
     const clean = cleanDanishWord(word);
-
-    // 1. Check instant local dictionary first
     const local = lookupLocalWord(clean);
-    if (!apiKey?.trim() && local) {
-      return {
-        word,
-        word_clean: clean,
-        translation_uk: local.translation,
-        synonyms: local.synonyms || [],
-        part_of_speech: local.pos,
-        explanation_uk: local.explanation,
-      };
-    }
 
-    if (!apiKey?.trim()) {
+    const isAuth = await ag.isAuthenticated();
+
+    if (!isAuth && !apiKey?.trim()) {
       return {
         word,
         word_clean: clean,
-        translation_uk: local ? local.translation : '(Вкажіть API ключ у налаштуваннях)',
+        translation_uk: local ? local.translation : '(Увійдіть через Google для аналізу)',
         synonyms: local?.synonyms || [],
         part_of_speech: local?.pos,
+        explanation_uk: local?.explanation,
       };
     }
 
@@ -244,22 +306,28 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
   "explanation_uk": "короткий граматичний коментар (інфінітив/рід/час) за потреби"
 }`;
 
-    try {
-      const url = `${GEMINI_API_ENDPOINT}/${model}:generateContent?key=${apiKey.trim()}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-            responseMimeType: 'application/json',
-          },
-        }),
-      });
+    if (isAuth) {
+      try {
+        const res = await ag.chat({
+          model: model as any,
+          prompt,
+          response_format: { type: 'json_object' },
+          temperature: 0.2,
+        });
 
-      if (!res.ok) {
-        if (local) {
+        const rawText = res.text;
+        const parsed = JSON.parse(cleanJsonString(rawText));
+        return {
+          word,
+          word_clean: clean,
+          translation_uk: parsed.translation_uk || (local ? local.translation : clean),
+          synonyms: Array.isArray(parsed.synonyms) ? parsed.synonyms : local?.synonyms || [],
+          part_of_speech: parsed.part_of_speech || local?.pos,
+          explanation_uk: parsed.explanation_uk || local?.explanation,
+        };
+      } catch (e) {
+        console.warn('Antigravity word lookup failed, trying fallback:', e);
+        if (!apiKey?.trim() && local) {
           return {
             word,
             word_clean: clean,
@@ -269,40 +337,62 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
             explanation_uk: local.explanation,
           };
         }
-        throw new Error(`HTTP ${res.status}`);
       }
+    }
 
-      const data: GeminiResponse = await res.json();
-      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) throw new Error('Порожня відповідь');
+    // Fallback with API Key
+    if (apiKey?.trim()) {
+      try {
+        const url = `${GEMINI_API_ENDPOINT}/${model}:generateContent?key=${apiKey.trim()}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.2,
+              responseMimeType: 'application/json',
+            },
+          }),
+        });
 
-      const parsed = JSON.parse(cleanJsonString(rawText));
+        if (res.ok) {
+          const data: GeminiLegacyResponse = await res.json();
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawText) {
+            const parsed = JSON.parse(cleanJsonString(rawText));
+            return {
+              word,
+              word_clean: clean,
+              translation_uk: parsed.translation_uk || (local ? local.translation : clean),
+              synonyms: Array.isArray(parsed.synonyms) ? parsed.synonyms : local?.synonyms || [],
+              part_of_speech: parsed.part_of_speech || local?.pos,
+              explanation_uk: parsed.explanation_uk || local?.explanation,
+            };
+          }
+        }
+      } catch {
+        // Fall through to local
+      }
+    }
+
+    if (local) {
       return {
         word,
         word_clean: clean,
-        translation_uk: parsed.translation_uk || (local ? local.translation : clean),
-        synonyms: Array.isArray(parsed.synonyms) ? parsed.synonyms : local?.synonyms || [],
-        part_of_speech: parsed.part_of_speech || local?.pos,
-        explanation_uk: parsed.explanation_uk || local?.explanation,
-      };
-    } catch (e) {
-      if (local) {
-        return {
-          word,
-          word_clean: clean,
-          translation_uk: local.translation,
-          synonyms: local.synonyms || [],
-          part_of_speech: local.pos,
-          explanation_uk: local.explanation,
-        };
-      }
-      return {
-        word,
-        word_clean: clean,
-        translation_uk: 'Помилка перекладу',
-        synonyms: [],
+        translation_uk: local.translation,
+        synonyms: local.synonyms || [],
+        part_of_speech: local.pos,
+        explanation_uk: local.explanation,
       };
     }
+
+    return {
+      word,
+      word_clean: clean,
+      translation_uk: 'Помилка перекладу',
+      synonyms: [],
+    };
   }
 
   /**
@@ -313,37 +403,54 @@ ${userNotes ? `ПОСТІЙНІ ПОБАЖАННЯ УЧНЯ:\n${userNotes}` : ''
     model = DEFAULT_MODEL,
     phrase,
   }: {
-    apiKey: string;
+    apiKey?: string;
     model?: string;
     phrase: string;
   }): Promise<string> {
-    if (!apiKey?.trim()) {
-      return '(Потрібен API ключ Gemini для перекладу речень)';
+    const isAuth = await ag.isAuthenticated();
+
+    if (!isAuth && !apiKey?.trim()) {
+      return '(Увійдіть через Google для перекладу речень)';
     }
 
     const prompt = `Переклади дану датську фразу чи речення на природну українську мову без лапок і коментарів:
 "${phrase}"`;
 
-    try {
-      const url = `${GEMINI_API_ENDPOINT}/${model}:generateContent?key=${apiKey.trim()}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.2 },
-        }),
-      });
-
-      if (!res.ok) {
-        return 'Не вдалося перекласти фразу.';
+    if (isAuth) {
+      try {
+        const res = await ag.chat({
+          model: model as any,
+          prompt,
+          temperature: 0.2,
+        });
+        return res.text ? res.text.trim() : phrase;
+      } catch (e) {
+        console.warn('Antigravity phrase translation failed, trying fallback:', e);
       }
-
-      const data: GeminiResponse = await res.json();
-      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      return rawText ? rawText.trim() : phrase;
-    } catch {
-      return 'Помилка мережі при перекладі.';
     }
+
+    if (apiKey?.trim()) {
+      try {
+        const url = `${GEMINI_API_ENDPOINT}/${model}:generateContent?key=${apiKey.trim()}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.2 },
+          }),
+        });
+
+        if (res.ok) {
+          const data: GeminiLegacyResponse = await res.json();
+          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          return rawText ? rawText.trim() : phrase;
+        }
+      } catch {
+        return 'Помилка мережі при перекладі.';
+      }
+    }
+
+    return 'Не вдалося перекласти фразу.';
   }
 }
