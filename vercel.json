@@ -1,0 +1,14 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "frontend/dist",
+  "rewrites": [
+    {
+      "source": "/v1internal:path*",
+      "destination": "/api/v1internal/:path*"
+    },
+    {
+      "source": "/((?!api|v1internal).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

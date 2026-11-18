@@ -13,6 +13,7 @@ const KEYS = {
 
 const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
+  proxyUrl: '',
   model: DEFAULT_MODEL,
   level: 'A1',
   userNotes: 'Початківець. Увага на порядок слів (V2-правило) та правильне вживання en/et.',

@@ -3,7 +3,7 @@ import { X, Eye, EyeOff, Check, AlertCircle, Loader2, ExternalLink, LogOut, Chev
 import type { AppSettings } from '../../types';
 import type { AntigravityUser } from 'antigravity-client';
 import { AVAILABLE_MODELS, GeminiService } from '../../services/gemini';
-import { isLocalhost } from '../../services/antigravity';
+import { isLocalhost, updateClientProxyUrl } from '../../services/antigravity';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -27,6 +27,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
 }) => {
   const [apiKey, setApiKey] = useState(settings.apiKey);
+  const [proxyUrl, setProxyUrl] = useState(settings.proxyUrl || '');
   const [model, setModel] = useState(settings.model);
   const [customModel, setCustomModel] = useState('');
   const [isCustomModel, setIsCustomModel] = useState(!AVAILABLE_MODELS.some(m => m.id === settings.model));
@@ -35,7 +36,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [speechRate, setSpeechRate] = useState(settings.speechRate);
   const [showKey, setShowKey] = useState(false);
   const [showLegacyKeySection, setShowLegacyKeySection] = useState(
-    Boolean(!isLocalhost || settings.apiKey || !isAuthenticated)
+    Boolean(!isLocalhost || settings.apiKey || !isAuthenticated || settings.proxyUrl)
   );
 
   const [testing, setTesting] = useState(false);
@@ -47,6 +48,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setTesting(true);
     setTestResult(null);
 
+    updateClientProxyUrl(proxyUrl.trim());
     const activeModel = isCustomModel && customModel.trim() ? customModel.trim() : model;
     const res = await GeminiService.testConnection(apiKey, activeModel);
     setTesting(false);
@@ -55,8 +57,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleSave = () => {
     const finalModel = isCustomModel && customModel.trim() ? customModel.trim() : model;
+    updateClientProxyUrl(proxyUrl.trim());
     onSave({
       apiKey: apiKey.trim(),
+      proxyUrl: proxyUrl.trim(),
       model: finalModel,
       level,
       userNotes: userNotes.trim(),
@@ -382,6 +386,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
+                </div>
+
+                {/* Cloudflare Worker / Custom Proxy URL */}
+                <div className="pt-2 border-t border-stone-100">
+                  <label className="font-medium text-stone-700 block mb-1">
+                    URL проксі Antigravity (для Cloudflare Worker)
+                  </label>
+                  <input
+                    type="text"
+                    value={proxyUrl}
+                    onChange={(e) => setProxyUrl(e.target.value)}
+                    placeholder="https://fastlearn-proxy.your-subdomain.workers.dev"
+                    className="w-full px-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:border-stone-900 font-mono text-[11px]"
+                  />
+                  <p className="text-[10px] text-stone-400 mt-1 leading-tight">
+                    Потрібно, якщо ви хостите сайт на GitHub Pages з окремим Cloudflare Worker. Для Cloudflare Pages або Koyeb залиште порожнім.
+                  </p>
                 </div>
               </div>
             )}

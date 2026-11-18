@@ -1,0 +1,14 @@
+{
+  "name": "fastlearn-antigravity-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Cloudflare Worker reverse proxy for Google Antigravity & FastLearn",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241022.0",
+    "wrangler": "^3.80.0"
+  }
+}

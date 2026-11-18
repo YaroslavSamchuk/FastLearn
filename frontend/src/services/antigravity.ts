@@ -1,12 +1,36 @@
 import { Antigravity, LocalStorageAdapter } from 'antigravity-client';
 import type { AntigravityUser } from 'antigravity-client';
 
-// Client initialized with localStorage persistence and browser dev proxy
+// Resolves proxy URL from settings, env, or falls back to window.location.origin
+export function getProxyBaseUrl(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const raw = localStorage.getItem('fastlearn_v2_settings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.proxyUrl && parsed.proxyUrl.trim()) {
+        return parsed.proxyUrl.trim().replace(/\/+$/, '');
+      }
+    }
+  } catch {}
+  const envProxy = import.meta.env.VITE_ANTIGRAVITY_PROXY_URL;
+  if (envProxy && envProxy.trim()) {
+    return envProxy.trim().replace(/\/+$/, '');
+  }
+  return window.location.origin;
+}
+
+// Client initialized with localStorage persistence and edge/browser proxy
 export const ag = new Antigravity({
   storage: new LocalStorageAdapter(),
-  baseUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+  baseUrl: getProxyBaseUrl(),
   defaultModel: 'gemini-3.8-flash-high',
 });
+
+export function updateClientProxyUrl(url?: string) {
+  const target = url?.trim() || getProxyBaseUrl();
+  (ag as any).baseUrl = target;
+}
 
 export interface ModelOption {
   id: string;

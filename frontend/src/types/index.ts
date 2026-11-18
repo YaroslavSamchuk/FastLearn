@@ -45,6 +45,7 @@ export type WordMap = Record<string, {
 
 export interface AppSettings {
   apiKey: string;
+  proxyUrl?: string;
   model: string;
   level: 'A1' | 'A2' | 'B1' | 'B2' | 'C1';
   userNotes: string;
