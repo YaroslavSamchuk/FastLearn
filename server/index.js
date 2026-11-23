@@ -96,15 +96,22 @@ app.get('/api/health', async (req, res) => {
 // 2. User & Preferences & Daily Quota
 app.get('/api/user', async (req, res) => {
   try {
+    const email = req.query.email;
     const db = await getDb();
-    let user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
+    let user = null;
+    if (email) {
+      user = await db.collection('users').findOne({ email });
+    }
+    if (!user) {
+      user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
+    }
     if (!user) {
       await db.collection('users').insertOne(DEFAULT_USER);
       user = DEFAULT_USER;
     } else if (!user.memories) {
       // Backfill default memories if missing
       await db.collection('users').updateOne(
-        { id: DEFAULT_USER.id },
+        { _id: user._id },
         { $set: { memories: DEFAULT_USER.memories } }
       );
       user.memories = DEFAULT_USER.memories;
@@ -113,7 +120,7 @@ app.get('/api/user', async (req, res) => {
     const quota = evaluateDailyQuota(user);
     if (quota.resetAt !== user.resetAt || quota.messagesRemaining !== user.messagesRemaining) {
       await db.collection('users').updateOne(
-        { id: DEFAULT_USER.id },
+        { _id: user._id },
         { $set: quota }
       );
       user = { ...user, ...quota };
@@ -122,6 +129,68 @@ app.get('/api/user', async (req, res) => {
     res.json(user);
   } catch (e) {
     res.json(DEFAULT_USER);
+  }
+});
+
+// Google OAuth Login / Sync
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { id, name, email, avatar } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+    const db = await getDb();
+    let user = await db.collection('users').findOne({ email });
+    if (!user) {
+      user = {
+        id: id ? `google_${id}` : `usr_${Date.now()}`,
+        name: name || 'Google User',
+        email: email,
+        avatar: avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
+        currentLanguage: 'da',
+        voicePreferences: {
+          da: 'da-DK-ChristelNeural',
+          en: 'en-US-JennyNeural'
+        },
+        messagesRemaining: DAILY_LIMIT,
+        dailyLimit: DAILY_LIMIT,
+        resetAt: new Date(Date.now() + RESET_WINDOW_HOURS * 3600 * 1000).toISOString(),
+        memories: {
+          global: [
+            `Звати ${name || 'користувач'}. Рідна мова — українська.`,
+            'Цінує стислість, природність, живий дружній тон без води та повчань.'
+          ],
+          da: [
+            'Вивчає розмовну данську мову (Dansk) для повсякденного життя та спілкування.'
+          ],
+          en: [
+            'Вільне повсякденне та ділове спілкування англійською.'
+          ]
+        }
+      };
+      await db.collection('users').insertOne(user);
+    } else {
+      const updateFields = {};
+      if (avatar && avatar !== user.avatar) updateFields.avatar = avatar;
+      if (name && name !== user.name) updateFields.name = name;
+      if (Object.keys(updateFields).length > 0) {
+        await db.collection('users').updateOne({ _id: user._id }, { $set: updateFields });
+        user = { ...user, ...updateFields };
+      }
+    }
+
+    const quota = evaluateDailyQuota(user);
+    if (quota.resetAt !== user.resetAt || quota.messagesRemaining !== user.messagesRemaining) {
+      await db.collection('users').updateOne(
+        { _id: user._id },
+        { $set: quota }
+      );
+      user = { ...user, ...quota };
+    }
+
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

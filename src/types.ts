@@ -1,5 +1,11 @@
 export type Language = 'da' | 'en';
 
+export interface UserMemories {
+  global: string[];
+  da: string[];
+  en: string[];
+}
+
 export interface User {
   id: string;
   name: string;
@@ -13,6 +19,7 @@ export interface User {
   messagesRemaining: number;
   dailyLimit: number;
   resetAt: string;
+  memories?: UserMemories;
 }
 
 export interface Chat {
@@ -48,3 +55,13 @@ export interface SelectionData {
   y: number;
   placement: 'top' | 'bottom';
 }
+
+declare global {
+  interface Window {
+    google?: any;
+  }
+  interface ImportMeta {
+    readonly env: Record<string, string | undefined>;
+  }
+}
+
