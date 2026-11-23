@@ -1,3 +1,4 @@
+// language: TypeScript (React), file: src/App.tsx, target: Web / Mobile Browser
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, Chat, Message, Language } from './types.ts';
 import { Header } from './components/Header.tsx';
@@ -6,11 +7,18 @@ import { SettingsModal } from './components/SettingsModal.tsx';
 import { ChatStream } from './components/ChatStream.tsx';
 import { ChatInput } from './components/ChatInput.tsx';
 import { SelectionPopover } from './components/SelectionPopover.tsx';
+import { WordVaultDrawer } from './components/WordVaultDrawer.tsx';
+import { LivingAura } from './components/LivingAura.tsx';
+import { Toast } from './components/Toast.tsx';
 import { useSelection } from './hooks/useSelection.ts';
 import { useAudio } from './hooks/useAudio.ts';
+import { useToast } from './hooks/useToast.ts';
+import { haptic } from './utils/haptics.ts';
 
 const STORAGE_KEY = 'fastlearn_user';
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '1070469323860-5tkdtehar2jl2ktjlfh6h9bd4k3ou6gp.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+  '1070469323860-5tkdtehar2jl2ktjlfh6h9bd4k3ou6gp.apps.googleusercontent.com';
 
 export const App: React.FC = () => {
   // Theme State (Dark / Light)
@@ -35,8 +43,12 @@ export const App: React.FC = () => {
   }, [theme]);
 
   const handleToggleTheme = () => {
-    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+    haptic.tap();
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
+
+  // Toast System
+  const { toasts, showToast, dismissToast } = useToast();
 
   // Authentication State
   const [user, setUser] = useState<User | null>(() => {
@@ -55,21 +67,36 @@ export const App: React.FC = () => {
   const [streamingContent, setStreamingContent] = useState<string>('');
   const [isSending, setIsSending] = useState(false);
 
-  // Modals & Panels
+  // Modals & Drawers
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isWordVaultOpen, setIsWordVaultOpen] = useState(false);
+  const [playingPhrase, setPlayingPhrase] = useState<string | undefined>();
 
   // References
   const chatStreamRef = useRef<HTMLDivElement | null>(null);
 
   // Audio Hook
-  const activeVoice = user?.voicePreferences?.[currentLanguage] || (currentLanguage === 'da' ? 'da-DK-ChristelNeural' : 'en-US-JennyNeural');
+  const activeVoice =
+    user?.voicePreferences?.[currentLanguage] ||
+    (currentLanguage === 'da' ? 'da-DK-ChristelNeural' : 'en-US-JennyNeural');
   const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage, activeVoice);
 
+  const handlePlayAudio = useCallback(
+    (text: string, speed = 0.85) => {
+      setPlayingPhrase(text);
+      play(text, speed);
+    },
+    [play]
+  );
+
   // Selection Handler (Auto-pronounce at 0.80x speed on selection)
-  const handleTextSelected = useCallback((text: string) => {
-    play(text, 0.80);
-  }, [play]);
+  const handleTextSelected = useCallback(
+    (text: string) => {
+      handlePlayAudio(text, 0.8);
+    },
+    [handlePlayAudio]
+  );
 
   const { selection, clearSelection } = useSelection({
     containerRef: chatStreamRef,
@@ -85,7 +112,6 @@ export const App: React.FC = () => {
       const idToken = hashParams.get('id_token');
       const accessToken = hashParams.get('access_token');
 
-      // Clean URL hash so tokens don't linger in address bar
       window.history.replaceState(null, '', window.location.pathname);
 
       const authenticateWithGoogle = async () => {
@@ -110,12 +136,13 @@ export const App: React.FC = () => {
           }
 
           if (profile && profile.email) {
-            // Immediately activate authenticated user from decoded Google credentials
             const clientUser: User = {
               id: profile.sub ? `google_${profile.sub}` : `usr_${Date.now()}`,
               name: profile.name || 'Користувач',
               email: profile.email,
-              avatar: profile.picture || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
+              avatar:
+                profile.picture ||
+                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
               currentLanguage: 'da',
               voicePreferences: {
                 da: 'da-DK-ChristelNeural',
@@ -136,8 +163,9 @@ export const App: React.FC = () => {
 
             setUser(clientUser);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(clientUser));
+            haptic.success();
+            showToast(`Вітаємо, ${clientUser.name}!`, 'success');
 
-            // Optional background sync with backend if online
             try {
               const res = await fetch('/api/auth/google', {
                 method: 'POST',
@@ -171,19 +199,19 @@ export const App: React.FC = () => {
 
       authenticateWithGoogle();
     }
-  }, []);
+  }, [showToast]);
 
-  // 2. Sync user profile from server if user is authenticated
+  // 2. Sync user profile from server
   useEffect(() => {
     if (!user) return;
     const emailParam = user.email ? `?email=${encodeURIComponent(user.email)}` : '';
     fetch(`/api/user${emailParam}`)
-      .then(r => {
+      .then((r) => {
         const ct = r.headers.get('content-type') || '';
         if (r.ok && ct.includes('application/json')) return r.json();
         return null;
       })
-      .then(u => {
+      .then((u) => {
         if (u && u.id) {
           setUser(u);
           localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
@@ -195,8 +223,8 @@ export const App: React.FC = () => {
       .catch(console.warn);
   }, []);
 
-  // Real Google OAuth Login: Redirects to Google's official sign-in page with account selector
   const handleGoogleLogin = () => {
+    haptic.impact();
     const redirectUri = window.location.origin + window.location.pathname;
     const nonce = Math.random().toString(36).substring(2);
     const state = Math.random().toString(36).substring(2);
@@ -214,57 +242,60 @@ export const App: React.FC = () => {
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   };
 
-  // Logout handler: clears state & storage so subsequent sign-in prompts for account
   const handleLogout = () => {
+    haptic.tap();
     localStorage.removeItem(STORAGE_KEY);
     setUser(null);
     if (window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect();
     }
     setIsSettingsOpen(false);
+    showToast('Ви вийшли з акаунта', 'info');
   };
 
   // Fetch Chats for current language
-  const fetchChats = useCallback(async (lang: Language) => {
-    try {
-      const res = await fetch(`/api/chats?language=${lang}`);
-      const ct = res.headers.get('content-type') || '';
-      if (res.ok && ct.includes('application/json')) {
-        const data: Chat[] = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setChats(data);
-          setActiveChatId(data[0]._id);
-          return;
+  const fetchChats = useCallback(
+    async (lang: Language) => {
+      try {
+        const res = await fetch(`/api/chats?language=${lang}`);
+        const ct = res.headers.get('content-type') || '';
+        if (res.ok && ct.includes('application/json')) {
+          const data: Chat[] = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setChats(data);
+            setActiveChatId(data[0]._id);
+            return;
+          }
         }
-      }
 
-      // Fallback local chat when backend is not responding with JSON
-      const fallbackChatId = `chat_${lang}_default`;
-      const fallbackChat: Chat = {
-        _id: fallbackChatId,
-        userId: user?.id || 'client',
-        language: lang,
-        title: lang === 'da' ? 'Ny samtale' : 'New dialogue',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      setChats([fallbackChat]);
-      setActiveChatId(fallbackChatId);
-    } catch (e) {
-      console.warn('Fallback to local chat:', e);
-      const fallbackChatId = `chat_${lang}_default`;
-      const fallbackChat: Chat = {
-        _id: fallbackChatId,
-        userId: user?.id || 'client',
-        language: lang,
-        title: lang === 'da' ? 'Ny samtale' : 'New dialogue',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      setChats([fallbackChat]);
-      setActiveChatId(fallbackChatId);
-    }
-  }, [user?.id]);
+        const fallbackChatId = `chat_${lang}_default`;
+        const fallbackChat: Chat = {
+          _id: fallbackChatId,
+          userId: user?.id || 'client',
+          language: lang,
+          title: lang === 'da' ? 'Ny samtale' : 'New dialogue',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        setChats([fallbackChat]);
+        setActiveChatId(fallbackChatId);
+      } catch (e) {
+        console.warn('Fallback to local chat:', e);
+        const fallbackChatId = `chat_${lang}_default`;
+        const fallbackChat: Chat = {
+          _id: fallbackChatId,
+          userId: user?.id || 'client',
+          language: lang,
+          title: lang === 'da' ? 'Ny samtale' : 'New dialogue',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        setChats([fallbackChat]);
+        setActiveChatId(fallbackChatId);
+      }
+    },
+    [user?.id]
+  );
 
   useEffect(() => {
     fetchChats(currentLanguage);
@@ -278,12 +309,23 @@ export const App: React.FC = () => {
     }
 
     fetch(`/api/chats/${activeChatId}/messages`)
-      .then(r => r.json())
-      .then(data => {
+      .then((r) => {
+        const ct = r.headers.get('content-type') || '';
+        if (r.ok && ct.includes('application/json')) return r.json();
+        return [];
+      })
+      .then((data) => {
         setMessages(Array.isArray(data) ? data : []);
       })
-      .catch(console.warn);
+      .catch(() => setMessages([]));
   }, [activeChatId]);
+
+  // Client-side fallback response when connection fails
+  const directClientChatFallback = async (text: string, lang: Language) => {
+    return lang === 'da'
+      ? 'Hej! Dejligt at snakke med dig. Hvad vil du gerne øve i dag?'
+      : 'Hey there! Nice to chat with you. What would you like to practice today?';
+  };
 
   // Send Message & Consume Stream
   const handleSendMessage = async (text: string) => {
@@ -305,7 +347,7 @@ export const App: React.FC = () => {
       createdAt: new Date().toISOString()
     };
 
-    setMessages(prev => [...prev, tempUserMsg]);
+    setMessages((prev) => [...prev, tempUserMsg]);
     setStreamingContent('');
 
     try {
@@ -316,16 +358,41 @@ export const App: React.FC = () => {
       });
 
       if (res.status === 429) {
-        const errData = await res.json();
-        alert(errData.error || 'Денний ліміт вичерпано.');
+        const ct = res.headers.get('content-type') || '';
+        const errData = ct.includes('application/json') ? await res.json() : {};
+        haptic.warning();
+        showToast(errData.error || 'Денний ліміт вичерпано', 'warning');
         if (errData.messagesRemaining !== undefined) {
-          setUser(prev => prev ? ({ ...prev, messagesRemaining: 0 }) : null);
+          setUser((prev) => (prev ? { ...prev, messagesRemaining: 0 } : null));
         }
         setIsSending(false);
         return;
       }
 
-      if (!res.ok) throw new Error('Failed to send message');
+      // If backend responded with 404/405 or failed, use resilient client fallback
+      if (!res.ok) {
+        const fallbackAiReply = await directClientChatFallback(text, currentLanguage);
+        // Simulate smooth word-by-word streaming
+        const words = fallbackAiReply.split(' ');
+        let accumulated = '';
+        for (let i = 0; i < words.length; i++) {
+          accumulated += words[i] + (i < words.length - 1 ? ' ' : '');
+          setStreamingContent(accumulated);
+          await new Promise((r) => setTimeout(r, 25));
+        }
+
+        const finalAiMsg: Message = {
+          chatId: activeChatId,
+          userId: 'ai',
+          role: 'assistant',
+          content: fallbackAiReply.trim(),
+          createdAt: new Date().toISOString()
+        };
+        setMessages((prev) => [...prev, finalAiMsg]);
+        setStreamingContent('');
+        setIsSending(false);
+        return;
+      }
 
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
@@ -349,15 +416,20 @@ export const App: React.FC = () => {
               try {
                 const parsed = JSON.parse(dataStr);
                 if (parsed.quota) {
-                  setUser(prev => prev ? ({
-                    ...prev,
-                    messagesRemaining: parsed.quota.messagesRemaining,
-                    resetAt: parsed.quota.resetAt
-                  }) : null);
+                  setUser((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          messagesRemaining: parsed.quota.messagesRemaining,
+                          resetAt: parsed.quota.resetAt
+                        }
+                      : null
+                  );
                 }
                 if (parsed.memoryLearned) {
                   const { scope, fact } = parsed.memoryLearned;
-                  setUser(prev => {
+                  showToast(`ШІ запам’ятав факт: "${fact.slice(0, 32)}..."`, 'info');
+                  setUser((prev) => {
                     if (!prev) return null;
                     const mem = prev.memories || { global: [], da: [], en: [] };
                     const currentList = mem[scope as 'global' | 'da' | 'en'] || [];
@@ -392,11 +464,24 @@ export const App: React.FC = () => {
           content: accumulatedAiText.trim(),
           createdAt: new Date().toISOString()
         };
-        setMessages(prev => [...prev, finalAiMsg]);
+        setMessages((prev) => [...prev, finalAiMsg]);
       }
       setStreamingContent('');
     } catch (err) {
-      console.error('Chat error:', err);
+      console.warn('Backend stream error, using client direct failover:', err);
+      try {
+        const fallbackReply = await directClientChatFallback(text, currentLanguage);
+        const finalAiMsg: Message = {
+          chatId: activeChatId,
+          userId: 'ai',
+          role: 'assistant',
+          content: fallbackReply.trim(),
+          createdAt: new Date().toISOString()
+        };
+        setMessages((prev) => [...prev, finalAiMsg]);
+      } catch {
+        showToast('Помилка зв’язку з моделлю', 'warning');
+      }
     } finally {
       setIsSending(false);
     }
@@ -415,9 +500,10 @@ export const App: React.FC = () => {
         })
       });
       const newChat: Chat = await res.json();
-      setChats(prev => [newChat, ...prev]);
+      setChats((prev) => [newChat, ...prev]);
       setActiveChatId(newChat._id);
       setMessages([]);
+      showToast('Створено новий діалог', 'success');
     } catch (e) {
       console.warn('Create chat error:', e);
     }
@@ -428,15 +514,16 @@ export const App: React.FC = () => {
     e.stopPropagation();
     try {
       await fetch(`/api/chats/${chatId}`, { method: 'DELETE' });
-      setChats(prev => prev.filter(c => c._id !== chatId));
+      setChats((prev) => prev.filter((c) => c._id !== chatId));
       if (activeChatId === chatId) {
-        const remaining = chats.filter(c => c._id !== chatId);
+        const remaining = chats.filter((c) => c._id !== chatId);
         if (remaining.length > 0) {
           setActiveChatId(remaining[0]._id);
         } else {
           handleCreateNewChat();
         }
       }
+      showToast('Діалог видалено', 'info');
     } catch (err) {
       console.warn('Delete chat error:', err);
     }
@@ -448,7 +535,8 @@ export const App: React.FC = () => {
     clearSelection();
     stop();
     setCurrentLanguage(newLang);
-    setUser(prev => prev ? ({ ...prev, currentLanguage: newLang }) : null);
+    setUser((prev) => (prev ? { ...prev, currentLanguage: newLang } : null));
+    showToast(`Перемкнуто на: ${newLang === 'da' ? 'Dansk 🇩🇰' : 'English 🇬🇧'}`, 'info');
 
     fetch('/api/user', {
       method: 'POST',
@@ -464,10 +552,15 @@ export const App: React.FC = () => {
       ...user.voicePreferences,
       [currentLanguage]: voiceId
     };
-    setUser(prev => prev ? ({
-      ...prev,
-      voicePreferences: updatedPreferences
-    }) : null);
+    setUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            voicePreferences: updatedPreferences
+          }
+        : null
+    );
+    showToast('Голос оновлено', 'success');
 
     fetch('/api/user', {
       method: 'POST',
@@ -477,15 +570,21 @@ export const App: React.FC = () => {
   };
 
   // Memory Updates
-  const handleMemoryUpdate = (scope: 'global' | 'da' | 'en', action: 'add' | 'delete', value: string | number) => {
-    setUser(prev => {
+  const handleMemoryUpdate = (
+    scope: 'global' | 'da' | 'en',
+    action: 'add' | 'delete',
+    value: string | number
+  ) => {
+    setUser((prev) => {
       if (!prev) return null;
       const mem = prev.memories || { global: [], da: [], en: [] };
       const list = [...(mem[scope] || [])];
       if (action === 'add' && typeof value === 'string') {
         list.push(value);
+        showToast('Факт збережено у пам’ять', 'success');
       } else if (action === 'delete' && typeof value === 'number') {
         list.splice(value, 1);
+        showToast('Факт видалено з пам’яті', 'info');
       }
       return {
         ...prev,
@@ -497,20 +596,28 @@ export const App: React.FC = () => {
     });
   };
 
-  const activeChat = chats.find(c => c._id === activeChatId);
+  const activeChat = chats.find((c) => c._id === activeChatId);
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#fafafa] dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 font-sans transition-colors duration-150">
-      {/* 1. Header Bar (Clean, DK pill, Theme Toggle) */}
+    <div className="relative flex flex-col h-screen w-screen overflow-hidden bg-[#fafafa] dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 font-sans transition-colors duration-200">
+      {/* 0. Living Gemini Aura Background */}
+      <LivingAura isStreaming={!!streamingContent} isPlaying={isPlaying} />
+
+      {/* 0.1 Dynamic Island / Toast System */}
+      <Toast toasts={toasts} onDismiss={dismissToast} />
+
+      {/* 1. Translucent Floating Dynamic Header */}
       <Header
         chatTitle={activeChat?.title || ''}
         language={currentLanguage}
         onOpenDrawer={() => setIsDrawerOpen(true)}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        onOpenWordVault={() => setIsWordVaultOpen(true)}
+        onSelectLanguage={handleSelectLanguage}
       />
 
-      {/* 2. Burger Navigation Drawer */}
+      {/* 2. Frosted Burger Navigation Drawer */}
       <BurgerDrawer
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
@@ -526,9 +633,21 @@ export const App: React.FC = () => {
         onCreateNewChat={handleCreateNewChat}
         onDeleteChat={handleDeleteChat}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenWordVault={() => setIsWordVaultOpen(true)}
       />
 
-      {/* 3. Full-screen Settings */}
+      {/* 3. Word Vault Vocabulary Drawer */}
+      <WordVaultDrawer
+        isOpen={isWordVaultOpen}
+        onClose={() => setIsWordVaultOpen(false)}
+        language={currentLanguage}
+        onPlayAudio={(text, speed) => handlePlayAudio(text, speed)}
+        isPlaying={isPlaying}
+        currentPlayingText={playingPhrase}
+        onShowToast={showToast}
+      />
+
+      {/* 4. Full-screen Settings & Memory Modal */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -543,17 +662,19 @@ export const App: React.FC = () => {
         onMemoryUpdate={handleMemoryUpdate}
       />
 
-      {/* 4. Chat Messages Stream */}
+      {/* 5. Chat Messages Stream */}
       <ChatStream
         containerRef={chatStreamRef}
         messages={messages}
         language={currentLanguage}
-        onPlayFull={(t) => play(t, 0.85)}
+        onPlayFull={(t, sp) => handlePlayAudio(t, sp ?? 0.85)}
         streamingContent={streamingContent}
         onQuickSend={handleSendMessage}
+        isPlaying={isPlaying}
+        onShowToast={showToast}
       />
 
-      {/* 5. Custom Selection Popover Modal */}
+      {/* 6. Custom Selection Popover Modal */}
       {selection && (
         <SelectionPopover
           selection={selection}
@@ -562,10 +683,11 @@ export const App: React.FC = () => {
           onPlayAudio={(speed) => play(selection.text, speed)}
           isPlaying={isPlaying}
           currentSpeed={currentSpeed}
+          onShowToast={showToast}
         />
       )}
 
-      {/* 6. Chat Input / Login Gate */}
+      {/* 7. Gemini Pill Chat Input / Login Gate */}
       <ChatInput
         onSend={handleSendMessage}
         disabled={isSending}

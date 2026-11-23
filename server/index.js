@@ -560,6 +560,18 @@ app.get('/api/words', async (req, res) => {
   }
 });
 
+app.delete('/api/words', async (req, res) => {
+  const { phrase, language = 'da' } = req.body;
+  if (!phrase) return res.status(400).json({ error: 'Phrase is required' });
+  try {
+    const db = await getDb();
+    await db.collection('words').deleteOne({ userId: DEFAULT_USER.id, language, phrase });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const server = app.listen(PORT, () => {
   console.log(`[FastLearn Backend] Listening on http://localhost:${PORT}`);
 });

@@ -5,6 +5,12 @@
 @layer base {
   * {
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
   }
 
   html.dark {
@@ -15,124 +21,196 @@
 
   html.light, html:not(.dark) {
     color-scheme: light;
-    background-color: #fafafa;
+    background-color: #fbfbfb;
     color: #09090b;
   }
 
   body {
-    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
-    letter-spacing: -0.015em;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+    letter-spacing: -0.012em;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior-y: none;
   }
 
   html.dark ::selection {
-    background-color: rgba(234, 179, 8, 0.28);
+    background-color: rgba(234, 179, 8, 0.3);
     color: #fef08a;
   }
 
   html.light ::selection, html:not(.dark) ::selection {
-    background-color: rgba(234, 179, 8, 0.38);
+    background-color: rgba(234, 179, 8, 0.35);
     color: #000000;
   }
 }
 
-/* Custom minimal scrollbar */
+/* Safe Area Insets for Mobile */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 html.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
 }
 html.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.28);
 }
 html.light ::-webkit-scrollbar-thumb, html:not(.dark) ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.14);
-  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 9999px;
 }
 html.light ::-webkit-scrollbar-thumb:hover, html:not(.dark) ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.26);
+  background: rgba(0, 0, 0, 0.32);
 }
 
+/* Tabular Numbers */
 .tabular-numbers {
   font-variant-numeric: tabular-nums;
 }
 
-/* Animation Keyframes for Enter/Exit */
-@keyframes messageEnter {
+/* Glassmorphism Styles */
+.glass-island {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+html.dark .glass-island {
+  background: rgba(14, 14, 18, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+}
+
+.glass-pill {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+html.dark .glass-pill {
+  background: rgba(24, 24, 28, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+}
+
+.glass-drawer {
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  background: rgba(255, 255, 255, 0.94);
+}
+html.dark .glass-drawer {
+  background: rgba(12, 12, 15, 0.92);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 20px 0 50px -10px rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Sound Wave Equalizer Bars */
+@keyframes eqBar1 {
+  0%, 100% { height: 4px; }
+  50% { height: 16px; }
+}
+@keyframes eqBar2 {
+  0%, 100% { height: 14px; }
+  50% { height: 6px; }
+}
+@keyframes eqBar3 {
+  0%, 100% { height: 8px; }
+  50% { height: 18px; }
+}
+@keyframes eqBar4 {
+  0%, 100% { height: 16px; }
+  50% { height: 7px; }
+}
+
+.animate-eq-1 { animation: eqBar1 0.75s ease-in-out infinite; }
+.animate-eq-2 { animation: eqBar2 0.65s ease-in-out infinite; }
+.animate-eq-3 { animation: eqBar3 0.85s ease-in-out infinite; }
+.animate-eq-4 { animation: eqBar4 0.7s ease-in-out infinite; }
+
+/* Streaming Sparkle Beacon */
+@keyframes geminiGlow {
+  0%, 100% {
+    opacity: 0.6;
+    filter: drop-shadow(0 0 4px rgba(234, 179, 8, 0.4));
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 10px rgba(234, 179, 8, 0.8));
+    transform: scale(1.08);
+  }
+}
+.animate-gemini-glow {
+  animation: geminiGlow 2s ease-in-out infinite;
+}
+
+/* Kinetic Message Enter */
+@keyframes messageSlideIn {
   0% {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(10px) scale(0.985);
   }
   100% {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
+.animate-message-enter {
+  animation: messageSlideIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
 
-@keyframes popoverEnterTop {
+/* Spring Popover */
+@keyframes popoverSpringTop {
   0% {
     opacity: 0;
-    transform: translate(-50%, calc(-100% + 6px)) scale(0.97);
+    transform: translate(-50%, calc(-100% + 12px)) scale(0.92);
   }
   100% {
     opacity: 1;
     transform: translate(-50%, -100%) scale(1);
   }
 }
-
-@keyframes popoverEnterBottom {
+@keyframes popoverSpringBottom {
   0% {
     opacity: 0;
-    transform: translate(-50%, -6px) scale(0.97);
+    transform: translate(-50%, -12px) scale(0.92);
   }
   100% {
     opacity: 1;
     transform: translate(-50%, 0) scale(1);
   }
 }
-
-@keyframes subtlePulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
-}
-
-@keyframes soundWave {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.18);
-  }
-}
-
-.animate-message-enter {
-  animation: messageEnter 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
 .animate-popover-top {
-  animation: popoverEnterTop 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: popoverSpringTop 0.22s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
 }
-
 .animate-popover-bottom {
-  animation: popoverEnterBottom 0.16s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: popoverSpringBottom 0.22s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
 }
 
-.animate-subtle-pulse {
-  animation: subtlePulse 1.4s ease-in-out infinite;
-}
-
-.animate-sound-wave {
-  animation: soundWave 1.1s ease-in-out infinite;
+/* Subtle Shimmer for Tokens */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    currentColor 0%,
+    rgba(234, 179, 8, 0.95) 50%,
+    currentColor 100%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: shimmer 2.2s linear infinite;
 }
