@@ -87,7 +87,7 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     database: dbStatus,
-    provider: 'Google Gemini API (Gemma 4 31B)',
+    provider: 'Google Gemma 4 31B (Fallback: Gemma 4 26B A4B)',
     supportedLanguages: ['da', 'en'],
     voices: VOICES
   });
@@ -346,7 +346,7 @@ app.post('/api/chats/:id/messages', async (req, res) => {
       },
       onToolCall: async (name, args) => {
         console.log(`[Tool Invocation] ${name}:`, args);
-        if (name === 'remember_user_fact' && args.fact) {
+        if ((name === 'save_memory' || name === 'remember_user_fact') && args.fact) {
           const scope = ['global', 'da', 'en'].includes(args.scope) ? args.scope : 'global';
           await db.collection('users').updateOne(
             { id: DEFAULT_USER.id },
@@ -491,6 +491,14 @@ app.get('/api/words', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[FastLearn Backend] Listening on http://localhost:${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.warn(`[FastLearn Backend] Port ${PORT} already in use, retrying...`);
+  } else {
+    console.error('[FastLearn Backend Server error]', err);
+  }
 });
