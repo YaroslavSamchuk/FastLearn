@@ -8,6 +8,14 @@ import { streamChatCompletion } from './llm.js';
 
 dotenv.config();
 
+// Prevent any unhandled errors from terminating server
+process.on('uncaughtException', (err) => {
+  console.warn('[Uncaught Exception caught]', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.warn('[Unhandled Rejection caught]', reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const DAILY_LIMIT = 30;
@@ -50,7 +58,22 @@ const DEFAULT_USER = {
   },
   messagesRemaining: DAILY_LIMIT,
   dailyLimit: DAILY_LIMIT,
-  resetAt: new Date(Date.now() + RESET_WINDOW_HOURS * 3600 * 1000).toISOString()
+  resetAt: new Date(Date.now() + RESET_WINDOW_HOURS * 3600 * 1000).toISOString(),
+  memories: {
+    global: [
+      'Звати Ярослав (Yaroslav Samchuk). Рідна мова — українська.',
+      'Цінує стислість, природність, живий дружній тон без води та повчань.',
+      'Працює з технологіями та розробкою програмного забезпечення.'
+    ],
+    da: [
+      'Вивчає розмовну данську мову (Dansk) для повсякденного життя та спілкування.',
+      'Фокус на природному копенгагенському сленгу, зв\'язному мовленні та коротких фразах.'
+    ],
+    en: [
+      'Вільне повсякденне та ділове спілкування англійською.',
+      'Фокус на природних сучасних ідіомах та невимушеному листуванні.'
+    ]
+  }
 };
 
 // 1. Health & Config
@@ -78,6 +101,13 @@ app.get('/api/user', async (req, res) => {
     if (!user) {
       await db.collection('users').insertOne(DEFAULT_USER);
       user = DEFAULT_USER;
+    } else if (!user.memories) {
+      // Backfill default memories if missing
+      await db.collection('users').updateOne(
+        { id: DEFAULT_USER.id },
+        { $set: { memories: DEFAULT_USER.memories } }
+      );
+      user.memories = DEFAULT_USER.memories;
     }
 
     const quota = evaluateDailyQuota(user);
@@ -92,6 +122,59 @@ app.get('/api/user', async (req, res) => {
     res.json(user);
   } catch (e) {
     res.json(DEFAULT_USER);
+  }
+});
+
+// Memory Endpoints: Global and Per-Language Memory
+app.get('/api/user/memory', async (req, res) => {
+  try {
+    const db = await getDb();
+    const user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
+    res.json(user?.memories || DEFAULT_USER.memories);
+  } catch (e) {
+    res.json(DEFAULT_USER.memories);
+  }
+});
+
+app.post('/api/user/memory', async (req, res) => {
+  const { scope = 'global', fact } = req.body;
+  if (!fact || !fact.trim()) {
+    return res.status(400).json({ error: 'Fact content is required' });
+  }
+  const validScope = ['global', 'da', 'en'].includes(scope) ? scope : 'global';
+  try {
+    const db = await getDb();
+    await db.collection('users').updateOne(
+      { id: DEFAULT_USER.id },
+      { $push: { [`memories.${validScope}`]: fact.trim() } },
+      { upsert: true }
+    );
+    res.json({ success: true, scope: validScope, fact: fact.trim() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/user/memory', async (req, res) => {
+  const { scope = 'global', index } = req.body;
+  const validScope = ['global', 'da', 'en'].includes(scope) ? scope : 'global';
+  if (typeof index !== 'number') {
+    return res.status(400).json({ error: 'Valid index is required' });
+  }
+  try {
+    const db = await getDb();
+    const user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
+    const currentList = user?.memories?.[validScope] || [];
+    if (index >= 0 && index < currentList.length) {
+      currentList.splice(index, 1);
+      await db.collection('users').updateOne(
+        { id: DEFAULT_USER.id },
+        { $set: { [`memories.${validScope}`]: currentList } }
+      );
+    }
+    res.json({ success: true, memories: currentList });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -253,14 +336,44 @@ app.post('/api/chats/:id/messages', async (req, res) => {
 
     let fullAiResponse = '';
 
-    await streamChatCompletion(
-      formattedHistory,
+    await streamChatCompletion({
+      messages: formattedHistory,
       language,
-      (token) => {
+      userMemories: user.memories || DEFAULT_USER.memories,
+      onToken: (token) => {
         fullAiResponse += token;
         res.write(`data: ${JSON.stringify({ token })}\n\n`);
       },
-      async () => {
+      onToolCall: async (name, args) => {
+        console.log(`[Tool Invocation] ${name}:`, args);
+        if (name === 'remember_user_fact' && args.fact) {
+          const scope = ['global', 'da', 'en'].includes(args.scope) ? args.scope : 'global';
+          await db.collection('users').updateOne(
+            { id: DEFAULT_USER.id },
+            { $push: { [`memories.${scope}`]: args.fact.trim() } }
+          );
+          res.write(`data: ${JSON.stringify({ memoryLearned: { scope, fact: args.fact.trim() } })}\n\n`);
+          return `Fact remembered in ${scope} memory: ${args.fact}`;
+        } else if (name === 'save_word_to_vault' && args.phrase) {
+          const wordEntry = {
+            userId: DEFAULT_USER.id,
+            language: args.language || language,
+            phrase: args.phrase.trim(),
+            translation: (args.translation || '').trim(),
+            ipa: '',
+            createdAt: new Date()
+          };
+          await db.collection('words').updateOne(
+            { userId: DEFAULT_USER.id, language: wordEntry.language, phrase: wordEntry.phrase },
+            { $set: wordEntry },
+            { upsert: true }
+          );
+          res.write(`data: ${JSON.stringify({ wordSaved: wordEntry })}\n\n`);
+          return `Saved word "${args.phrase}" to vault`;
+        }
+        return 'tool processed';
+      },
+      onDone: async () => {
         // AI finished, save to MongoDB
         if (fullAiResponse.trim()) {
           const aiMsg = {
@@ -275,12 +388,12 @@ app.post('/api/chats/:id/messages', async (req, res) => {
         res.write(`data: [DONE]\n\n`);
         res.end();
       },
-      (err) => {
+      onError: (err) => {
         console.error('[Stream Error]', err);
         res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
         res.end();
       }
-    );
+    });
 
   } catch (e) {
     console.error('[Message Handler Error]', e);
@@ -301,10 +414,26 @@ app.get('/api/tts', async (req, res) => {
     const audioStream = await synthesizeEdgeSpeech(text, lang, parseFloat(speed), voice);
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
+    
+    audioStream.on('error', (err) => {
+      console.warn('[TTS Stream Handled]', err.message);
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
+
+    res.on('close', () => {
+      try {
+        audioStream.destroy?.();
+      } catch (e) {}
+    });
+
     audioStream.pipe(res);
   } catch (e) {
     console.error('[TTS Error]', e.message);
-    res.status(500).send(`TTS Error: ${e.message}`);
+    if (!res.headersSent) {
+      res.status(500).send(`TTS Error: ${e.message}`);
+    }
   }
 });
 
