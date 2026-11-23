@@ -10,6 +10,9 @@ export interface User {
     da: string;
     en: string;
   };
+  messagesRemaining: number;
+  dailyLimit: number;
+  resetAt: string;
 }
 
 export interface Chat {

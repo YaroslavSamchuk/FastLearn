@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-const API_KEYS = (process.env.NVIDIA_NIM_KEYS || '').split(',').map(k => k.trim()).filter(Boolean);
+const API_KEYS = (process.env.GEMINI_API_KEYS || '').split(',').map(k => k.trim()).filter(Boolean);
 let currentKeyIndex = 0;
 
 function getNextKey() {
@@ -31,14 +31,32 @@ Your replies MUST feel 100% human and informal:
 
 export async function streamChatCompletion(messages, language = 'da', onToken, onDone, onError) {
   const systemPrompt = PROMPTS[language] || PROMPTS.en;
-  const conversation = [
-    { role: 'system', content: systemPrompt },
-    ...messages.slice(-10)
+  
+  // Strict context clamp: Maximum last 8 messages to save input tokens
+  const clampedHistory = messages.slice(-8);
+
+  // Convert to Gemini contents format
+  const contents = [
+    {
+      role: 'user',
+      parts: [{ text: `[System Instruction: ${systemPrompt}]` }]
+    },
+    {
+      role: 'model',
+      parts: [{ text: language === 'da' ? 'Forstået, jeg skriver som en ven på dansk.' : 'Got it, texting naturally like a friend.' }]
+    },
+    ...clampedHistory.map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }))
   ];
 
+  // Primary: gemma-4-31b-it as requested by RIOT
+  // Fallbacks: gemma-4-26b-a4b-it & gemini-3.1-flash-lite
   const candidateModels = [
-    'nvidia/nemotron-3.5-lightning-30b-a3b',
-    'google/gemma-4-31b-it'
+    'gemma-4-31b-it',
+    'gemma-4-26b-a4b-it',
+    'gemini-3.1-flash-lite'
   ];
 
   let success = false;
@@ -47,87 +65,57 @@ export async function streamChatCompletion(messages, language = 'da', onToken, o
   for (const model of candidateModels) {
     const key = getNextKey();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
 
     try {
-      const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const res = await fetch(url, {
         method: 'POST',
         signal: controller.signal,
-        headers: {
-          'Authorization': `Bearer ${key}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model,
-          messages: conversation,
-          temperature: 0.75,
-          max_tokens: 1024,
-          stream: true
+          contents,
+          generationConfig: {
+            // Strict token clamp: Max 600 tokens (well within 800-1000 limit)
+            maxOutputTokens: 600,
+            temperature: 0.72
+          }
         })
       });
 
-      if (!res.ok) {
-        clearTimeout(timeout);
-        throw new Error(`NIM HTTP ${res.status}`);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let receivedTokens = 0;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-          const data = trimmed.slice(6).trim();
-          if (data === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const token = parsed.choices?.[0]?.delta?.content;
-            if (token) {
-              receivedTokens++;
-              onToken(token);
-            }
-          } catch (e) {
-            // Ignore incomplete JSON
-          }
-        }
-      }
-
       clearTimeout(timeout);
 
-      if (receivedTokens > 0) {
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(`Gemini HTTP ${res.status}: ${errJson.error?.message || res.statusText}`);
+      }
+
+      const data = await res.json();
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (rawText && rawText.trim()) {
+        const text = rawText.trim();
+        // Stream out in word-chunks with small timing to simulate natural typing
+        const words = text.split(' ');
+        for (let i = 0; i < words.length; i++) {
+          const wordToken = (i === 0 ? '' : ' ') + words[i];
+          onToken(wordToken);
+          // 15ms micro-delay for smooth text render
+          await new Promise(r => setTimeout(r, 15));
+        }
+
         success = true;
         onDone();
         break;
       }
     } catch (err) {
       clearTimeout(timeout);
-      console.warn(`[NIM] Model ${model} failed (${err.name}):`, err.message);
+      console.warn(`[Gemini API] Model ${model} failed (${err.name}):`, err.message);
       lastError = err;
     }
   }
 
   if (!success) {
-    // If external models failed, provide instant high-quality conversational fallback
-    const fallbackResponses = {
-      da: ['Hvad så! Alt vel her, hvad med dig?', 'Haha, det lyder da meget fedt! Hvad skal du lave i aften?', 'Ja helt sikkert, det giver god mening!'],
-      en: ['Hey! All good here, what about you?', 'Haha that sounds pretty cool! What are you up to today?', 'Totally, makes complete sense!']
-    };
-    const pool = fallbackResponses[language] || fallbackResponses.en;
-    const fallback = pool[Math.floor(Math.random() * pool.length)];
-    for (const char of fallback.split(' ')) {
-      onToken(char + ' ');
-    }
-    onDone();
+    if (onError) onError(lastError || new Error('All Gemini models failed'));
   }
 }

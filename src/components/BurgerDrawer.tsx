@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Chat, Language } from '../types.ts';
-import { X, Plus, Trash2, MessageSquare, Settings } from 'lucide-react';
+import { X, Plus, Trash2, MessageSquare, Settings, Zap, Clock } from 'lucide-react';
 
 interface BurgerDrawerProps {
   isOpen: boolean;
@@ -29,7 +29,34 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
   onDeleteChat,
   onOpenSettings
 }) => {
+  const [timeLeft, setTimeLeft] = useState<string>('');
+
+  useEffect(() => {
+    const updateCountdown = () => {
+      if (!user.resetAt) return;
+      const diffMs = new Date(user.resetAt).getTime() - Date.now();
+      if (diffMs <= 0) {
+        setTimeLeft('Оновлюється...');
+        return;
+      }
+      const hours = Math.floor(diffMs / (1000 * 60 * 60));
+      const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      setTimeLeft(`${hours} год ${mins} хв`);
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 60000); // update every minute
+    return () => clearInterval(interval);
+  }, [user.resetAt]);
+
   if (!isOpen) return null;
+
+  const remaining = typeof user.messagesRemaining === 'number' ? user.messagesRemaining : 30;
+  const limit = user.dailyLimit || 30;
+  const percentage = Math.max(0, Math.min(100, Math.round((remaining / limit) * 100)));
+
+  // Color dynamic
+  const barColor = remaining > 10 ? 'bg-amber-400' : remaining > 3 ? 'bg-amber-500' : 'bg-red-500';
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -79,7 +106,38 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
           </div>
         </div>
 
-        {/* Language Tabs (Segregated Chats) */}
+        {/* --- DAILY QUOTA METER (Між акаунтом та списком чатів) --- */}
+        <div className="p-3 border-b border-white/10 bg-[#121216]">
+          <div className="flex items-center justify-between text-[11px] font-mono mb-1.5">
+            <span className="flex items-center gap-1 text-zinc-400 uppercase tracking-wider text-[10px]">
+              <Zap className="w-3 h-3 text-amber-400 shrink-0" />
+              Денний ліміт
+            </span>
+            <span className="font-semibold text-zinc-200">
+              <span className={remaining <= 5 ? 'text-red-400' : 'text-amber-400'}>{remaining}</span>
+              <span className="text-zinc-500"> / {limit}</span>
+            </span>
+          </div>
+
+          {/* Progress Track */}
+          <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mb-1.5">
+            <div
+              className={`h-full ${barColor} transition-all duration-300 rounded-full`}
+              style={{ width: `${percentage}%` }}
+            />
+          </div>
+
+          {/* Reset Time Countdown */}
+          <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
+            <span className="flex items-center gap-1">
+              <Clock className="w-2.5 h-2.5 text-zinc-500" />
+              Скидання:
+            </span>
+            <span className="text-zinc-400">{timeLeft || '15 годин'}</span>
+          </div>
+        </div>
+
+        {/* Language Tabs */}
         <div className="p-2 border-b border-white/10">
           <div className="grid grid-cols-2 gap-1 bg-white/5 p-1 rounded border border-white/5">
             <button
@@ -161,8 +219,8 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
 
         {/* Footer info */}
         <div className="p-3 border-t border-white/10 text-[10px] font-mono text-zinc-500 flex items-center justify-between">
-          <span>FastLearn</span>
-          <span className="text-zinc-600">v1.0 · brutal</span>
+          <span>FastLearn · Gemini</span>
+          <span className="text-zinc-600">v1.2 · brutal</span>
         </div>
       </div>
     </div>

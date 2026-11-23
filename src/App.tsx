@@ -20,7 +20,10 @@ export const App: React.FC = () => {
     voicePreferences: {
       da: 'da-DK-ChristelNeural',
       en: 'en-US-JennyNeural'
-    }
+    },
+    messagesRemaining: 30,
+    dailyLimit: 30,
+    resetAt: new Date(Date.now() + 15 * 3600 * 1000).toISOString()
   });
 
   const [currentLanguage, setCurrentLanguage] = useState<Language>('da');
@@ -43,7 +46,6 @@ export const App: React.FC = () => {
 
   // Selection Handler (Auto-pronounce at 0.80x speed on selection)
   const handleTextSelected = useCallback((text: string) => {
-    // Immediate audio pronunciation at 0.80x speed
     play(text, 0.80);
   }, [play]);
 
@@ -53,7 +55,7 @@ export const App: React.FC = () => {
     maxWords: 30
   });
 
-  // 1. Initial Load: User & Preferences
+  // 1. Initial Load: User, Preferences & Daily Quota
   useEffect(() => {
     fetch('/api/user')
       .then(r => r.json())
@@ -78,7 +80,6 @@ export const App: React.FC = () => {
       if (data.length > 0) {
         setActiveChatId(data[0]._id);
       } else {
-        // Create initial chat automatically if none exists
         const createRes = await fetch('/api/chats', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -115,7 +116,7 @@ export const App: React.FC = () => {
       .catch(console.warn);
   }, [activeChatId]);
 
-  // 4. Send Message & Consume SSE Stream
+  // 4. Send Message & Consume Stream
   const handleSendMessage = async (text: string) => {
     if (!activeChatId || isSending) return;
 
@@ -141,6 +142,16 @@ export const App: React.FC = () => {
         body: JSON.stringify({ content: text, language: currentLanguage })
       });
 
+      if (res.status === 429) {
+        const errData = await res.json();
+        alert(errData.error || 'Денний ліміт вичерпано.');
+        if (errData.messagesRemaining !== undefined) {
+          setUser(prev => ({ ...prev, messagesRemaining: 0 }));
+        }
+        setIsSending(false);
+        return;
+      }
+
       if (!res.ok) throw new Error('Failed to send message');
 
       const reader = res.body?.getReader();
@@ -161,24 +172,28 @@ export const App: React.FC = () => {
             const trimmed = line.trim();
             if (trimmed.startsWith('data: ')) {
               const dataStr = trimmed.slice(6);
-              if (dataStr === '[DONE]') {
-                continue;
-              }
+              if (dataStr === '[DONE]') continue;
               try {
                 const parsed = JSON.parse(dataStr);
+                if (parsed.quota) {
+                  // Live quota update from server
+                  setUser(prev => ({
+                    ...prev,
+                    messagesRemaining: parsed.quota.messagesRemaining,
+                    resetAt: parsed.quota.resetAt
+                  }));
+                }
                 if (parsed.token) {
                   accumulatedAiText += parsed.token;
                   setStreamingContent(accumulatedAiText);
                 }
-              } catch (e) {
-                // ignore
-              }
+              } catch (e) {}
             }
           }
         }
       }
 
-      // Finalize message in state
+      // Finalize AI message
       if (accumulatedAiText.trim()) {
         const finalAiMsg: Message = {
           chatId: activeChatId,
@@ -270,7 +285,7 @@ export const App: React.FC = () => {
     }).catch(console.warn);
   };
 
-  // 9. Logout / Switch Account
+  // 9. Logout
   const handleLogout = () => {
     if (window.google?.accounts?.id) {
       window.google.accounts.id.disableAutoSelect();
@@ -338,11 +353,12 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* 6. Chat Input Composer */}
+      {/* 6. Chat Input Composer with Quota Enforcement */}
       <ChatInput
         onSend={handleSendMessage}
         disabled={isSending}
         language={currentLanguage}
+        remainingMessages={user.messagesRemaining}
       />
     </div>
   );

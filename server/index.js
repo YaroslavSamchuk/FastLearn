@@ -10,11 +10,34 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const DAILY_LIMIT = 30;
+const RESET_WINDOW_HOURS = 15; // User specified e.g. 15 hours cycle
 
 app.use(cors());
 app.use(express.json());
 
-// Default user for seamless dev / unauthenticated state
+// Helper to check and reset daily quota
+function evaluateDailyQuota(user) {
+  const now = Date.now();
+  const resetAt = user.resetAt ? new Date(user.resetAt).getTime() : 0;
+
+  if (now >= resetAt || !user.resetAt) {
+    const nextReset = new Date(now + RESET_WINDOW_HOURS * 3600 * 1000);
+    return {
+      messagesRemaining: DAILY_LIMIT,
+      dailyLimit: DAILY_LIMIT,
+      resetAt: nextReset.toISOString()
+    };
+  }
+
+  return {
+    messagesRemaining: typeof user.messagesRemaining === 'number' ? user.messagesRemaining : DAILY_LIMIT,
+    dailyLimit: DAILY_LIMIT,
+    resetAt: user.resetAt
+  };
+}
+
+// Default user
 const DEFAULT_USER = {
   id: 'usr_yaroslav_01',
   name: 'Yaroslav Samchuk',
@@ -24,7 +47,10 @@ const DEFAULT_USER = {
   voicePreferences: {
     da: 'da-DK-ChristelNeural',
     en: 'en-US-JennyNeural'
-  }
+  },
+  messagesRemaining: DAILY_LIMIT,
+  dailyLimit: DAILY_LIMIT,
+  resetAt: new Date(Date.now() + RESET_WINDOW_HOURS * 3600 * 1000).toISOString()
 };
 
 // 1. Health & Config
@@ -38,12 +64,13 @@ app.get('/api/health', async (req, res) => {
   res.json({
     status: 'online',
     database: dbStatus,
+    provider: 'Google Gemini API (Gemma 4 31B)',
     supportedLanguages: ['da', 'en'],
     voices: VOICES
   });
 });
 
-// 2. User & Preferences
+// 2. User & Preferences & Daily Quota
 app.get('/api/user', async (req, res) => {
   try {
     const db = await getDb();
@@ -52,6 +79,16 @@ app.get('/api/user', async (req, res) => {
       await db.collection('users').insertOne(DEFAULT_USER);
       user = DEFAULT_USER;
     }
+
+    const quota = evaluateDailyQuota(user);
+    if (quota.resetAt !== user.resetAt || quota.messagesRemaining !== user.messagesRemaining) {
+      await db.collection('users').updateOne(
+        { id: DEFAULT_USER.id },
+        { $set: quota }
+      );
+      user = { ...user, ...quota };
+    }
+
     res.json(user);
   } catch (e) {
     res.json(DEFAULT_USER);
@@ -138,7 +175,7 @@ app.get('/api/chats/:id/messages', async (req, res) => {
   }
 });
 
-// 5. Send message & Stream AI completion
+// 5. Send message & Stream AI completion (Enforcing Daily Limit)
 app.post('/api/chats/:id/messages', async (req, res) => {
   const chatId = req.params.id;
   const { content, language = 'da' } = req.body;
@@ -149,6 +186,26 @@ app.post('/api/chats/:id/messages', async (req, res) => {
 
   try {
     const db = await getDb();
+    let user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
+    if (!user) user = DEFAULT_USER;
+
+    const quota = evaluateDailyQuota(user);
+
+    // Enforce quota
+    if (quota.messagesRemaining <= 0) {
+      return res.status(429).json({
+        error: 'Денний ліміт вичерпано. Зачекайте оновлення або спробуйте пізніше.',
+        messagesRemaining: 0,
+        resetAt: quota.resetAt
+      });
+    }
+
+    // Decrement remaining messages
+    const newRemaining = quota.messagesRemaining - 1;
+    await db.collection('users').updateOne(
+      { id: DEFAULT_USER.id },
+      { $set: { messagesRemaining: newRemaining, resetAt: quota.resetAt } }
+    );
     
     // Save user message
     const userMsg = {
@@ -160,13 +217,13 @@ app.post('/api/chats/:id/messages', async (req, res) => {
     };
     await db.collection('messages').insertOne(userMsg);
 
-    // Fetch conversation context for AI
+    // Fetch conversation context for AI (strict limit: last 8 messages)
     const history = await db.collection('messages')
       .find({ chatId })
       .sort({ createdAt: 1 })
       .toArray();
 
-    const formattedHistory = history.map(m => ({
+    const formattedHistory = history.slice(-8).map(m => ({
       role: m.role,
       content: m.content
     }));
@@ -190,6 +247,9 @@ app.post('/api/chats/:id/messages', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
+
+    // Send quota update event first
+    res.write(`data: ${JSON.stringify({ quota: { messagesRemaining: newRemaining, resetAt: quota.resetAt } })}\n\n`);
 
     let fullAiResponse = '';
 
@@ -240,7 +300,7 @@ app.get('/api/tts', async (req, res) => {
   try {
     const audioStream = await synthesizeEdgeSpeech(text, lang, parseFloat(speed), voice);
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache audio for 24h
+    res.setHeader('Cache-Control', 'public, max-age=86400');
     audioStream.pipe(res);
   } catch (e) {
     console.error('[TTS Error]', e.message);
@@ -264,7 +324,7 @@ app.post('/api/transcribe', async (req, res) => {
   }
 });
 
-// 8. Word Vault (Saved vocabulary for spaced repetition)
+// 8. Word Vault
 app.post('/api/words', async (req, res) => {
   const { phrase, translation, ipa, language = 'da' } = req.body;
   try {
