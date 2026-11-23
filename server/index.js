@@ -1,0 +1,307 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import { getDb, ObjectId } from './db.js';
+import { synthesizeEdgeSpeech, VOICES } from './tts.js';
+import { resolveTranscriptionAndTranslation } from './transcribe.js';
+import { streamChatCompletion } from './llm.js';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.use(cors());
+app.use(express.json());
+
+// Default user for seamless dev / unauthenticated state
+const DEFAULT_USER = {
+  id: 'usr_yaroslav_01',
+  name: 'Yaroslav Samchuk',
+  email: 'samchukyaroslav@gmail.com',
+  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
+  currentLanguage: 'da',
+  voicePreferences: {
+    da: 'da-DK-ChristelNeural',
+    en: 'en-US-JennyNeural'
+  }
+};
+
+// 1. Health & Config
+app.get('/api/health', async (req, res) => {
+  let dbStatus = 'ok';
+  try {
+    await getDb();
+  } catch (e) {
+    dbStatus = e.message;
+  }
+  res.json({
+    status: 'online',
+    database: dbStatus,
+    supportedLanguages: ['da', 'en'],
+    voices: VOICES
+  });
+});
+
+// 2. User & Preferences
+app.get('/api/user', async (req, res) => {
+  try {
+    const db = await getDb();
+    let user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
+    if (!user) {
+      await db.collection('users').insertOne(DEFAULT_USER);
+      user = DEFAULT_USER;
+    }
+    res.json(user);
+  } catch (e) {
+    res.json(DEFAULT_USER);
+  }
+});
+
+app.post('/api/user', async (req, res) => {
+  try {
+    const { currentLanguage, voicePreferences } = req.body;
+    const db = await getDb();
+    const update = {};
+    if (currentLanguage) update.currentLanguage = currentLanguage;
+    if (voicePreferences) update.voicePreferences = voicePreferences;
+    
+    await db.collection('users').updateOne(
+      { id: DEFAULT_USER.id },
+      { $set: update },
+      { upsert: true }
+    );
+    res.json({ success: true, update });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 3. Chats (Segregated by Language)
+app.get('/api/chats', async (req, res) => {
+  const language = req.query.language || 'da';
+  try {
+    const db = await getDb();
+    const chats = await db.collection('chats')
+      .find({ userId: DEFAULT_USER.id, language })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    res.json(chats);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/chats', async (req, res) => {
+  const { language = 'da', title } = req.body;
+  try {
+    const db = await getDb();
+    const defaultTitle = language === 'da' ? 'Ny samtale' : 'New conversation';
+    const newChat = {
+      userId: DEFAULT_USER.id,
+      language,
+      title: title || defaultTitle,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    const result = await db.collection('chats').insertOne(newChat);
+    res.json({ ...newChat, _id: result.insertedId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/chats/:id', async (req, res) => {
+  try {
+    const db = await getDb();
+    const chatId = req.params.id;
+    await db.collection('chats').deleteOne({ _id: new ObjectId(chatId) });
+    await db.collection('messages').deleteMany({ chatId });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 4. Messages
+app.get('/api/chats/:id/messages', async (req, res) => {
+  try {
+    const db = await getDb();
+    const chatId = req.params.id;
+    const messages = await db.collection('messages')
+      .find({ chatId })
+      .sort({ createdAt: 1 })
+      .toArray();
+    res.json(messages);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 5. Send message & Stream AI completion
+app.post('/api/chats/:id/messages', async (req, res) => {
+  const chatId = req.params.id;
+  const { content, language = 'da' } = req.body;
+  
+  if (!content?.trim()) {
+    return res.status(400).json({ error: 'Message content is required' });
+  }
+
+  try {
+    const db = await getDb();
+    
+    // Save user message
+    const userMsg = {
+      chatId,
+      userId: DEFAULT_USER.id,
+      role: 'user',
+      content: content.trim(),
+      createdAt: new Date()
+    };
+    await db.collection('messages').insertOne(userMsg);
+
+    // Fetch conversation context for AI
+    const history = await db.collection('messages')
+      .find({ chatId })
+      .sort({ createdAt: 1 })
+      .toArray();
+
+    const formattedHistory = history.map(m => ({
+      role: m.role,
+      content: m.content
+    }));
+
+    // Update chat title if it's the first message
+    if (history.length <= 1) {
+      const summaryTitle = content.slice(0, 30);
+      await db.collection('chats').updateOne(
+        { _id: new ObjectId(chatId) },
+        { $set: { title: summaryTitle, updatedAt: new Date() } }
+      );
+    } else {
+      await db.collection('chats').updateOne(
+        { _id: new ObjectId(chatId) },
+        { $set: { updatedAt: new Date() } }
+      );
+    }
+
+    // Set up SSE for streaming AI response
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    let fullAiResponse = '';
+
+    await streamChatCompletion(
+      formattedHistory,
+      language,
+      (token) => {
+        fullAiResponse += token;
+        res.write(`data: ${JSON.stringify({ token })}\n\n`);
+      },
+      async () => {
+        // AI finished, save to MongoDB
+        if (fullAiResponse.trim()) {
+          const aiMsg = {
+            chatId,
+            userId: DEFAULT_USER.id,
+            role: 'assistant',
+            content: fullAiResponse.trim(),
+            createdAt: new Date()
+          };
+          await db.collection('messages').insertOne(aiMsg);
+        }
+        res.write(`data: [DONE]\n\n`);
+        res.end();
+      },
+      (err) => {
+        console.error('[Stream Error]', err);
+        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        res.end();
+      }
+    );
+
+  } catch (e) {
+    console.error('[Message Handler Error]', e);
+    if (!res.headersSent) {
+      res.status(500).json({ error: e.message });
+    }
+  }
+});
+
+// 6. Edge-TTS Audio Generation
+app.get('/api/tts', async (req, res) => {
+  const { text, lang = 'da', speed = '0.80', voice } = req.query;
+  if (!text) {
+    return res.status(400).send('Missing text parameter');
+  }
+
+  try {
+    const audioStream = await synthesizeEdgeSpeech(text, lang, parseFloat(speed), voice);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache audio for 24h
+    audioStream.pipe(res);
+  } catch (e) {
+    console.error('[TTS Error]', e.message);
+    res.status(500).send(`TTS Error: ${e.message}`);
+  }
+});
+
+// 7. Free Transcription & Translation
+app.post('/api/transcribe', async (req, res) => {
+  const { text, lang = 'da', userLang = 'uk' } = req.body;
+  if (!text) {
+    return res.status(400).json({ error: 'Missing text' });
+  }
+
+  try {
+    const result = await resolveTranscriptionAndTranslation(text, lang, userLang);
+    res.json(result);
+  } catch (e) {
+    console.error('[Transcribe Error]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 8. Word Vault (Saved vocabulary for spaced repetition)
+app.post('/api/words', async (req, res) => {
+  const { phrase, translation, ipa, language = 'da' } = req.body;
+  try {
+    const db = await getDb();
+    const wordEntry = {
+      userId: DEFAULT_USER.id,
+      language,
+      phrase: phrase.trim(),
+      translation: translation.trim(),
+      ipa: ipa.trim(),
+      createdAt: new Date()
+    };
+    await db.collection('words').updateOne(
+      { userId: DEFAULT_USER.id, language, phrase: wordEntry.phrase },
+      { $set: wordEntry },
+      { upsert: true }
+    );
+    res.json({ success: true, word: wordEntry });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/words', async (req, res) => {
+  const language = req.query.language || 'da';
+  try {
+    const db = await getDb();
+    const words = await db.collection('words')
+      .find({ userId: DEFAULT_USER.id, language })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(words);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`[FastLearn Backend] Listening on http://localhost:${PORT}`);
+});
