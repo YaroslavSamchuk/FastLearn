@@ -1157,8 +1157,22 @@ async function handleTitle(request: Request, env: Env, id: string): Promise<Resp
 }
 
 async function handleGoogleStart(request: Request, env: Env): Promise<Response> {
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.MONGODB_URI) {
-    throw new HttpError(503, 'Google login is not configured on this Worker');
+  const missing = ([
+    ['GOOGLE_CLIENT_ID', env.GOOGLE_CLIENT_ID],
+    ['GOOGLE_CLIENT_SECRET', env.GOOGLE_CLIENT_SECRET],
+    ['MONGODB_URI', env.MONGODB_URI]
+  ] as const)
+    .filter(([, value]) => typeof value !== 'string' || !value.trim())
+    .map(([name]) => name);
+
+  if (missing.length > 0) {
+    logEvent('worker_config_missing', { endpoint: '/api/auth/google/start', missing });
+    return json({
+      error: `Google login cannot start: missing Worker runtime secret(s): ${missing.join(', ')}.`,
+      code: 'WORKER_CONFIG_MISSING',
+      missing,
+      hint: 'Add these under Worker Settings > Variables and secrets for Production (not Builds), then deploy a new Worker version.'
+    }, 503);
   }
 
   const origin = getAllowedOrigin(request);

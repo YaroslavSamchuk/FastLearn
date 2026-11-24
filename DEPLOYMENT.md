@@ -25,6 +25,10 @@ npx wrangler secret put GOOGLE_CLIENT_SECRET
 
 `DB_NAME` is configured as a non-secret Worker variable in `wrangler.toml`.
 
+## Sign-in configuration errors
+
+If `/api/auth/google/start` returns `WORKER_CONFIG_MISSING`, its JSON response lists the missing runtime variables without exposing their values. Add them under the Worker’s **Settings → Variables and secrets** for **Production**, not under **Builds**, then deploy a new Worker version.
+
 ## Deploy order
 
 Build and deploy the API Worker first, so it has its MongoDB Durable Object binding:
