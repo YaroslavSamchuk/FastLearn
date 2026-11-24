@@ -1,64 +1,36 @@
-import { MongoClient, ObjectId } from 'mongodb';
-import dotenv from 'dotenv';
-dotenv.config();
+import { MongoClient } from 'mongodb';
 
-const uri = process.env.MONGODB_URI;
-const dbName = process.env.DB_NAME || 'fastlearn';
+let client;
+let database;
 
-let client = null;
-let db = null;
+export async function connectDatabase() {
+  if (database) return database;
 
-export async function getDb() {
-  if (db && client) {
-    try {
-      // Fast ping check to verify socket is still alive after system sleep
-      await client.db('admin').command({ ping: 1 });
-      return db;
-    } catch (e) {
-      console.warn('[MongoDB] Connection lost or stale after sleep, reconnecting...');
-      try {
-        await client.close();
-      } catch (err) {}
-      client = null;
-      db = null;
-    }
-  }
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error('MONGODB_URI is not configured');
 
-  try {
-    client = new MongoClient(uri, {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 8000,
-      socketTimeoutMS: 45000,
-      connectTimeoutMS: 10000,
-    });
+  client = new MongoClient(uri);
+  await client.connect();
+  database = client.db(process.env.DB_NAME || 'fastlearn');
 
-    client.on('error', (err) => {
-      console.warn('[MongoDB Client Event Error]', err.message);
-    });
+  await Promise.all([
+    database.collection('users').createIndex({ googleSub: 1 }, { unique: true }),
+    database.collection('sessions').createIndex({ tokenHash: 1 }, { unique: true }),
+    database.collection('sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    database.collection('oauth_states').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    database.collection('workspaces').createIndex({ ownerId: 1 }, { unique: true }),
+  ]);
 
-    client.on('close', () => {
-      console.warn('[MongoDB Client Closed]');
-      client = null;
-      db = null;
-    });
-
-    await client.connect();
-    db = client.db(dbName);
-    
-    // Ensure indexes
-    await db.collection('chats').createIndex({ userId: 1, language: 1, updatedAt: -1 });
-    await db.collection('messages').createIndex({ chatId: 1, createdAt: 1 });
-    await db.collection('words').createIndex({ userId: 1, language: 1 });
-    await db.collection('transcription_cache').createIndex({ key: 1 }, { unique: true });
-    
-    console.log('[MongoDB] Connected & indexes verified on', dbName);
-    return db;
-  } catch (err) {
-    console.error('[MongoDB] Connection error:', err.message);
-    client = null;
-    db = null;
-    throw err;
-  }
+  return database;
 }
 
-export { ObjectId };
+export function getDatabase() {
+  if (!database) throw new Error('MongoDB is not connected');
+  return database;
+}
+
+export async function closeDatabase() {
+  if (client) await client.close();
+  client = undefined;
+  database = undefined;
+}

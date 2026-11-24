@@ -7,32 +7,28 @@ interface AudioVisualizerProps {
   barColor?: string;
 }
 
+const BARS = ['animate-eq-1', 'animate-eq-2', 'animate-eq-3', 'animate-eq-4'];
+const IDLE_HEIGHTS = ['h-1.5', 'h-2.5', 'h-1.5', 'h-2'];
+
 export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
   isPlaying,
   className = '',
-  barColor = 'bg-amber-400'
+  barColor = 'bg-amber-500'
 }) => {
-  if (!isPlaying) {
-    return (
-      <div className={`flex items-center gap-[2.5px] h-4 px-1 ${className}`} aria-hidden="true">
-        <span className={`w-[2.5px] h-1.5 rounded-full ${barColor} opacity-40 transition-all`} />
-        <span className={`w-[2.5px] h-2.5 rounded-full ${barColor} opacity-40 transition-all`} />
-        <span className={`w-[2.5px] h-1.5 rounded-full ${barColor} opacity-40 transition-all`} />
-        <span className={`w-[2.5px] h-2 rounded-full ${barColor} opacity-40 transition-all`} />
-      </div>
-    );
-  }
-
   return (
-    <div
-      className={`flex items-center gap-[2.5px] h-4 px-1 ${className}`}
-      title="Відтворюється озвучення"
-      aria-label="Аудіо відтворюється"
+    <span
+      className={`inline-flex h-4 items-center gap-[2.5px] ${className}`}
+      role="img"
+      aria-label={isPlaying ? 'Аудіо відтворюється' : 'Аудіо зупинено'}
     >
-      <span className={`w-[2.5px] rounded-full ${barColor} animate-eq-1 shadow-[0_0_8px_rgba(234,179,8,0.6)]`} />
-      <span className={`w-[2.5px] rounded-full ${barColor} animate-eq-2 shadow-[0_0_8px_rgba(234,179,8,0.6)]`} />
-      <span className={`w-[2.5px] rounded-full ${barColor} animate-eq-3 shadow-[0_0_8px_rgba(234,179,8,0.6)]`} />
-      <span className={`w-[2.5px] rounded-full ${barColor} animate-eq-4 shadow-[0_0_8px_rgba(234,179,8,0.6)]`} />
-    </div>
+      {BARS.map((animation, index) => (
+        <span
+          key={animation}
+          className={`w-[2.5px] rounded-full ${barColor} ${
+            isPlaying ? animation : `${IDLE_HEIGHTS[index]} opacity-40`
+          }`}
+        />
+      ))}
+    </span>
   );
 };

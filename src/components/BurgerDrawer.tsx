@@ -1,8 +1,10 @@
 // language: TypeScript (React), file: src/components/BurgerDrawer.tsx, target: Web / Mobile Browser
-import React, { useState, useEffect } from 'react';
-import { User, Chat, Language } from '../types.ts';
-import { X, Plus, Trash2, MessageSquare, Settings, Bookmark, LogOut, Sparkles } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { User, Chat, Language, Quota } from '../types.ts';
+import { X, Plus, Trash2, MessageSquare, Settings, LogOut } from 'lucide-react';
 import { haptic } from '../utils/haptics.ts';
+import { UserAvatar } from './UserAvatar.tsx';
+import { formatResetAt } from '../lib/data.ts';
 
 interface BurgerDrawerProps {
   isOpen: boolean;
@@ -12,14 +14,13 @@ interface BurgerDrawerProps {
   onLogin: () => void;
   onLogout: () => void;
   currentLanguage: Language;
-  onSelectLanguage: (lang: Language) => void;
   chats: Chat[];
   activeChatId: string | null;
   onSelectChat: (chatId: string) => void;
   onCreateNewChat: () => void;
-  onDeleteChat: (chatId: string, e: React.MouseEvent) => void;
+  onDeleteChat: (chatId: string) => void;
   onOpenSettings: () => void;
-  onOpenWordVault?: () => void;
+  quota: Quota;
 }
 
 export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
@@ -30,18 +31,16 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
   onLogin,
   onLogout,
   currentLanguage,
-  onSelectLanguage,
   chats,
   activeChatId,
   onSelectChat,
   onCreateNewChat,
   onDeleteChat,
   onOpenSettings,
-  onOpenWordVault
+  quota
 }) => {
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isVisible, setIsVisible] = useState(false);
-  const [timeLeft, setTimeLeft] = useState<string>('');
 
   useEffect(() => {
     if (isOpen) {
@@ -50,37 +49,17 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
         requestAnimationFrame(() => setIsVisible(true));
       });
       return () => cancelAnimationFrame(frameId);
-    } else {
-      setIsVisible(false);
-      const timer = setTimeout(() => setShouldRender(false), 240);
-      return () => clearTimeout(timer);
     }
+
+    setIsVisible(false);
+    const timer = window.setTimeout(() => setShouldRender(false), 200);
+    return () => window.clearTimeout(timer);
   }, [isOpen]);
-
-  useEffect(() => {
-    const updateCountdown = () => {
-      if (!user?.resetAt) return;
-      const diffMs = new Date(user.resetAt).getTime() - Date.now();
-      if (diffMs <= 0) {
-        setTimeLeft('сьогодні');
-        return;
-      }
-      const hours = Math.floor(diffMs / (1000 * 60 * 60));
-      const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-      setTimeLeft(`${hours} год ${mins} хв`);
-    };
-
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 60000);
-    return () => clearInterval(interval);
-  }, [user?.resetAt]);
 
   if (!shouldRender) return null;
 
-  const remaining = typeof user?.messagesRemaining === 'number' ? user.messagesRemaining : 30;
-  const limit = user?.dailyLimit || 30;
-  const percentage = Math.max(0, Math.min(100, Math.round((remaining / limit) * 100)));
-  const barColor = remaining > 10 ? 'bg-amber-400' : remaining > 3 ? 'bg-yellow-500' : 'bg-red-500';
+  const percentage = Math.max(0, Math.min(100, Math.round((quota.remaining / quota.limit) * 100)));
+  const quotaColor = quota.remaining <= 5 ? 'bg-red-500' : 'bg-amber-500';
 
   const handleCreateChat = () => {
     haptic.send();
@@ -100,17 +79,10 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
     onClose();
   };
 
-  const handleOpenVault = () => {
-    haptic.impact();
-    if (onOpenWordVault) onOpenWordVault();
-    onClose();
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex select-none">
-      {/* Backdrop */}
+    <div className="fixed inset-0 z-50 flex select-none" role="dialog" aria-modal="true" aria-label="Меню">
       <div
-        className={`fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-xs transition-opacity duration-240 ease-out cursor-pointer ${
+        className={`fixed inset-0 bg-stone-950/45 transition-opacity duration-200 dark:bg-black/65 ${
           isVisible ? 'opacity-100' : 'opacity-0'
         }`}
         onClick={() => {
@@ -120,171 +92,192 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
         aria-hidden="true"
       />
 
-      {/* Drawer Container (ChatGPT Mobile styled) */}
       <div
-        className={`relative w-80 max-w-[85vw] h-full glass-drawer flex flex-col z-10 transition-transform duration-240 ease-out text-zinc-900 dark:text-zinc-100 ${
+        className={`relative z-10 flex h-full w-[min(320px,88vw)] flex-col border-r border-stone-200 bg-[#faf9f6] text-stone-900 transition-transform duration-200 ease-out dark:border-white/[0.08] dark:bg-[#12100e] dark:text-stone-100 ${
           isVisible ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Top Header / Account Profile */}
-        <div className="p-4 sm:p-5 border-b border-zinc-200/80 dark:border-white/5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)] animate-pulse" />
-              <span className="text-xs font-mono font-bold tracking-wider uppercase text-zinc-600 dark:text-zinc-300">
-                FASTLEARN
-              </span>
-            </div>
+        <div className="flex items-center justify-between px-4 pb-3 pt-4">
+          <span className="text-[15px] font-semibold text-stone-950 dark:text-stone-50">
+            FastLearn
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              haptic.tap();
+              onClose();
+            }}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 transition-colors hover:bg-stone-200/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/[0.06] dark:hover:text-stone-100"
+            aria-label="Закрити меню"
+          >
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
 
-            <button
-              onClick={() => {
-                haptic.tap();
-                onClose();
-              }}
-              className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-white/5 text-zinc-500 dark:text-zinc-400"
-              aria-label="Закрити меню"
-            >
-              <X className="w-4.5 h-4.5" />
-            </button>
-          </div>
-
+        <div className="border-y border-stone-200/80 px-4 py-4 dark:border-white/[0.07]">
           {isLoggedIn && user ? (
-            <div className="flex items-center gap-3">
-              <img
-                src={user.avatar}
-                alt={user.name}
-                className="w-10 h-10 rounded-full object-cover ring-2 ring-amber-400/40"
-              />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs sm:text-[13px] font-semibold truncate tracking-tight">
-                  {user.name}
-                </p>
-                <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate font-mono">
-                  {user.email}
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <UserAvatar name={user.name} src={user.avatar} size={36} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium text-stone-900 dark:text-stone-100">
+                    {user.name}
+                  </p>
+                  <p className="truncate font-mono text-[11px] text-stone-500 dark:text-stone-500">
+                    {user.email}
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between text-[11px] text-stone-500 dark:text-stone-400">
+                  <span>Повідомлення</span>
+                  <span className="font-mono tabular-nums text-stone-700 dark:text-stone-300">
+                    {quota.remaining}/{quota.limit}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-white/[0.08]">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-300 ${quotaColor}`}
+                    style={{ width: `${percentage}%` }}
+                  />
+                </div>
+                <p className="mt-1.5 text-right font-mono text-[11px] text-stone-500 dark:text-stone-500">
+                  Оновлення через {formatResetAt(quota.resetAt)}
                 </p>
               </div>
             </div>
           ) : (
             <button
+              type="button"
               onClick={() => {
                 haptic.impact();
                 onLogin();
               }}
-              className="w-full py-2.5 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-xs tracking-tight transition-all active:scale-95 shadow-xs"
+              className="w-full rounded-lg bg-stone-900 px-3 py-2.5 text-[13px] font-medium text-white transition-colors hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
             >
               Увійти через Google
             </button>
           )}
+        </div>
 
-          {/* Daily Quota Progress Bar */}
+        <div className="p-4">
           {isLoggedIn && (
-            <div className="mt-3.5 pt-3 border-t border-zinc-200/60 dark:border-white/5">
-              <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 dark:text-zinc-400 mb-1.5">
-                <span>Денна квота</span>
-                <span className="tabular-numbers font-semibold text-zinc-800 dark:text-zinc-200">
-                  {remaining} / {limit}
-                </span>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-zinc-200 dark:bg-white/10 overflow-hidden">
-                <div
-                  className={`h-full ${barColor} transition-all duration-300 rounded-full`}
-                  style={{ width: `${percentage}%` }}
-                />
-              </div>
-              {timeLeft && (
-                <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono mt-1 text-right">
-                  Скидання через: {timeLeft}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* New Chat Primary Button */}
-        <div className="p-3 border-b border-zinc-200/80 dark:border-white/5">
-          <button
-            onClick={handleCreateChat}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-950 font-semibold text-xs sm:text-[13px] tracking-tight transition-all active:scale-[0.98] shadow-sm cursor-pointer"
-          >
-            <Plus className="w-4 h-4 stroke-[2.5]" />
-            <span>Новий діалог</span>
-          </button>
-        </div>
-
-        {/* Chats History List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1.5 overscroll-contain">
-          <div className="px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-            Діалоги ({currentLanguage === 'da' ? 'Dansk' : 'English'})
-          </div>
-
-          {chats.map((c) => {
-            const isActive = c._id === activeChatId;
-            return (
-              <div
-                key={c._id}
-                onClick={() => handleSelect(c._id)}
-                className={`group flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-150 ${
-                  isActive
-                    ? 'bg-amber-400/15 dark:bg-amber-400/10 text-amber-900 dark:text-amber-300 font-semibold border border-amber-400/30'
-                    : 'hover:bg-zinc-100 dark:hover:bg-white/5 text-zinc-700 dark:text-zinc-300'
-                }`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <MessageSquare className="w-4 h-4 shrink-0 stroke-[1.8] opacity-70" />
-                  <span className="text-xs sm:text-[13px] truncate tracking-tight">
-                    {c.title}
-                  </span>
-                </div>
-
-                <button
-                  onClick={(e) => {
-                    haptic.warning();
-                    onDeleteChat(c._id, e);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-950/40 text-zinc-400 hover:text-red-500 transition-all cursor-pointer"
-                  title="Видалити діалог"
-                  aria-label="Видалити діалог"
-                >
-                  <Trash2 className="w-3.5 h-3.5 stroke-[1.8]" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Bottom Drawer Actions: Word Vault & Settings */}
-        <div className="p-3 border-t border-zinc-200/80 dark:border-white/5 space-y-1 bg-zinc-50/50 dark:bg-black/20">
-          {onOpenWordVault && (
             <button
-              onClick={handleOpenVault}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-white/5 text-zinc-700 dark:text-zinc-300 text-xs sm:text-[13px] font-medium transition-colors cursor-pointer"
+              type="button"
+              onClick={handleCreateChat}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-stone-200 bg-white px-4 py-2.5 text-[13px] font-medium text-stone-900 transition-colors hover:border-stone-300 hover:bg-stone-50 dark:border-white/[0.09] dark:bg-[#191817] dark:text-stone-100 dark:hover:border-white/[0.15] dark:hover:bg-[#201e1c]"
             >
-              <Bookmark className="w-4 h-4 stroke-[1.8] text-amber-500" />
-              <span>Словник збережених слів</span>
+              <Plus className="h-4 w-4" strokeWidth={2} />
+              Новий діалог
             </button>
           )}
+        </div>
 
+        <div className="flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
+          {!isLoggedIn ? (
+            <div className="flex h-full flex-col items-center justify-center px-5 pb-10 text-center">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-200/70 text-stone-500 dark:bg-white/[0.06] dark:text-stone-400">
+                <MessageSquare className="h-5 w-5" strokeWidth={1.75} />
+              </span>
+              <p className="mt-3 text-[13px] font-medium text-stone-800 dark:text-stone-200">
+                Історія після входу
+              </p>
+              <p className="mt-1 max-w-[220px] text-[12px] leading-relaxed text-stone-500 dark:text-stone-500">
+                Увійдіть через Google, щоб діалоги та пам’ять з’явилися тут.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between px-1 pb-2">
+                <span className="text-[11px] text-stone-500 dark:text-stone-500">
+                  Діалоги · {currentLanguage === 'da' ? 'Dansk' : 'English'}
+                </span>
+                <span className="font-mono text-[11px] text-stone-400 dark:text-stone-600">
+                  {chats.length}
+                </span>
+              </div>
+
+              {chats.length === 0 ? (
+                <p className="px-1 py-6 text-center text-[12px] text-stone-500 dark:text-stone-500">
+                  Немає діалогів цією мовою
+                </p>
+              ) : (
+                <div className="space-y-0.5">
+                  {chats.map((chat) => {
+                    const isActive = chat._id === activeChatId;
+                    return (
+                      <div
+                        key={chat._id}
+                        onClick={() => handleSelect(chat._id)}
+                        className={`group relative flex h-9 cursor-pointer items-center gap-2 rounded-lg pl-3 pr-1.5 transition-colors ${
+                          isActive
+                            ? 'bg-stone-200/70 text-stone-950 dark:bg-white/[0.06] dark:text-stone-50'
+                            : 'text-stone-700 hover:bg-stone-200/40 dark:text-stone-300 dark:hover:bg-white/[0.04]'
+                        }`}
+                      >
+                        {isActive && (
+                          <span
+                            className="absolute bottom-2 left-0 top-2 w-[2px] rounded-full bg-amber-500"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <MessageSquare
+                          className="h-4 w-4 shrink-0 text-stone-400 dark:text-stone-500"
+                          strokeWidth={1.75}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-[13px]">{chat.title}</span>
+
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            haptic.warning();
+                            onDeleteChat(chat._id);
+                          }}
+                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-stone-400 opacity-100 transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 dark:text-stone-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100"
+                          title="Видалити діалог"
+                          aria-label={`Видалити діалог ${chat.title}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="border-t border-stone-200/80 p-3 dark:border-white/[0.07]">
           <button
+            type="button"
             onClick={handleOpenSettings}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-zinc-100 dark:hover:bg-white/5 text-zinc-700 dark:text-zinc-300 text-xs sm:text-[13px] font-medium transition-colors cursor-pointer"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-stone-700 transition-colors hover:bg-stone-200/50 dark:text-stone-300 dark:hover:bg-white/[0.05]"
           >
-            <Settings className="w-4 h-4 stroke-[1.8]" />
-            <span>Налаштування & Пам’ять ШІ</span>
+            <Settings className="h-4 w-4 text-stone-500 dark:text-stone-500" strokeWidth={1.75} />
+            Налаштування й пам’ять
           </button>
 
           {isLoggedIn && (
             <button
+              type="button"
               onClick={() => {
                 haptic.tap();
                 onLogout();
                 onClose();
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/30 text-zinc-500 hover:text-red-500 text-xs font-medium transition-colors cursor-pointer"
+              className="mt-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-stone-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-stone-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
             >
-              <LogOut className="w-4 h-4 stroke-[1.8]" />
-              <span>Вийти з акаунта</span>
+              <LogOut className="h-4 w-4" strokeWidth={1.75} />
+              Вийти
             </button>
           )}
+
+          <p className="px-2.5 pt-2 text-[10px] text-stone-400 dark:text-stone-600">
+            Дані зберігаються на цьому пристрої
+          </p>
         </div>
       </div>
     </div>

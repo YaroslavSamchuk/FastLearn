@@ -12,14 +12,6 @@ export interface User {
   email: string;
   avatar: string;
   currentLanguage: Language;
-  voicePreferences: {
-    da: string;
-    en: string;
-  };
-  messagesRemaining: number;
-  dailyLimit: number;
-  resetAt: string;
-  memories?: UserMemories;
 }
 
 export interface Chat {
@@ -49,6 +41,22 @@ export interface WordVaultItem {
   createdAt: string;
 }
 
+export interface Quota {
+  remaining: number;
+  limit: number;
+  resetAt: string;
+}
+
+export interface AppData {
+  ownerId?: string | null;
+  chats: Chat[];
+  messages: Record<string, Message[]>;
+  words: WordVaultItem[];
+  memories: UserMemories;
+  quota: Quota;
+  activeChatId: Record<Language, string | null>;
+}
+
 export interface SelectionData {
   text: string;
   x: number;
@@ -56,12 +64,13 @@ export interface SelectionData {
   placement: 'top' | 'bottom';
 }
 
-declare global {
-  interface Window {
-    google?: any;
-  }
-  interface ImportMeta {
-    readonly env: Record<string, string | undefined>;
-  }
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
+declare global {
+  interface ImportMeta {
+    readonly env: Record<string, string | boolean | undefined>;
+  }
+}

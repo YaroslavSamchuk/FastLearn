@@ -5,29 +5,29 @@
 @layer base {
   * {
     -webkit-tap-highlight-color: transparent;
-    touch-action: manipulation;
   }
 
   html {
-    scroll-behavior: smooth;
     -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   html.dark {
     color-scheme: dark;
-    background-color: #09090b;
-    color: #f4f4f5;
+    background-color: #0c0a09;
+    color: #fafaf9;
   }
 
-  html.light, html:not(.dark) {
+  html.light,
+  html:not(.dark) {
     color-scheme: light;
-    background-color: #fbfbfb;
-    color: #09090b;
+    background-color: #faf9f6;
+    color: #1c1917;
   }
 
   body {
-    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
-    letter-spacing: -0.012em;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    letter-spacing: 0;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -35,182 +35,196 @@
   }
 
   html.dark ::selection {
-    background-color: rgba(234, 179, 8, 0.3);
-    color: #fef08a;
+    background-color: rgba(245, 158, 11, 0.28);
+    color: inherit;
   }
 
-  html.light ::selection, html:not(.dark) ::selection {
-    background-color: rgba(234, 179, 8, 0.35);
-    color: #000000;
+  html.light ::selection,
+  html:not(.dark) ::selection {
+    background-color: rgba(245, 158, 11, 0.32);
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(217, 119, 6, 0.72);
+    outline-offset: 2px;
   }
 }
 
-/* Safe Area Insets for Mobile */
+/* Explicit text selection support across iOS, Android, and desktop */
+.select-text {
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default !important;
+}
+
+button, [role="button"], input, textarea, select {
+  -webkit-touch-callout: none;
+}
+
+/* Mobile safe areas */
 .pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 16px);
-}
-.pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
 }
 
-/* Custom Sleek Scrollbar */
+.pt-safe {
+  padding-top: calc(0.75rem + env(safe-area-inset-top, 0px));
+}
+
+/* Thin, quiet scrollbars */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 html.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
-  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
 }
 html.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.22);
 }
-html.light ::-webkit-scrollbar-thumb, html:not(.dark) ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.16);
-  border-radius: 9999px;
+html.light ::-webkit-scrollbar-thumb,
+html:not(.dark) ::-webkit-scrollbar-thumb {
+  background: rgba(28, 25, 23, 0.16);
+  border-radius: 4px;
 }
-html.light ::-webkit-scrollbar-thumb:hover, html:not(.dark) ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.32);
-}
-
-/* Tabular Numbers */
-.tabular-numbers {
-  font-variant-numeric: tabular-nums;
+html.light ::-webkit-scrollbar-thumb:hover,
+html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+  background: rgba(28, 25, 23, 0.28);
 }
 
-/* Glassmorphism Styles */
-.glass-island {
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-}
-html.dark .glass-island {
-  background: rgba(14, 14, 18, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 4px 24px -1px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
-}
-
-.glass-pill {
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  background: rgba(255, 255, 255, 0.85);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-}
-html.dark .glass-pill {
-  background: rgba(24, 24, 28, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
-}
-
-.glass-drawer {
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  background: rgba(255, 255, 255, 0.94);
-}
-html.dark .glass-drawer {
-  background: rgba(12, 12, 15, 0.92);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 20px 0 50px -10px rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
-}
-
-/* Sound Wave Equalizer Bars */
-@keyframes eqBar1 {
-  0%, 100% { height: 4px; }
-  50% { height: 16px; }
-}
-@keyframes eqBar2 {
-  0%, 100% { height: 14px; }
-  50% { height: 6px; }
-}
-@keyframes eqBar3 {
-  0%, 100% { height: 8px; }
-  50% { height: 18px; }
-}
-@keyframes eqBar4 {
-  0%, 100% { height: 16px; }
-  50% { height: 7px; }
-}
-
-.animate-eq-1 { animation: eqBar1 0.75s ease-in-out infinite; }
-.animate-eq-2 { animation: eqBar2 0.65s ease-in-out infinite; }
-.animate-eq-3 { animation: eqBar3 0.85s ease-in-out infinite; }
-.animate-eq-4 { animation: eqBar4 0.7s ease-in-out infinite; }
-
-/* Streaming Sparkle Beacon */
-@keyframes geminiGlow {
-  0%, 100% {
-    opacity: 0.6;
-    filter: drop-shadow(0 0 4px rgba(234, 179, 8, 0.4));
-    transform: scale(0.95);
-  }
-  50% {
+/* Streaming caret */
+@keyframes caretBlink {
+  0%,
+  45% {
     opacity: 1;
-    filter: drop-shadow(0 0 10px rgba(234, 179, 8, 0.8));
-    transform: scale(1.08);
   }
-}
-.animate-gemini-glow {
-  animation: geminiGlow 2s ease-in-out infinite;
-}
-
-/* Kinetic Message Enter */
-@keyframes messageSlideIn {
-  0% {
+  50%,
+  95% {
     opacity: 0;
-    transform: translateY(10px) scale(0.985);
   }
   100% {
+    opacity: 1;
+  }
+}
+.animate-caret {
+  animation: caretBlink 1.05s steps(1) infinite;
+}
+
+/* Toast */
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-toast-in {
+  animation: toastIn 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Side panel */
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.animate-panel-in {
+  animation: panelIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Selection popover */
+@keyframes popoverIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+  }
+  to {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
 }
-.animate-message-enter {
-  animation: messageSlideIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.animate-popover {
+  animation: popoverIn 0.16s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Spring Popover */
-@keyframes popoverSpringTop {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, calc(-100% + 12px)) scale(0.92);
-  }
+/* Audio waveform */
+@keyframes eqBar1 {
+  0%,
   100% {
-    opacity: 1;
-    transform: translate(-50%, -100%) scale(1);
+    height: 5px;
+  }
+  50% {
+    height: 14px;
   }
 }
-@keyframes popoverSpringBottom {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -12px) scale(0.92);
-  }
+@keyframes eqBar2 {
+  0%,
   100% {
-    opacity: 1;
-    transform: translate(-50%, 0) scale(1);
+    height: 13px;
+  }
+  50% {
+    height: 6px;
   }
 }
-.animate-popover-top {
-  animation: popoverSpringTop 0.22s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+@keyframes eqBar3 {
+  0%,
+  100% {
+    height: 8px;
+  }
+  50% {
+    height: 16px;
+  }
 }
-.animate-popover-bottom {
-  animation: popoverSpringBottom 0.22s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+@keyframes eqBar4 {
+  0%,
+  100% {
+    height: 15px;
+  }
+  50% {
+    height: 7px;
+  }
+}
+.animate-eq-1 {
+  animation: eqBar1 0.72s ease-in-out infinite;
+}
+.animate-eq-2 {
+  animation: eqBar2 0.62s ease-in-out infinite;
+}
+.animate-eq-3 {
+  animation: eqBar3 0.82s ease-in-out infinite;
+}
+.animate-eq-4 {
+  animation: eqBar4 0.68s ease-in-out infinite;
 }
 
-/* Subtle Shimmer for Tokens */
-.shimmer-text {
-  background: linear-gradient(
-    90deg,
-    currentColor 0%,
-    rgba(234, 179, 8, 0.95) 50%,
-    currentColor 100%
-  );
-  background-size: 200% auto;
-  color: transparent;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: shimmer 2.2s linear infinite;
+@media (prefers-reduced-motion: reduce) {
+  .animate-toast-in,
+  .animate-panel-in,
+  .animate-popover {
+    animation: none;
+  }
+  .animate-eq-1,
+  .animate-eq-2,
+  .animate-eq-3,
+  .animate-eq-4 {
+    animation: none;
+    height: 8px;
+  }
+  .animate-caret {
+    animation: none;
+    opacity: 1;
+  }
 }

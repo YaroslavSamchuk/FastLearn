@@ -89,23 +89,18 @@ Du har INGEN fast alder – du matcher 100% brugerens tone, humør, alder og spr
 2. NATURLIG SPROGPOLERING I ÉT SAMLET SVAR:
 - Tjek brugerens sætning grundigt:
   * HVIS (og KUN hvis) brugerens sætning indeholder sprogfejl, forkert bøjning eller lyder stiv/unaturlig for en dansker:
-    Flet en kort, venlig formulering ind først i parentes i talesprog, fx:
-    *(Eller i talesprog: "..." 😉)*
+    Skriv først en kort, venlig formulering i talesprog, fx "(Mere naturligt: "...")", lav derefter én tom linje, og fortsæt med dit naturlige svar.
+    Brug ikke stjerner, emoji, overskrifter eller anden formatering.
   * HVIS brugerens sætning allerede er korrekt og naturlig:
     Skriv INGEN rettelse! Svar bare direkte.
 - ALT SKAL VÆRE ÉN ENKELT SAMLET BESKED. Aldrig brug overskrifter, kodeblokke, lister eller sektioner som "Rettelse:" og "Svar:". Det skal læses som én enkelt sms fra en ven.
 
 3. TONE & FORMAT:
-- Varm, levende, humoristisk, nærværende og uformel.
-- Hold altid svaret KORT: 1–3 naturlige sætninger (maks 35 ord).
-- Reagér på det brugeren siger, og stil højst ét simpelt modspørgsmål.
-- FORBUDT AI-SLOP: Ingen "Som en AI...", ingen "Godt spørgsmål!", ingen punktopstillinger, ingen docerende lærerforedrag.
-
-4. AUTONOM HUKOMMELSE ('save_memory'):
-- Brug værktøjet 'save_memory' KUN når brugeren fortæller et nyt, reelt faktum:
-  * scope="global" -> brugerens virkelige liv (arbejde, bopæl, kæledyr, interesser, navn).
-  * scope="da" -> sproglige ønsker, svære ord eller specifikke dansknoter.
-- Opfind aldrig falske fakta til hukommelsen.`,
+- Vær varm, levende, nærværende og uformel som en ven i en beskedtråd.
+- Hold svaret kort: normalt 1–3 naturlige sætninger og under 45 ord, medmindre brugeren beder om mere.
+- Reagér på det brugeren faktisk siger, og byg videre på samtalen. Stil højst ét enkelt spørgsmål, kun når det føles naturligt; giv ikke automatisk opgaver eller en række spørgsmål.
+- Tilpas længde, energi og ordvalg til brugerens stil. Vær hjælpsom uden at lyde som en lærer eller et informationsværktøj.
+- FORBUDT AI-SLOP: Ingen "Som en AI...", ingen "Godt spørgsmål!", ingen punktopstillinger, ingen docerende lærerforedrag.`,
 
   en: `You are a real close friend and conversational texting partner on WhatsApp/iMessage.
 You have NO fixed age – you adapt 100% to the user's tone, age, energy, and communication style.
@@ -119,23 +114,18 @@ You have NO fixed age – you adapt 100% to the user's tone, age, energy, and co
 2. NATURAL SPOKEN POLISH IN ONE SEAMLESS REPLY:
 - Check the user's sentence:
   * IF (and ONLY if) the user's input has grammatical errors or sounds stiff/unnatural in spoken everyday English:
-    Weave in a quick, friendly spoken rephrase at the start in parentheses:
-    *(Or casually: "..." 😉)*
+    Start with a quick, friendly spoken rephrase in parentheses, then leave one blank line and continue with the natural conversational reply.
+    Do not use asterisks, emoji, headings, or other formatting.
   * IF the user's sentence is already natural and correct:
     Do NOT include any correction! Reply directly.
 - EVERYTHING MUST BE ONE SINGLE SEAMLESS MESSAGE. Never split into headers, markdown blocks, bullet lists, or labels like "Correction:" and "Answer:". It must read like one genuine text from a friend.
 
 3. TONE & FORMAT:
-- Warm, relaxed, witty, genuine, and 100% authentic.
-- Keep replies SHORT and punchy: 1 to 3 casual sentences max (under 35 words).
-- React directly, ask at most one natural follow-up or just react with good vibes.
-- FORBIDDEN AI CLICHES: No "As an AI...", no "Certainly!", no "Great question!", no bulleted lists, no lecturing.
-
-4. AUTONOMOUS MEMORY ('save_memory'):
-- Call 'save_memory' ONLY when the user shares a genuine new fact:
-  * scope="global" -> personal life facts (job, city, pets, hobbies, name).
-  * scope="en" -> English learning goals, idioms, or vocabulary notes.
-- Never hallucinate or invent fake memories.`
+- Be warm, relaxed, genuine, and conversational like a friend in a message thread.
+- Keep replies short and punchy: usually 1 to 3 casual sentences and under 45 words unless the user asks for more.
+- React to what the user actually said and move the conversation forward. Ask at most one natural follow-up when it helps; do not turn every turn into an interview or a list of exercises.
+- Match the user's tone, energy, and level. Help without sounding like a teacher or an information tool.
+- FORBIDDEN AI CLICHES: No "As an AI...", no "Certainly!", no "Great question!", no bulleted lists, no lecturing.`,
 };
 
 // ==========================================
@@ -164,7 +154,7 @@ export const AI_TOOLS = [
 ];
 
 // Build composite system prompt with User Memories
-export function buildSystemPrompt(language = 'da', userMemories = null) {
+export function buildSystemPrompt(language = 'da', userMemories = null, enableTools = false) {
   let prompt = BASE_PROMPTS[language] || BASE_PROMPTS.en;
 
   if (userMemories) {
@@ -183,6 +173,11 @@ export function buildSystemPrompt(language = 'da', userMemories = null) {
     prompt += memorySection;
   }
 
+  if (enableTools) {
+    prompt +=
+      '\n\nHvis brugeren fortæller et nyt, reelt faktum, kan du gemme det med værktøjet save_memory. Opfind aldrig fakta.';
+  }
+
   return prompt;
 }
 
@@ -193,12 +188,13 @@ export async function streamChatCompletion({
   messages,
   language = 'da',
   userMemories = null,
+  enableTools = false,
   onToken,
   onDone,
   onError,
   onToolCall
 }) {
-  const systemPrompt = buildSystemPrompt(language, userMemories);
+  const systemPrompt = buildSystemPrompt(language, userMemories, enableTools && Boolean(onToolCall));
 
   // Clamp history: last 10 messages for conversational continuity without token bloat
   const clampedHistory = messages.slice(-10);
@@ -219,11 +215,12 @@ export async function streamChatCompletion({
     }))
   ];
 
-  // ALWAYS start with Gemma 4 31B. Fallback ONLY if all limits/keys exhausted on 31B.
-  const candidateModels = [
-    'gemma-4-31b-it',
-    'gemma-4-26b-a4b-it'
-  ];
+  // Ordered model candidates. Override with GEMINI_MODELS (comma separated) when needed.
+  const candidateModels = (process.env.GEMINI_MODELS ||
+    'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it,gemma-4-31b-it')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
 
   // Get ordered keys starting with the NEXT key in line for this new request
   const requestKeys = keyRotator.getKeysForRequest();
@@ -236,22 +233,22 @@ export async function streamChatCompletion({
     const isPrimary = (mIdx === 0);
 
     if (!isPrimary) {
-      console.warn(`[Gemma Failover] Primary 31B exhausted on this request. Switching to backup model: ${model}`);
+      console.warn(`[Gemini Failover] Trying backup model: ${model}`);
     }
 
     for (let kIdx = 0; kIdx < requestKeys.length; kIdx++) {
       const key = requestKeys[kIdx];
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 28000);
+      const timeout = setTimeout(() => controller.abort(), 22000);
 
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
         
         const payload = {
           contents,
-          tools: [{ functionDeclarations: AI_TOOLS }],
+          ...(enableTools && onToolCall ? { tools: [{ functionDeclarations: AI_TOOLS }] } : {}),
           generationConfig: {
-            maxOutputTokens: 1200,
+            maxOutputTokens: 512,
             temperature: 0.72
           }
         };
@@ -268,7 +265,7 @@ export async function streamChatCompletion({
         if (!res.ok) {
           keyRotator.reportFailure(key, res.status);
           const errJson = await res.json().catch(() => ({}));
-          throw new Error(`Gemma HTTP ${res.status}: ${errJson.error?.message || res.statusText}`);
+          throw new Error(`Gemini HTTP ${res.status}: ${errJson.error?.message || res.statusText}`);
         }
 
         keyRotator.reportSuccess(key);
@@ -278,7 +275,7 @@ export async function streamChatCompletion({
 
         // Check if model emitted a function call
         const functionCallPart = parts.find(p => p.functionCall);
-        if (functionCallPart && onToolCall) {
+        if (enableTools && onToolCall && functionCallPart) {
           try {
             const { name, args } = functionCallPart.functionCall;
             const toolResult = await onToolCall(name, args);
@@ -344,7 +341,7 @@ export async function streamChatCompletion({
       } catch (err) {
         clearTimeout(timeout);
         lastError = err;
-        console.warn(`[Gemma API] Model ${model} (Key #${kIdx + 1}/${requestKeys.length}) failed:`, err.message);
+        console.warn(`[Gemini API] Model ${model} (Key #${kIdx + 1}/${requestKeys.length}) failed:`, err.message);
         // Brief settling delay before trying the next key
         await new Promise(r => setTimeout(r, 500));
       }
@@ -355,7 +352,7 @@ export async function streamChatCompletion({
   }
 
   if (!success) {
-    if (onError) onError(lastError || new Error('All Gemma models/keys are currently limited. Please retry in a few moments.'));
+    if (onError) onError(lastError || new Error('All Gemini models/keys are currently limited. Please retry in a few moments.'));
   }
 }
 
@@ -367,4 +364,57 @@ async function streamWords(text, onToken) {
     onToken(wordToken);
     await new Promise(r => setTimeout(r, 14));
   }
+}
+
+// Generate concise, contextual chat title using Gemini
+export async function generateChatTitle({ message, language = 'da' }) {
+  const cleanMsg = typeof message === 'string' ? message.trim().slice(0, 300) : '';
+  if (!cleanMsg) return language === 'da' ? 'Ny samtale' : 'New conversation';
+
+  const prompt = language === 'da'
+    ? `Giv en meget kort og præcis overskrift (2-5 ord, maks 35 tegn) til en samtale, der starter med: "${cleanMsg}". Svar KUN med selve overskriften uden citationstegn, punktum eller forklaringer.`
+    : `Generate a very short, concise title (2-5 words, max 35 characters) for a conversation that starts with: "${cleanMsg}". Respond ONLY with the title itself, without quotes, periods, or explanations.`;
+
+  const candidateModels = (process.env.GEMINI_MODELS ||
+    'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it,gemma-4-31b-it')
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+
+  const requestKeys = keyRotator.getKeysForRequest();
+
+  for (const model of candidateModels) {
+    for (const key of requestKeys) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 30, temperature: 0.3 }
+          })
+        });
+        clearTimeout(timeout);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (rawText && typeof rawText === 'string') {
+          const title = rawText
+            .replace(/["'\n\r#*_]/g, '')
+            .trim()
+            .slice(0, 45);
+          if (title) return title;
+        }
+      } catch {
+        // try next key/model
+      }
+    }
+  }
+
+  const fallback = cleanMsg.slice(0, 35).trim();
+  return fallback.charAt(0).toUpperCase() + fallback.slice(1);
 }

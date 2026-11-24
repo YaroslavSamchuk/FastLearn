@@ -1,131 +1,113 @@
 // language: TypeScript (React), file: src/components/MessageActionsDock.tsx, target: Web / Mobile Browser
 import React, { useState } from 'react';
-import { Volume2, Copy, Check, Bookmark, Share2 } from 'lucide-react';
+import { Volume2, Copy, Check } from 'lucide-react';
 import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { haptic } from '../utils/haptics.ts';
+import { log } from '../lib/logger.ts';
 
 interface MessageActionsDockProps {
   content: string;
   isUser: boolean;
   isPlaying?: boolean;
   onPlay: (speed?: number) => void;
-  onSave?: (text: string) => void;
+  onStop?: () => void;
   onShowToast: (msg: string, type?: 'success' | 'info' | 'warning') => void;
 }
+
+const SPEEDS = [0.8, 1, 1.2];
 
 export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
   content,
   isUser,
   isPlaying = false,
   onPlay,
-  onSave,
+  onStop,
   onShowToast
 }) => {
   const [copied, setCopied] = useState(false);
-  const [speed, setSpeed] = useState<number>(0.85);
+  const [speed, setSpeed] = useState(0.8);
 
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleCopy = async () => {
     haptic.tap();
-    navigator.clipboard.writeText(content);
-    setCopied(true);
-    onShowToast('Повідомлення скопійовано', 'success');
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleToggleSpeed = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    haptic.tap();
-    const speeds = [0.80, 1.0, 1.20];
-    const nextIdx = (speeds.indexOf(speed) + 1) % speeds.length;
-    const nextSpeed = speeds[nextIdx];
-    setSpeed(nextSpeed);
-    onShowToast(`Швидкість аудіо: ${nextSpeed}x`, 'info');
-    if (isPlaying) {
-      onPlay(nextSpeed);
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      onShowToast('Скопійовано', 'success');
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch (error) {
+      log.error('clipboard', 'Could not copy a message', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      onShowToast('Браузер не дав скопіювати текст', 'warning');
     }
   };
 
-  const handlePlayAudio = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleToggleSpeed = () => {
     haptic.tap();
+    const currentIndex = SPEEDS.indexOf(speed);
+    const nextSpeed = SPEEDS[(currentIndex + 1) % SPEEDS.length] ?? 0.8;
+    setSpeed(nextSpeed);
+    if (isPlaying) onPlay(nextSpeed);
+    log.debug('audio', 'Playback speed changed', { speed: nextSpeed });
+  };
+
+  const handlePlayAudio = () => {
+    haptic.tap();
+    if (isPlaying && onStop) {
+      onStop();
+      return;
+    }
     onPlay(speed);
   };
 
-  const handleShare = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    haptic.tap();
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'FastLearn Dialogue',
-          text: content
-        });
-      } catch {
-        // user cancelled share
-      }
-    } else {
-      handleCopy(e);
-    }
-  };
+  const subtleButton = isUser
+    ? 'text-stone-400 hover:bg-white/10 hover:text-stone-100 dark:text-stone-500 dark:hover:bg-black/10 dark:hover:text-stone-900'
+    : 'text-stone-500 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-100';
 
   return (
-    <div className="flex items-center gap-1 select-none pt-1.5" onClick={(e) => e.stopPropagation()}>
-      {/* Audio Playback Button with dynamic visualizer */}
+    <div className="flex items-center gap-1 select-none">
       {!isUser && (
-        <div className="flex items-center bg-zinc-100 dark:bg-white/5 border border-zinc-200/80 dark:border-white/5 rounded-full p-0.5 shadow-2xs">
+        <div className="flex items-center gap-0.5">
           <button
+            type="button"
             onClick={handlePlayAudio}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-150 cursor-pointer ${
-              isPlaying
-                ? 'bg-amber-400 text-zinc-950 font-semibold shadow-xs'
-                : 'text-zinc-600 dark:text-zinc-300 hover:text-amber-500 dark:hover:text-amber-400'
+            className={`inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[12px] transition-colors ${subtleButton} ${
+              isPlaying ? 'text-amber-700 dark:text-amber-400' : ''
             }`}
-            title="Прослухати повідомлення"
-            aria-label="Прослухати"
+            title={isPlaying ? 'Зупинити відтворення' : `Прослухати зі швидкістю ${speed}x`}
+            aria-label={isPlaying ? 'Зупинити відтворення' : 'Прослухати повідомлення'}
           >
             {isPlaying ? (
-              <AudioVisualizer isPlaying={true} barColor="bg-zinc-950" />
+              <AudioVisualizer isPlaying barColor="bg-amber-600 dark:bg-amber-400" />
             ) : (
-              <Volume2 className="w-3.5 h-3.5 stroke-[2]" />
+              <Volume2 className="h-4 w-4" strokeWidth={1.75} />
             )}
-            <span className="text-[11px] font-sans">{isPlaying ? 'Звучить' : 'Озвучити'}</span>
           </button>
 
-          {/* Speed Selector Pill */}
           <button
+            type="button"
             onClick={handleToggleSpeed}
-            className="px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:text-zinc-400 hover:text-amber-500 dark:hover:text-amber-400 rounded-full transition-colors cursor-pointer"
-            title="Змінити темп вимови"
-            aria-label="Темп мовлення"
+            className="h-7 rounded-md px-1 font-mono text-[11px] text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-800 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-200"
+            title="Змінити темп мовлення"
+            aria-label={`Темп мовлення ${speed}x`}
           >
-            {speed}x
+            {speed}×
           </button>
         </div>
       )}
 
-      {/* Copy Button */}
       <button
+        type="button"
         onClick={handleCopy}
-        className="p-1.5 rounded-full text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/5 transition-all cursor-pointer active:scale-90"
+        className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${subtleButton}`}
         title="Скопіювати текст"
-        aria-label="Скопіювати"
+        aria-label="Скопіювати текст"
       >
         {copied ? (
-          <Check className="w-3.5 h-3.5 text-emerald-500 stroke-[2.2]" />
+          <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" strokeWidth={2} />
         ) : (
-          <Copy className="w-3.5 h-3.5 stroke-[1.8]" />
+          <Copy className="h-4 w-4" strokeWidth={1.75} />
         )}
-      </button>
-
-      {/* Share Button */}
-      <button
-        onClick={handleShare}
-        className="p-1.5 rounded-full text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-white/5 transition-all cursor-pointer active:scale-90"
-        title="Поділитися"
-        aria-label="Поділитися"
-      >
-        <Share2 className="w-3.5 h-3.5 stroke-[1.8]" />
       </button>
     </div>
   );

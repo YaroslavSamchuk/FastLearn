@@ -1,9 +1,9 @@
 // language: TypeScript (React), file: src/components/SettingsModal.tsx, target: Web / Mobile Browser
-import React, { useState, useEffect } from 'react';
-import { User, Language } from '../types.ts';
-import { ArrowLeft, X, LogOut, Volume2, Globe, Brain, Plus, Trash2, Check, Sparkles } from 'lucide-react';
-import { AudioVisualizer } from './AudioVisualizer.tsx';
+import React, { useEffect, useState } from 'react';
+import { User, Language, UserMemories } from '../types.ts';
+import { X, LogOut, Globe, Brain, Plus, Trash2, Check } from 'lucide-react';
 import { haptic } from '../utils/haptics.ts';
+import { UserAvatar } from './UserAvatar.tsx';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -13,13 +13,16 @@ interface SettingsModalProps {
   onLogin: () => void;
   currentLanguage: Language;
   onUpdateLanguage: (lang: Language) => void;
-  currentVoice: string;
-  onUpdateVoice: (voice: string) => void;
   onLogout: () => void;
-  onMemoryUpdate?: (scope: 'global' | 'da' | 'en', action: 'add' | 'delete', value: string | number) => void;
-  onPreviewVoice?: (voice: string) => void;
-  isPlayingPreview?: boolean;
+  memories: UserMemories;
+  onMemoryUpdate: (
+    scope: 'global' | 'da' | 'en',
+    action: 'add' | 'delete',
+    value: string | number
+  ) => void;
 }
+
+type SettingsTab = 'general' | 'memory';
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -29,20 +32,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onLogin,
   currentLanguage,
   onUpdateLanguage,
-  currentVoice,
-  onUpdateVoice,
   onLogout,
-  onMemoryUpdate,
-  onPreviewVoice,
-  isPlayingPreview = false
+  memories,
+  onMemoryUpdate
 }) => {
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isVisible, setIsVisible] = useState(false);
-
-  const [activeTab, setActiveTab] = useState<'general' | 'memory'>('general');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [memoryScope, setMemoryScope] = useState<'global' | 'da' | 'en'>('global');
   const [newFact, setNewFact] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -51,76 +49,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         requestAnimationFrame(() => setIsVisible(true));
       });
       return () => cancelAnimationFrame(frameId);
-    } else {
-      setIsVisible(false);
-      const timer = setTimeout(() => setShouldRender(false), 200);
-      return () => clearTimeout(timer);
     }
+
+    setIsVisible(false);
+    const timer = window.setTimeout(() => setShouldRender(false), 180);
+    return () => window.clearTimeout(timer);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isLoggedIn && activeTab === 'memory') setActiveTab('general');
+  }, [isLoggedIn, activeTab]);
 
   if (!shouldRender) return null;
 
-  const voicesForLanguage =
-    currentLanguage === 'da'
-      ? [
-          { id: 'da-DK-ChristelNeural', label: 'Christel — природний жіночий голос' },
-          { id: 'da-DK-JeppeNeural', label: 'Jeppe — природний чоловічий голос' }
-        ]
-      : [
-          { id: 'en-US-JennyNeural', label: 'Jenny — природний жіночий голос' },
-          { id: 'en-US-GuyNeural', label: 'Guy — природний чоловічий голос' }
-        ];
+  const currentFactList = memories[memoryScope] ?? [];
 
-  const memories = user?.memories || { global: [], da: [], en: [] };
-  const currentFactList = memories[memoryScope] || [];
-
-  const handleAddFact = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFact.trim() || isSaving) return;
+  const handleAddFact = (event: React.FormEvent) => {
+    event.preventDefault();
+    const fact = newFact.trim();
+    if (!fact) return;
     haptic.impact();
-    setIsSaving(true);
-    try {
-      const res = await fetch('/api/user/memory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope: memoryScope, fact: newFact.trim() })
-      });
-      if (res.ok) {
-        if (onMemoryUpdate) {
-          onMemoryUpdate(memoryScope, 'add', newFact.trim());
-        }
-        setNewFact('');
-      }
-    } catch (err) {
-      console.warn('Failed to add memory fact:', err);
-    } finally {
-      setIsSaving(false);
-    }
+    onMemoryUpdate(memoryScope, 'add', fact);
+    setNewFact('');
   };
 
-  const handleDeleteFact = async (index: number) => {
+  const handleDeleteFact = (index: number) => {
+    const fact = currentFactList[index];
+    if (!fact) return;
+    if (!window.confirm(`Видалити факт «${fact.slice(0, 60)}»?`)) return;
     haptic.warning();
-    try {
-      const res = await fetch('/api/user/memory', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scope: memoryScope, index })
-      });
-      if (res.ok) {
-        if (onMemoryUpdate) {
-          onMemoryUpdate(memoryScope, 'delete', index);
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to delete memory fact:', err);
-    }
+    onMemoryUpdate(memoryScope, 'delete', index);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 select-none">
-      {/* Backdrop */}
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 select-none sm:items-center sm:p-6">
       <div
-        className={`fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-xs transition-opacity duration-200 ${
+        className={`fixed inset-0 bg-stone-950/45 transition-opacity duration-200 dark:bg-black/65 ${
           isVisible ? 'opacity-100' : 'opacity-0'
         }`}
         onClick={() => {
@@ -130,240 +94,237 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         aria-hidden="true"
       />
 
-      {/* Modal Card (iOS/Android Native Inset Style) */}
       <div
-        className={`relative w-full max-w-lg h-[92vh] sm:h-auto max-h-[85vh] glass-pill border border-zinc-200/90 dark:border-white/10 rounded-3xl flex flex-col z-10 shadow-2xl overflow-hidden transition-all duration-200 ${
-          isVisible ? 'scale-100 opacity-100' : 'scale-95 opacity-0'
+        className={`relative z-10 flex h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-stone-200 bg-[#faf9f6] text-stone-900 transition-[opacity,transform] duration-200 dark:border-white/[0.09] dark:bg-[#12100e] dark:text-stone-100 sm:h-auto sm:max-h-[86dvh] sm:rounded-2xl ${
+          isVisible ? 'translate-y-0 opacity-100 sm:scale-100' : 'translate-y-3 opacity-0 sm:scale-[0.98]'
         }`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Налаштування"
       >
-        {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-zinc-200/80 dark:border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <h2 className="text-sm sm:text-base font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-              Налаштування застосунку
-            </h2>
-          </div>
-
+        <div className="flex items-center justify-between border-b border-stone-200/80 px-4 py-3.5 dark:border-white/[0.07] sm:px-5">
+          <h2 className="text-[15px] font-semibold">Налаштування</h2>
           <button
+            type="button"
             onClick={() => {
               haptic.tap();
               onClose();
             }}
-            className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-white/5 text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 transition-colors hover:bg-stone-200/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/[0.06] dark:hover:text-stone-100"
             aria-label="Закрити налаштування"
           >
-            <X className="w-5 h-5" />
+            <X className="h-4 w-4" strokeWidth={1.75} />
           </button>
         </div>
 
-        {/* Tab Pills Switcher */}
-        <div className="p-3 border-b border-zinc-200/80 dark:border-white/5 flex gap-1.5 bg-zinc-50/50 dark:bg-white/5">
+        <div className="flex gap-1 border-b border-stone-200/80 p-2 dark:border-white/[0.07]">
           <button
+            type="button"
             onClick={() => {
               haptic.tap();
               setActiveTab('general');
             }}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-[12px] font-medium transition-colors ${
               activeTab === 'general'
-                ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-zinc-50 shadow-xs'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+                ? 'bg-stone-200/70 text-stone-950 dark:bg-white/[0.08] dark:text-stone-50'
+                : 'text-stone-500 hover:text-stone-800 dark:text-stone-500 dark:hover:text-stone-200'
             }`}
+            aria-pressed={activeTab === 'general'}
           >
-            <Globe className="w-4 h-4 stroke-[2]" />
-            <span>Загальні</span>
+            <Globe className="h-4 w-4" strokeWidth={1.75} />
+            Загальні
           </button>
 
-          <button
-            onClick={() => {
-              haptic.tap();
-              setActiveTab('memory');
-            }}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold tracking-tight transition-all cursor-pointer ${
-              activeTab === 'memory'
-                ? 'bg-white dark:bg-zinc-800 text-zinc-950 dark:text-zinc-50 shadow-xs'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-            }`}
-          >
-            <Brain className="w-4 h-4 stroke-[2]" />
-            <span>Пам’ять ШІ</span>
-          </button>
+          {isLoggedIn && (
+            <button
+              type="button"
+              onClick={() => {
+                haptic.tap();
+                setActiveTab('memory');
+              }}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-[12px] font-medium transition-colors ${
+                activeTab === 'memory'
+                  ? 'bg-stone-200/70 text-stone-950 dark:bg-white/[0.08] dark:text-stone-50'
+                  : 'text-stone-500 hover:text-stone-800 dark:text-stone-500 dark:hover:text-stone-200'
+              }`}
+              aria-pressed={activeTab === 'memory'}
+            >
+              <Brain className="h-4 w-4" strokeWidth={1.75} />
+              Пам’ять
+            </button>
+          )}
         </div>
 
-        {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 overscroll-contain">
+        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
           {activeTab === 'general' ? (
             <div className="space-y-4">
-              {/* Language Selector Inset Card */}
-              <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-[#141418] border border-zinc-200/80 dark:border-white/5">
-                <label className="block text-xs font-semibold text-zinc-800 dark:text-zinc-200 mb-2">
-                  Активна мова практики
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => {
-                      haptic.tap();
-                      onUpdateLanguage('da');
-                    }}
-                    className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                      currentLanguage === 'da'
-                        ? 'border-amber-400 bg-amber-400/10 text-amber-900 dark:text-amber-300 font-semibold'
-                        : 'border-zinc-200 dark:border-white/5 hover:border-zinc-300 text-zinc-700 dark:text-zinc-300'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs font-bold">Dansk</p>
-                      <p className="text-[11px] opacity-75">Данська мова</p>
-                    </div>
-                    {currentLanguage === 'da' && <Check className="w-4 h-4 text-amber-500 stroke-[2.5]" />}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      haptic.tap();
-                      onUpdateLanguage('en');
-                    }}
-                    className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                      currentLanguage === 'en'
-                        ? 'border-amber-400 bg-amber-400/10 text-amber-900 dark:text-amber-300 font-semibold'
-                        : 'border-zinc-200 dark:border-white/5 hover:border-zinc-300 text-zinc-700 dark:text-zinc-300'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs font-bold">English</p>
-                      <p className="text-[11px] opacity-75">Англійська мова</p>
-                    </div>
-                    {currentLanguage === 'en' && <Check className="w-4 h-4 text-amber-500 stroke-[2.5]" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Voice Selector Inset Card */}
-              <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-[#141418] border border-zinc-200/80 dark:border-white/5">
-                <label className="block text-xs font-semibold text-zinc-800 dark:text-zinc-200 mb-2">
-                  Голос ШІ-співрозмовника ({currentLanguage === 'da' ? 'Dansk' : 'English'})
-                </label>
-                <div className="space-y-2">
-                  {voicesForLanguage.map((v) => {
-                    const isSelected = currentVoice === v.id;
+              <section className="rounded-xl border border-stone-200 bg-white p-4 dark:border-white/[0.08] dark:bg-[#171412]">
+                <h3 className="text-[12px] font-medium text-stone-900 dark:text-stone-100">
+                  Мова практики
+                </h3>
+                <div className="mt-2.5 grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      { value: 'da', title: 'Dansk', hint: 'Данська' },
+                      { value: 'en', title: 'English', hint: 'Англійська' }
+                    ] as const
+                  ).map((option) => {
+                    const selected = currentLanguage === option.value;
                     return (
-                      <div
-                        key={v.id}
+                      <button
+                        key={option.value}
+                        type="button"
                         onClick={() => {
                           haptic.tap();
-                          onUpdateVoice(v.id);
+                          onUpdateLanguage(option.value);
                         }}
-                        className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                          isSelected
-                            ? 'border-amber-400 bg-amber-400/10 text-amber-900 dark:text-amber-300 font-semibold'
-                            : 'border-zinc-200 dark:border-white/5 hover:border-zinc-300 text-zinc-700 dark:text-zinc-300'
+                        className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                          selected
+                            ? 'border-amber-500/50 bg-amber-50 text-stone-950 dark:border-amber-400/30 dark:bg-amber-400/[0.08] dark:text-stone-50'
+                            : 'border-stone-200 text-stone-700 hover:border-stone-300 hover:bg-stone-50 dark:border-white/[0.08] dark:text-stone-300 dark:hover:border-white/[0.14] dark:hover:bg-white/[0.03]'
                         }`}
+                        aria-pressed={selected}
                       >
-                        <span className="text-xs font-medium">{v.label}</span>
-                        {isSelected && <Check className="w-4 h-4 text-amber-500 stroke-[2.5]" />}
-                      </div>
+                        <span>
+                          <span className="block text-[13px] font-medium">{option.title}</span>
+                          <span className="mt-0.5 block text-[11px] text-stone-500 dark:text-stone-500">
+                            {option.hint}
+                          </span>
+                        </span>
+                        {selected && (
+                          <Check
+                            className="h-4 w-4 text-amber-700 dark:text-amber-400"
+                            strokeWidth={2}
+                          />
+                        )}
+                      </button>
                     );
                   })}
                 </div>
-              </div>
+              </section>
 
-              {/* User Account Inset Card */}
-              <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-[#141418] border border-zinc-200/80 dark:border-white/5 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-                    {user?.name || 'Гість'}
-                  </p>
-                  <p className="text-[11px] text-zinc-500 font-mono">{user?.email || 'Не авторизовано'}</p>
+              <section className="rounded-xl border border-stone-200 bg-white p-4 dark:border-white/[0.08] dark:bg-[#171412]">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    {isLoggedIn && user ? (
+                      <>
+                        <UserAvatar name={user.name} src={user.avatar} size={34} />
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] font-medium">{user.name}</p>
+                          <p className="truncate font-mono text-[11px] text-stone-500 dark:text-stone-500">
+                            {user.email}
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <p className="text-[13px] font-medium">Гість</p>
+                        <p className="text-[11px] text-stone-500 dark:text-stone-500">
+                          Історія недоступна без входу
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {isLoggedIn ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        haptic.tap();
+                        onLogout();
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-2.5 py-1.5 text-[11px] font-medium text-stone-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 dark:border-white/[0.09] dark:text-stone-400 dark:hover:border-red-900/50 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                    >
+                      <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      Вийти
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        haptic.impact();
+                        onLogin();
+                      }}
+                      className="rounded-lg bg-stone-900 px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
+                    >
+                      Увійти
+                    </button>
+                  )}
                 </div>
+              </section>
 
-                {isLoggedIn ? (
-                  <button
-                    onClick={() => {
-                      haptic.tap();
-                      onLogout();
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-xs font-medium hover:bg-red-100 transition-colors cursor-pointer"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Вийти</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      haptic.impact();
-                      onLogin();
-                    }}
-                    className="px-3 py-1.5 rounded-xl bg-amber-400 text-zinc-950 text-xs font-semibold hover:bg-amber-300 transition-colors cursor-pointer"
-                  >
-                    Увійти
-                  </button>
-                )}
-              </div>
+              <p className="px-1 text-[11px] leading-relaxed text-stone-500 dark:text-stone-500">
+                Діалоги, налаштування та пам’ять зберігаються в вашому акаунті в MongoDB
+              </p>
             </div>
           ) : (
-            <div className="space-y-3.5">
-              {/* Memory Scope Pills */}
-              <div className="flex gap-1.5 p-1 rounded-xl bg-zinc-100 dark:bg-[#141418]">
+            <div className="space-y-3">
+              <div className="flex gap-1 rounded-lg bg-stone-200/60 p-1 dark:bg-white/[0.05]">
                 {(['global', 'da', 'en'] as const).map((scope) => (
                   <button
                     key={scope}
+                    type="button"
                     onClick={() => {
                       haptic.tap();
                       setMemoryScope(scope);
                     }}
-                    className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    className={`flex-1 rounded-md py-1.5 text-[11px] font-medium transition-colors ${
                       memoryScope === scope
-                        ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-2xs'
-                        : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300'
+                        ? 'bg-white text-stone-950 shadow-sm dark:bg-[#2a2521] dark:text-stone-50'
+                        : 'text-stone-500 hover:text-stone-800 dark:text-stone-500 dark:hover:text-stone-200'
                     }`}
+                    aria-pressed={memoryScope === scope}
                   >
                     {scope === 'global' ? 'Загальні' : scope === 'da' ? 'Данська' : 'Англійська'}
                   </button>
                 ))}
               </div>
 
-              {/* Add Fact Form */}
               <form onSubmit={handleAddFact} className="flex gap-2">
                 <input
                   type="text"
                   value={newFact}
-                  onChange={(e) => setNewFact(e.target.value)}
-                  placeholder="Додати факт про себе (напр. рівень мови)..."
-                  className="flex-1 px-3 py-2 text-xs rounded-xl bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-amber-400"
+                  onChange={(event) => setNewFact(event.target.value)}
+                  placeholder="Факт про вас або вашу мету"
+                  maxLength={200}
+                  className="flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-[16px] text-stone-900 placeholder-stone-400 focus:border-amber-500/60 focus:outline-none dark:border-white/[0.09] dark:bg-[#171412] dark:text-stone-100 dark:placeholder-stone-500 sm:text-[13px]"
                 />
                 <button
                   type="submit"
-                  disabled={!newFact.trim() || isSaving}
-                  className="px-3 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-semibold text-xs transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                  disabled={!newFact.trim()}
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-stone-900 text-white transition-colors hover:bg-stone-800 disabled:opacity-40 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
+                  aria-label="Додати факт"
                 >
-                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                  <Plus className="h-4 w-4" strokeWidth={2} />
                 </button>
               </form>
 
-              {/* Facts List */}
-              <div className="space-y-2">
-                {currentFactList.length === 0 ? (
-                  <p className="text-center py-6 text-xs text-zinc-400">
-                    Немає збережених фактів для цієї категорії
-                  </p>
-                ) : (
-                  currentFactList.map((fact, idx) => (
+              {currentFactList.length === 0 ? (
+                <p className="py-8 text-center text-[12px] text-stone-500 dark:text-stone-500">
+                  Немає збережених фактів
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {currentFactList.map((fact, index) => (
                     <div
-                      key={idx}
-                      className="flex items-start justify-between gap-2 p-3 rounded-xl bg-zinc-50 dark:bg-[#141418] border border-zinc-200/80 dark:border-white/5"
+                      key={`${fact}-${index}`}
+                      className="flex items-start justify-between gap-2 rounded-lg border border-stone-200 bg-white p-3 dark:border-white/[0.08] dark:bg-[#171412]"
                     >
-                      <p className="text-xs text-zinc-700 dark:text-zinc-300 leading-snug flex-1">
+                      <p className="flex-1 text-[12px] leading-relaxed text-stone-700 dark:text-stone-300">
                         {fact}
                       </p>
                       <button
-                        onClick={() => handleDeleteFact(idx)}
-                        className="p-1 rounded-md text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                        type="button"
+                        onClick={() => handleDeleteFact(index)}
+                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-stone-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                        aria-label="Видалити факт"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                       </button>
                     </div>
-                  ))
-                )}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

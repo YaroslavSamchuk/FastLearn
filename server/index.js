@@ -1,585 +1,543 @@
+// language: JavaScript, file: server/index.js, target: Node.js / Local dev proxy
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { getDb, ObjectId } from './db.js';
-import { synthesizeEdgeSpeech, VOICES } from './tts.js';
+import crypto from 'node:crypto';
+import { generateChatTitle, keyRotator, streamChatCompletion } from './llm.js';
+import { synthesizeSpeech, VOICES } from './tts.js';
 import { resolveTranscriptionAndTranslation } from './transcribe.js';
-import { streamChatCompletion } from './llm.js';
+import { closeDatabase, connectDatabase, getDatabase } from './db.js';
 
 dotenv.config();
 
-// Prevent any unhandled errors from terminating server
-process.on('uncaughtException', (err) => {
-  console.warn('[Uncaught Exception caught]', err.message);
-});
-process.on('unhandledRejection', (reason) => {
-  console.warn('[Unhandled Rejection caught]', reason);
-});
-
 const app = express();
-const PORT = process.env.PORT || 3001;
-const DAILY_LIMIT = 30;
-const RESET_WINDOW_HOURS = 15; // User specified e.g. 15 hours cycle
+const PORT = Number(process.env.PORT) || 3001;
+const MAX_MESSAGES = 20;
+const MAX_MESSAGE_CHARS = 4_000;
+const MAX_TOTAL_CHARS = 14_000;
+const MAX_TTS_CHARS = 1_200;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '64kb' }));
 
-// Helper to check and reset daily quota
-function evaluateDailyQuota(user) {
-  const now = Date.now();
-  const resetAt = user.resetAt ? new Date(user.resetAt).getTime() : 0;
+const SESSION_COOKIE = 'fastlearn_session';
+const SESSION_DAYS = 30;
 
-  if (now >= resetAt || !user.resetAt) {
-    const nextReset = new Date(now + RESET_WINDOW_HOURS * 3600 * 1000);
-    return {
-      messagesRemaining: DAILY_LIMIT,
-      dailyLimit: DAILY_LIMIT,
-      resetAt: nextReset.toISOString()
-    };
+function randomToken(bytes = 32) {
+  return crypto.randomBytes(bytes).toString('base64url');
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function readCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  const match = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
+async function getAuthenticatedUser(req) {
+  const token = readCookie(req, SESSION_COOKIE);
+  if (!token) return null;
+
+  const db = getDatabase();
+  const session = await db.collection('sessions').findOne({
+    tokenHash: hashToken(token),
+    expiresAt: { $gt: new Date() }
+  });
+  if (!session) return null;
+
+  return db.collection('users').findOne({ googleSub: session.googleSub });
+}
+
+function requireAuth(req, res, next) {
+  getAuthenticatedUser(req)
+    .then((user) => {
+      if (!user) {
+        res.status(401).json({ error: 'Sign in required' });
+        return;
+      }
+      req.user = user;
+      next();
+    })
+    .catch(next);
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_DAYS * 24 * 60 * 60}`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+app.use((req, res, next) => {
+  const started = Date.now();
+  const id = Math.random().toString(36).slice(2, 10);
+
+  res.on('finish', () => {
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: 'request',
+        id,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        ms: Date.now() - started
+      })
+    );
+  });
+
+  next();
+});
+
+function cleanString(value, maxChars) {
+  return typeof value === 'string' ? value.trim().slice(0, maxChars) : '';
+}
+
+function cleanStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => cleanString(item, 220))
+    .filter(Boolean)
+    .slice(0, 40);
+}
+
+function parseMessages(value) {
+  if (!Array.isArray(value)) throw new Error('messages must be an array');
+
+  const cleaned = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const role = item.role === 'assistant' ? 'assistant' : item.role === 'user' ? 'user' : null;
+    const content = cleanString(item.content, MAX_MESSAGE_CHARS);
+    if (!role || !content) continue;
+    cleaned.push({ role, content });
   }
 
+  if (cleaned.length === 0) throw new Error('At least one message is required');
+  if (cleaned[cleaned.length - 1].role !== 'user') {
+    throw new Error('The last message must be from the user');
+  }
+
+  const recent = cleaned.slice(-MAX_MESSAGES);
+  let total = recent.reduce((sum, message) => sum + message.content.length, 0);
+  while (total > MAX_TOTAL_CHARS && recent.length > 1) {
+    total -= recent.shift().content.length;
+  }
+
+  return recent;
+}
+
+function parseMemories(value) {
+  const raw = value && typeof value === 'object' ? value : {};
   return {
-    messagesRemaining: typeof user.messagesRemaining === 'number' ? user.messagesRemaining : DAILY_LIMIT,
-    dailyLimit: DAILY_LIMIT,
-    resetAt: user.resetAt
+    global: cleanStringList(raw.global),
+    da: cleanStringList(raw.da),
+    en: cleanStringList(raw.en)
   };
 }
 
-// Default user
-const DEFAULT_USER = {
-  id: 'usr_yaroslav_01',
-  name: 'Yaroslav Samchuk',
-  email: 'samchukyaroslav@gmail.com',
-  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
-  currentLanguage: 'da',
-  voicePreferences: {
-    da: 'da-DK-ChristelNeural',
-    en: 'en-US-JennyNeural'
-  },
-  messagesRemaining: DAILY_LIMIT,
-  dailyLimit: DAILY_LIMIT,
-  resetAt: new Date(Date.now() + RESET_WINDOW_HOURS * 3600 * 1000).toISOString(),
-  memories: {
-    global: [
-      'Звати Ярослав (Yaroslav Samchuk). Рідна мова — українська.',
-      'Цінує стислість, природність, живий дружній тон без води та повчань.',
-      'Працює з технологіями та розробкою програмного забезпечення.'
-    ],
-    da: [
-      'Вивчає розмовну данську мову (Dansk) для повсякденного життя та спілкування.',
-      'Фокус на природному копенгагенському сленгу, зв\'язному мовленні та коротких фразах.'
-    ],
-    en: [
-      'Вільне повсякденне та ділове спілкування англійською.',
-      'Фокус на природних сучасних ідіомах та невимушеному листуванні.'
-    ]
-  }
-};
+async function ensureWorkspace(ownerId) {
+  const db = getDatabase();
+  const existing = await db.collection('workspaces').findOne({ ownerId });
+  if (existing) return existing;
 
-// 1. Health & Config
-app.get('/api/health', async (req, res) => {
-  let dbStatus = 'ok';
+  const workspace = {
+    ownerId,
+    theme: 'dark',
+    currentLanguage: 'da',
+    chats: [],
+    messages: {},
+    memories: {
+      global: ['Рідна мова — українська.', 'Цінує короткі, природні відповіді без повчань і зайвих слів.'],
+      da: ['Вивчає розмовну данську для повсякденного спілкування.'],
+      en: ['Практикує природну англійську для роботи та подорожей.']
+    },
+    quota: { remaining: 30, limit: 30, resetAt: new Date(Date.now() + 15 * 60 * 60 * 1000).toISOString() },
+    activeChatId: { da: null, en: null },
+    updatedAt: new Date(),
+    createdAt: new Date()
+  };
+  await db.collection('workspaces').insertOne(workspace);
+  return workspace;
+}
+
+app.get('/api/auth/google/start', async (req, res, next) => {
   try {
-    await getDb();
-  } catch (e) {
-    dbStatus = e.message;
+    const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
+    if (!clientId) throw new Error('VITE_GOOGLE_CLIENT_ID is not configured');
+
+    const state = randomToken();
+    await getDatabase().collection('oauth_states').insertOne({
+      state,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    });
+
+    const redirectUri =
+      process.env.GOOGLE_REDIRECT_URI ||
+      `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      prompt: 'select_account',
+      include_granted_scopes: 'true',
+      state
+    });
+
+    res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+  } catch (error) {
+    next(error);
   }
+});
+
+app.get('/api/auth/google/callback', async (req, res, next) => {
+  try {
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    const oauthError = typeof req.query.error === 'string' ? req.query.error : '';
+    if (oauthError) throw new Error(req.query.error_description || oauthError);
+    if (!code || !state) throw new Error('Google returned an incomplete response');
+
+    const db = getDatabase();
+    const pending = await db.collection('oauth_states').findOne({ state, expiresAt: { $gt: new Date() } });
+    if (!pending) throw new Error('Google login state is invalid or expired');
+    await db.collection('oauth_states').deleteOne({ _id: pending._id });
+
+    const clientId = process.env.VITE_GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri =
+      process.env.GOOGLE_REDIRECT_URI ||
+      `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code'
+      })
+    });
+    if (!tokenResponse.ok) throw new Error('Google could not exchange the login code');
+    const tokens = await tokenResponse.json();
+
+    const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    });
+    if (!profileResponse.ok) throw new Error('Google could not load the account profile');
+    const profile = await profileResponse.json();
+    if (!profile.sub || !profile.email) throw new Error('Google profile is incomplete');
+
+    const dbUser = await db.collection('users').findOneAndUpdate(
+      { googleSub: profile.sub },
+      {
+        $set: {
+          googleSub: profile.sub,
+          name: profile.name || profile.email.split('@')[0],
+          email: profile.email,
+          avatar: profile.picture || '',
+          updatedAt: new Date()
+        },
+        $setOnInsert: { createdAt: new Date() }
+      },
+      { upsert: true, returnDocument: 'after' }
+    );
+
+    const sessionToken = randomToken();
+    await db.collection('sessions').insertOne({
+      tokenHash: hashToken(sessionToken),
+      googleSub: profile.sub,
+      expiresAt: new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000),
+      createdAt: new Date()
+    });
+    await ensureWorkspace(profile.sub);
+    setSessionCookie(res, sessionToken);
+    const appOrigin = process.env.APP_ORIGIN || 'http://localhost:3000';
+    res.redirect(appOrigin);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/auth/me', async (req, res, next) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      res.json({ user: null });
+      return;
+    }
+    res.json({
+      user: {
+        id: `google_${user.googleSub}`,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar || '',
+        currentLanguage: 'da'
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  const token = readCookie(req, SESSION_COOKIE);
+  if (token) {
+    await getDatabase().collection('sessions').deleteOne({ tokenHash: hashToken(token) });
+  }
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.get('/api/workspace', requireAuth, async (req, res, next) => {
+  try {
+    const workspace = await ensureWorkspace(req.user.googleSub);
+    res.json({ workspace });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/api/workspace', requireAuth, async (req, res, next) => {
+  try {
+    const allowed = ['theme', 'currentLanguage', 'chats', 'messages', 'memories', 'quota', 'activeChatId'];
+    const update = {};
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) update[key] = req.body[key];
+    }
+    update.updatedAt = new Date();
+    await getDatabase().collection('workspaces').updateOne(
+      { ownerId: req.user.googleSub },
+      { $set: update },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/health', (_req, res) => {
   res.json({
-    status: 'online',
-    database: dbStatus,
-    provider: 'Google Gemma 4 31B (Fallback: Gemma 4 26B A4B)',
-    supportedLanguages: ['da', 'en'],
+    status: keyRotator.totalKeys > 0 ? 'online' : 'degraded',
+    server: 'Express',
+    provider: 'Google Gemini',
+    models: (process.env.GEMINI_MODELS || 'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it')
+      .split(',')
+      .map((model) => model.trim())
+      .filter(Boolean),
+    configured: keyRotator.totalKeys > 0,
     voices: VOICES
   });
 });
 
-// 2. User & Preferences & Daily Quota
-app.get('/api/user', async (req, res) => {
-  try {
-    const email = req.query.email;
-    const db = await getDb();
-    let user = null;
-    if (email) {
-      user = await db.collection('users').findOne({ email });
-    }
-    if (!user) {
-      user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
-    }
-    if (!user) {
-      await db.collection('users').insertOne(DEFAULT_USER);
-      user = DEFAULT_USER;
-    } else if (!user.memories) {
-      // Backfill default memories if missing
-      await db.collection('users').updateOne(
-        { _id: user._id },
-        { $set: { memories: DEFAULT_USER.memories } }
-      );
-      user.memories = DEFAULT_USER.memories;
-    }
-
-    const quota = evaluateDailyQuota(user);
-    if (quota.resetAt !== user.resetAt || quota.messagesRemaining !== user.messagesRemaining) {
-      await db.collection('users').updateOne(
-        { _id: user._id },
-        { $set: quota }
-      );
-      user = { ...user, ...quota };
-    }
-
-    res.json(user);
-  } catch (e) {
-    res.json(DEFAULT_USER);
-  }
-});
-
-// Google OAuth Login / Sync
-app.post('/api/auth/google', async (req, res) => {
-  try {
-    const { id, name, email, avatar } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
-    const db = await getDb();
-    let user = await db.collection('users').findOne({ email });
-    if (!user) {
-      user = {
-        id: id ? `google_${id}` : `usr_${Date.now()}`,
-        name: name || 'Google User',
-        email: email,
-        avatar: avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
-        currentLanguage: 'da',
-        voicePreferences: {
-          da: 'da-DK-ChristelNeural',
-          en: 'en-US-JennyNeural'
-        },
-        messagesRemaining: DAILY_LIMIT,
-        dailyLimit: DAILY_LIMIT,
-        resetAt: new Date(Date.now() + RESET_WINDOW_HOURS * 3600 * 1000).toISOString(),
-        memories: {
-          global: [
-            `Звати ${name || 'користувач'}. Рідна мова — українська.`,
-            'Цінує стислість, природність, живий дружній тон без води та повчань.'
-          ],
-          da: [
-            'Вивчає розмовну данську мову (Dansk) для повсякденного життя та спілкування.'
-          ],
-          en: [
-            'Вільне повсякденне та ділове спілкування англійською.'
-          ]
-        }
-      };
-      await db.collection('users').insertOne(user);
-    } else {
-      const updateFields = {};
-      if (avatar && avatar !== user.avatar) updateFields.avatar = avatar;
-      if (name && name !== user.name) updateFields.name = name;
-      if (Object.keys(updateFields).length > 0) {
-        await db.collection('users').updateOne({ _id: user._id }, { $set: updateFields });
-        user = { ...user, ...updateFields };
-      }
-    }
-
-    const quota = evaluateDailyQuota(user);
-    if (quota.resetAt !== user.resetAt || quota.messagesRemaining !== user.messagesRemaining) {
-      await db.collection('users').updateOne(
-        { _id: user._id },
-        { $set: quota }
-      );
-      user = { ...user, ...quota };
-    }
-
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Memory Endpoints: Global and Per-Language Memory
-app.get('/api/user/memory', async (req, res) => {
-  try {
-    const db = await getDb();
-    const user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
-    res.json(user?.memories || DEFAULT_USER.memories);
-  } catch (e) {
-    res.json(DEFAULT_USER.memories);
-  }
-});
-
-app.post('/api/user/memory', async (req, res) => {
-  const { scope = 'global', fact } = req.body;
-  if (!fact || !fact.trim()) {
-    return res.status(400).json({ error: 'Fact content is required' });
-  }
-  const validScope = ['global', 'da', 'en'].includes(scope) ? scope : 'global';
-  try {
-    const db = await getDb();
-    await db.collection('users').updateOne(
-      { id: DEFAULT_USER.id },
-      { $push: { [`memories.${validScope}`]: fact.trim() } },
-      { upsert: true }
-    );
-    res.json({ success: true, scope: validScope, fact: fact.trim() });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/api/user/memory', async (req, res) => {
-  const { scope = 'global', index } = req.body;
-  const validScope = ['global', 'da', 'en'].includes(scope) ? scope : 'global';
-  if (typeof index !== 'number') {
-    return res.status(400).json({ error: 'Valid index is required' });
-  }
-  try {
-    const db = await getDb();
-    const user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
-    const currentList = user?.memories?.[validScope] || [];
-    if (index >= 0 && index < currentList.length) {
-      currentList.splice(index, 1);
-      await db.collection('users').updateOne(
-        { id: DEFAULT_USER.id },
-        { $set: { [`memories.${validScope}`]: currentList } }
-      );
-    }
-    res.json({ success: true, memories: currentList });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/user', async (req, res) => {
-  try {
-    const { currentLanguage, voicePreferences } = req.body;
-    const db = await getDb();
-    const update = {};
-    if (currentLanguage) update.currentLanguage = currentLanguage;
-    if (voicePreferences) update.voicePreferences = voicePreferences;
-    
-    await db.collection('users').updateOne(
-      { id: DEFAULT_USER.id },
-      { $set: update },
-      { upsert: true }
-    );
-    res.json({ success: true, update });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 3. Chats (Segregated by Language)
-app.get('/api/chats', async (req, res) => {
-  const language = req.query.language || 'da';
-  try {
-    const db = await getDb();
-    const chats = await db.collection('chats')
-      .find({ userId: DEFAULT_USER.id, language })
-      .sort({ updatedAt: -1 })
-      .toArray();
-    res.json(chats);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/chats', async (req, res) => {
-  const { language = 'da', title } = req.body;
-  try {
-    const db = await getDb();
-    const defaultTitle = language === 'da' ? 'Ny samtale' : 'New conversation';
-    const newChat = {
-      userId: DEFAULT_USER.id,
-      language,
-      title: title || defaultTitle,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-    const result = await db.collection('chats').insertOne(newChat);
-    res.json({ ...newChat, _id: result.insertedId });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/api/chats/:id', async (req, res) => {
-  try {
-    const db = await getDb();
-    const chatId = req.params.id;
-    await db.collection('chats').deleteOne({ _id: new ObjectId(chatId) });
-    await db.collection('messages').deleteMany({ chatId });
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 4. Messages
-app.get('/api/chats/:id/messages', async (req, res) => {
-  try {
-    const db = await getDb();
-    const chatId = req.params.id;
-    const messages = await db.collection('messages')
-      .find({ chatId })
-      .sort({ createdAt: 1 })
-      .toArray();
-    res.json(messages);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// 5. Send message & Stream AI completion (Enforcing Daily Limit)
-app.post('/api/chats/:id/messages', async (req, res) => {
-  const chatId = req.params.id;
-  const { content, language = 'da' } = req.body;
-  
-  if (!content?.trim()) {
-    return res.status(400).json({ error: 'Message content is required' });
-  }
+app.post('/api/chat', requireAuth, async (req, res) => {
+  let messages;
+  let memories;
 
   try {
-    const db = await getDb();
-    let user = await db.collection('users').findOne({ id: DEFAULT_USER.id });
-    if (!user) user = DEFAULT_USER;
+    messages = parseMessages(req.body?.messages);
+    memories = parseMemories(req.body?.memories);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+    return;
+  }
 
-    const quota = evaluateDailyQuota(user);
+  const language = req.body?.language === 'en' ? 'en' : 'da';
 
-    // Enforce quota
-    if (quota.messagesRemaining <= 0) {
-      return res.status(429).json({
-        error: 'Денний ліміт вичерпано. Зачекайте оновлення або спробуйте пізніше.',
-        messagesRemaining: 0,
-        resetAt: quota.resetAt
-      });
-    }
+  if (keyRotator.totalKeys === 0) {
+    res.status(503).json({ error: 'AI is not configured. Add GEMINI_API_KEYS to .env.' });
+    return;
+  }
 
-    // Decrement remaining messages
-    const newRemaining = quota.messagesRemaining - 1;
-    await db.collection('users').updateOne(
-      { id: DEFAULT_USER.id },
-      { $set: { messagesRemaining: newRemaining, resetAt: quota.resetAt } }
-    );
-    
-    // Save user message
-    const userMsg = {
-      chatId,
-      userId: DEFAULT_USER.id,
-      role: 'user',
-      content: content.trim(),
-      createdAt: new Date()
-    };
-    await db.collection('messages').insertOne(userMsg);
+  let closed = false;
+  res.on('close', () => {
+    closed = true;
+  });
 
-    // Fetch conversation context for AI (strict limit: last 8 messages)
-    const history = await db.collection('messages')
-      .find({ chatId })
-      .sort({ createdAt: 1 })
-      .toArray();
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
 
-    const formattedHistory = history.slice(-8).map(m => ({
-      role: m.role,
-      content: m.content
-    }));
+  const send = (payload) => {
+    if (closed || res.writableEnded) return;
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
 
-    // Update chat title if it's the first message
-    if (history.length <= 1) {
-      const summaryTitle = content.slice(0, 30);
-      await db.collection('chats').updateOne(
-        { _id: new ObjectId(chatId) },
-        { $set: { title: summaryTitle, updatedAt: new Date() } }
-      );
-    } else {
-      await db.collection('chats').updateOne(
-        { _id: new ObjectId(chatId) },
-        { $set: { updatedAt: new Date() } }
-      );
-    }
-
-    // Set up SSE for streaming AI response
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    // Send quota update event first
-    res.write(`data: ${JSON.stringify({ quota: { messagesRemaining: newRemaining, resetAt: quota.resetAt } })}\n\n`);
-
-    let fullAiResponse = '';
-
+  try {
     await streamChatCompletion({
-      messages: formattedHistory,
+      messages,
       language,
-      userMemories: user.memories || DEFAULT_USER.memories,
-      onToken: (token) => {
-        fullAiResponse += token;
-        res.write(`data: ${JSON.stringify({ token })}\n\n`);
-      },
+      userMemories: memories,
+      enableTools: true,
+      onToken: (token) => send({ token }),
       onToolCall: async (name, args) => {
-        console.log(`[Tool Invocation] ${name}:`, args);
-        if ((name === 'save_memory' || name === 'remember_user_fact') && args.fact) {
-          const scope = ['global', 'da', 'en'].includes(args.scope) ? args.scope : 'global';
-          await db.collection('users').updateOne(
-            { id: DEFAULT_USER.id },
-            { $push: { [`memories.${scope}`]: args.fact.trim() } }
-          );
-          res.write(`data: ${JSON.stringify({ memoryLearned: { scope, fact: args.fact.trim() } })}\n\n`);
-          return `Fact remembered in ${scope} memory: ${args.fact}`;
-        } else if (name === 'save_word_to_vault' && args.phrase) {
-          const wordEntry = {
-            userId: DEFAULT_USER.id,
-            language: args.language || language,
-            phrase: args.phrase.trim(),
-            translation: (args.translation || '').trim(),
-            ipa: '',
-            createdAt: new Date()
-          };
-          await db.collection('words').updateOne(
-            { userId: DEFAULT_USER.id, language: wordEntry.language, phrase: wordEntry.phrase },
-            { $set: wordEntry },
-            { upsert: true }
-          );
-          res.write(`data: ${JSON.stringify({ wordSaved: wordEntry })}\n\n`);
-          return `Saved word "${args.phrase}" to vault`;
+        if (name !== 'save_memory' || !args || typeof args !== 'object') {
+          throw new Error('Unsupported memory action');
         }
-        return 'tool processed';
+
+        const fact = cleanString(args.fact, 200);
+        const scope = args.scope === 'global' || args.scope === 'da' || args.scope === 'en' ? args.scope : null;
+        if (!fact || !scope) throw new Error('Memory fact and scope are required');
+
+        send({ memory: { fact, scope } });
+        return 'Memory saved';
       },
-      onDone: async () => {
-        // AI finished, save to MongoDB
-        if (fullAiResponse.trim()) {
-          const aiMsg = {
-            chatId,
-            userId: DEFAULT_USER.id,
-            role: 'assistant',
-            content: fullAiResponse.trim(),
-            createdAt: new Date()
-          };
-          await db.collection('messages').insertOne(aiMsg);
-        }
-        res.write(`data: [DONE]\n\n`);
+      onDone: () => {
+        if (closed || res.writableEnded) return;
+        res.write('data: [DONE]\n\n');
         res.end();
       },
-      onError: (err) => {
-        console.error('[Stream Error]', err);
-        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-        res.end();
+      onError: (error) => {
+        console.error('[chat] stream failed', error.message);
+        send({ error: error.message });
+        if (!res.writableEnded) res.end();
       }
     });
-
-  } catch (e) {
-    console.error('[Message Handler Error]', e);
-    if (!res.headersSent) {
-      res.status(500).json({ error: e.message });
-    }
+  } catch (error) {
+    console.error('[chat] handler failed', error);
+    send({ error: error.message || 'Chat request failed' });
+    if (!res.writableEnded) res.end();
   }
 });
 
-// 6. Edge-TTS Audio Generation
-app.get('/api/tts', async (req, res) => {
-  const { text, lang = 'da', speed = '0.80', voice } = req.query;
+app.get('/api/tts', requireAuth, async (req, res) => {
+  const text = cleanString(req.query.text, MAX_TTS_CHARS);
   if (!text) {
-    return res.status(400).send('Missing text parameter');
+    res.status(400).json({ error: 'text is required' });
+    return;
+  }
+
+  const language = req.query.lang === 'en' ? 'en' : 'da';
+  const rawSpeed = Number.parseFloat(req.query.speed ?? '0.80');
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1.4, rawSpeed)) : 0.80;
+  const voice = typeof req.query.voice === 'string' ? req.query.voice : null;
+
+  const allowedVoices = new Set(Object.values(VOICES[language] || {}));
+  if (voice && !allowedVoices.has(voice)) {
+    res.status(400).json({ error: 'Unknown voice for this language' });
+    return;
   }
 
   try {
-    const audioStream = await synthesizeEdgeSpeech(text, lang, parseFloat(speed), voice);
+    const started = Date.now();
+    const { buffer, source, cached } = await synthesizeSpeech(text, language, speed, voice);
+
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    
-    audioStream.on('error', (err) => {
-      console.warn('[TTS Stream Handled]', err.message);
-      if (!res.headersSent) {
-        res.status(500).end();
-      }
-    });
+    res.send(buffer);
 
-    res.on('close', () => {
-      try {
-        audioStream.destroy?.();
-      } catch (e) {}
-    });
-
-    audioStream.pipe(res);
-  } catch (e) {
-    console.error('[TTS Error]', e.message);
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: 'tts_ok',
+        source,
+        cached,
+        language,
+        chars: text.length,
+        bytes: buffer.byteLength,
+        ms: Date.now() - started
+      })
+    );
+  } catch (error) {
+    console.error('[tts] synthesis failed', error.message);
     if (!res.headersSent) {
-      res.status(500).send(`TTS Error: ${e.message}`);
+      res.status(502).json({ error: 'Speech synthesis is unavailable right now' });
     }
   }
 });
 
-// 7. Free Transcription & Translation
-app.post('/api/transcribe', async (req, res) => {
-  const { text, lang = 'da', userLang = 'uk' } = req.body;
+app.post('/api/transcribe', requireAuth, async (req, res) => {
+  const text = cleanString(req.body?.text, 500);
   if (!text) {
-    return res.status(400).json({ error: 'Missing text' });
+    res.status(400).json({ error: 'text is required' });
+    return;
   }
 
+  if (req.body?.lang !== 'da' && req.body?.lang !== 'en') {
+    res.status(400).json({ error: 'lang must be "da" or "en"' });
+    return;
+  }
+
+  const userLang =
+    typeof req.body?.userLang === 'string' && /^[a-z]{2}$/.test(req.body.userLang)
+      ? req.body.userLang
+      : 'uk';
+
   try {
-    const result = await resolveTranscriptionAndTranslation(text, lang, userLang);
+    const result = await resolveTranscriptionAndTranslation(text, req.body.lang, userLang);
     res.json(result);
-  } catch (e) {
-    console.error('[Transcribe Error]', e.message);
-    res.status(500).json({ error: e.message });
+  } catch (error) {
+    console.error('[transcribe] failed', error.message);
+    res.status(502).json({ error: error.message || 'Translation is unavailable right now' });
   }
 });
 
-// 8. Word Vault
-app.post('/api/words', async (req, res) => {
-  const { phrase, translation, ipa, language = 'da' } = req.body;
+app.post('/api/title', requireAuth, async (req, res) => {
+  const message = cleanString(req.body?.message, 500);
+  if (!message) {
+    res.status(400).json({ error: 'message is required' });
+    return;
+  }
+
+  const language = req.body?.language === 'en' ? 'en' : 'da';
+
   try {
-    const db = await getDb();
-    const wordEntry = {
-      userId: DEFAULT_USER.id,
-      language,
-      phrase: phrase.trim(),
-      translation: translation.trim(),
-      ipa: ipa.trim(),
-      createdAt: new Date()
-    };
-    await db.collection('words').updateOne(
-      { userId: DEFAULT_USER.id, language, phrase: wordEntry.phrase },
-      { $set: wordEntry },
-      { upsert: true }
-    );
-    res.json({ success: true, word: wordEntry });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    const title = await generateChatTitle({ message, language });
+    res.json({ title });
+  } catch (error) {
+    console.error('[title] failed', error.message);
+    const fallback = message.slice(0, 35).trim();
+    res.json({ title: fallback.charAt(0).toUpperCase() + fallback.slice(1) });
   }
 });
 
-app.get('/api/words', async (req, res) => {
-  const language = req.query.language || 'da';
-  try {
-    const db = await getDb();
-    const words = await db.collection('words')
-      .find({ userId: DEFAULT_USER.id, language })
-      .sort({ createdAt: -1 })
-      .toArray();
-    res.json(words);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Endpoint not found' });
 });
 
-app.delete('/api/words', async (req, res) => {
-  const { phrase, language = 'da' } = req.body;
-  if (!phrase) return res.status(400).json({ error: 'Phrase is required' });
-  try {
-    const db = await getDb();
-    await db.collection('words').deleteOne({ userId: DEFAULT_USER.id, language, phrase });
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+app.use((error, _req, res, _next) => {
+  console.error('[server] unhandled error', error);
+  if (res.headersSent) {
+    res.end();
+    return;
   }
+  res.status(error.status || 500).json({ error: error.message || 'Unexpected server error' });
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`[FastLearn Backend] Listening on http://localhost:${PORT}`);
-});
+async function start() {
+  await connectDatabase();
+  console.log('[FastLearn] MongoDB connected');
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.warn(`[FastLearn Backend] Port ${PORT} already in use, retrying...`);
-  } else {
-    console.error('[FastLearn Backend Server error]', err);
-  }
+  const server = app.listen(PORT, () => {
+    console.log(`[FastLearn] local API listening on http://localhost:${PORT}`);
+    if (keyRotator.totalKeys === 0) {
+      console.warn('[FastLearn] GEMINI_API_KEYS is empty — /api/chat will return 503');
+    }
+  });
+
+  server.on('error', (error) => {
+    console.error('[FastLearn] server error', error);
+  });
+
+  const shutdown = async () => {
+    server.close();
+    await closeDatabase();
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+}
+
+start().catch((error) => {
+  console.error('[FastLearn] startup failed', error);
+  process.exit(1);
 });

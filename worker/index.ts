@@ -2,432 +2,952 @@
 export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
   GEMINI_API_KEYS?: string;
-  DB_NAME?: string;
+  GEMINI_MODELS?: string;
 }
 
-const FALLBACK_KEYS_B64 =
-  'QVEuQWI4Uk42SWZQU0JZU1VvdlhBNGhuX3Z1RGp3aV95WFlGLUlVbUl1UC00dTNhWmdjWGcsQVEuQWI4Uk42S0x0TEVCVExXZ3pjY3dBeTRHaU5NSV9wNkVBRlBUa1I2ZkRhRGdmTmhUTGcsQVEuQWI4Uk42TFhmTmh5ZUtWczZua3ZPcXlEUjZzbGpyM2p6Q2IwYW90My1TNk1IbDlHNFEsQVEuQWI4Uk42SmNKREk0WU1jNS1wWGFZV2lhRG5zNFNPZ2dSS0xuNDVhX3R1Ui1hdWwxcVEsQVEuQWI4Uk42S1V0UUtlTDdCU294NXJwWXRsWlFzMjVTa1p1T1llVGZXMUZEOE1GYjg2aUE=';
+const DEFAULT_MODELS = [
+  'gemini-flash-lite-latest',
+  'gemini-3-flash-preview',
+  'gemma-4-26b-a4b-it'
+];
 
-let requestCounter = 0;
+const MAX_MESSAGES = 20;
+const MAX_MESSAGE_CHARS = 4_000;
+const MAX_TOTAL_CHARS = 14_000;
+const MAX_BODY_CHARS = 64_000;
+const MAX_MEMORY_ITEMS = 40;
+const MAX_MEMORY_CHARS = 220;
+const MAX_TTS_CHARS = 1_200;
+const TTS_CHUNK_CHARS = 180;
 
-function getRotatedKeys(env: Env): string[] {
-  let raw = (env.GEMINI_API_KEYS || '').trim();
-  if (!raw && typeof atob === 'function') {
-    try {
-      raw = atob(FALLBACK_KEYS_B64);
-    } catch {}
-  }
-
-  const keys = raw
-    .split(',')
-    .map((k) => k.trim())
-    .filter(Boolean);
-
-  if (keys.length === 0) return [];
-
-  const startIndex = requestCounter % keys.length;
-  requestCounter = (requestCounter + 1) % 1000000;
-
-  const result: string[] = [];
-  for (let i = 0; i < keys.length; i++) {
-    result.push(keys[(startIndex + i) % keys.length]);
-  }
-  return result;
-}
-
-// In-memory store for edge worker lifecycle
-const inMemoryStore = {
-  words: new Map<string, any[]>(),
-  messages: new Map<string, any[]>(),
-  chats: new Map<string, any[]>()
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Expose-Headers': 'x-fastlearn-model'
 };
 
-// Simple IPA and translation utilities for Worker Edge
-async function getGoogleTranslation(text: string, sourceLang: string, targetLang = 'uk'): Promise<string> {
-  try {
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang}&tl=${targetLang}&dt=t&dt=rm&q=${encodeURIComponent(text)}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const json: any = await res.json();
-      const translated = json[0]?.map((item: any) => item[0]).filter(Boolean).join(' ') || '';
-      if (translated) return translated;
-    }
-  } catch (e) {}
-  return text;
+const BASE_PROMPTS: Record<string, string> = {
+  da: `Du er en varm, naturlig dansk samtalepartner – som en god ven, der skriver korte beskeder.
+Svar altid kort: 1–3 naturlige sætninger, højst 35 ord.
+Hvis brugeren laver en sprogfejl, start med en kort, venlig rettelse i parentes, fx (Mere naturligt: "…"). Brug ikke stjerner, emoji eller anden formatering. Hvis sætningen allerede er naturlig, ret den ikke.
+Skriv kun selve beskeden. Ingen overskrifter, lister, kodeblokke eller forklaringer om, at du er en AI.
+Brug kun fakta fra hukommelsen eller fra samtalen. Find aldrig på personlige detaljer.`,
+  en: `You are a warm, natural English conversation partner – like a close friend sending short messages.
+Always keep it short: 1–3 natural sentences, under 35 words.
+If the user makes a language mistake, start with a short, friendly rephrase in parentheses, e.g. (More naturally: "…"). Do not use asterisks, emoji, or any other formatting. If the sentence is already natural, do not correct it.
+Output only the message itself. No headings, lists, code blocks, or explanations that you are an AI.
+Use only facts from memory or from this conversation. Never invent personal details.`
+};
+
+interface ClientMessage {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
-async function getEnglishIPA(word: string): Promise<string> {
-  const clean = word.toLowerCase().replace(/[^a-z]/g, '');
-  if (!clean) return '';
-  try {
-    const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`);
-    if (res.ok) {
-      const data: any = await res.json();
-      const phonetic = data[0]?.phonetic || data[0]?.phonetics?.find((p: any) => p.text)?.text;
-      if (phonetic) return phonetic;
-    }
-  } catch (e) {}
-  return '';
+interface UserMemories {
+  global: string[];
+  da: string[];
+  en: string[];
 }
 
-async function getDanishIPA(word: string): Promise<string> {
-  const clean = word.toLowerCase().replace(/[^a-zæøå]/g, '');
-  if (!clean) return '';
+interface ErrorPayload {
+  error?: { message?: string };
+  message?: string;
+}
+
+class HttpError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'HttpError';
+    this.status = status;
+  }
+}
+
+function requestId(): string {
   try {
-    const res = await fetch(
-      `https://en.wiktionary.org/w/api.php?action=query&prop=revisions&rvprop=content&titles=${encodeURIComponent(clean)}&format=json`
-    );
-    if (res.ok) {
-      const pages = data.query?.pages;
-      if (pages) {
-        const pageId = Object.keys(pages)[0];
-        const content = pages[pageId]?.revisions?.[0]?.['*'] || '';
-        const m = content.match(/\{\{IPA\|da\|([^|}]+)/i) || content.match(/\[([a-zæøåɡðŋʁɕʑʔˈˌː\.\s]+)\]/i);
-        if (m && m[1]) return `/${m[1].trim()}/`;
+    return crypto.randomUUID().slice(0, 8);
+  } catch {
+    return Math.random().toString(36).slice(2, 10);
+  }
+}
+
+function logEvent(event: string, data: Record<string, unknown>): void {
+  console.log(JSON.stringify({ at: new Date().toISOString(), event, ...data }));
+}
+
+function json(data: unknown, status = 200, extra: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...CORS_HEADERS,
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      ...extra
+    }
+  });
+}
+
+function getKeys(env: Env): string[] {
+  return (env.GEMINI_API_KEYS ?? '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
+}
+
+function getModels(env: Env): string[] {
+  const custom = (env.GEMINI_MODELS ?? '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+  return custom.length > 0 ? custom : DEFAULT_MODELS;
+}
+
+function rotate<T>(items: T[]): T[] {
+  if (items.length < 2) return items.slice();
+  const start = Math.floor(Math.random() * items.length);
+  return [...items.slice(start), ...items.slice(0, start)];
+}
+
+async function readJsonBody(request: Request): Promise<unknown> {
+  const contentType = request.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    throw new HttpError(415, 'Expected an application/json request body');
+  }
+
+  const raw = await request.text();
+  if (raw.length > MAX_BODY_CHARS) {
+    throw new HttpError(413, 'Request body is too large');
+  }
+
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new HttpError(400, 'Request body is not valid JSON');
+  }
+}
+
+function cleanString(value: unknown, maxChars: number): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, maxChars);
+}
+
+function cleanStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => cleanString(item, MAX_MEMORY_CHARS))
+    .filter(Boolean)
+    .slice(0, MAX_MEMORY_ITEMS);
+}
+
+function parseMemories(value: unknown): UserMemories {
+  const raw = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  return {
+    global: cleanStringList(raw.global),
+    da: cleanStringList(raw.da),
+    en: cleanStringList(raw.en)
+  };
+}
+
+function parseMessages(value: unknown): ClientMessage[] {
+  if (!Array.isArray(value)) throw new HttpError(400, 'messages must be an array');
+
+  const cleaned: ClientMessage[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    const role = record.role === 'assistant' ? 'assistant' : record.role === 'user' ? 'user' : null;
+    const content = cleanString(record.content, MAX_MESSAGE_CHARS);
+    if (!role || !content) continue;
+    cleaned.push({ role, content });
+  }
+
+  if (cleaned.length === 0) throw new HttpError(400, 'At least one message is required');
+  if (cleaned[cleaned.length - 1]?.role !== 'user') {
+    throw new HttpError(400, 'The last message must be from the user');
+  }
+
+  const recent = cleaned.slice(-MAX_MESSAGES);
+  let total = recent.reduce((sum, message) => sum + message.content.length, 0);
+  while (total > MAX_TOTAL_CHARS && recent.length > 1) {
+    const removed = recent.shift();
+    total -= removed?.content.length ?? 0;
+  }
+
+  return recent;
+}
+
+function buildSystemPrompt(language: 'da' | 'en', memories: UserMemories): string {
+  let prompt = BASE_PROMPTS[language];
+
+  const globalNotes = memories.global;
+  const languageNotes = memories[language];
+  if (globalNotes.length === 0 && languageNotes.length === 0) return prompt;
+
+  prompt += '\n\n=== HUKOMMELSE / MEMORY ===';
+  if (globalNotes.length > 0) {
+    prompt += '\n' + globalNotes.map((note) => `- ${note}`).join('\n');
+  }
+  if (languageNotes.length > 0) {
+    prompt += `\n${language.toUpperCase()} notes:\n` + languageNotes.map((note) => `- ${note}`).join('\n');
+  }
+  prompt += '\nUse these notes naturally and never invent extra facts.';
+  return prompt;
+}
+
+function buildContents(messages: ClientMessage[], language: 'da' | 'en', memories: UserMemories) {
+  const systemPrompt = buildSystemPrompt(language, memories);
+
+  return [
+    { role: 'user', parts: [{ text: `[System instructions]\n${systemPrompt}` }] },
+    {
+      role: 'model',
+      parts: [{ text: language === 'da' ? 'Forstået. Jeg svarer kort og naturligt.' : 'Understood. I will keep replies short and natural.' }]
+    },
+    ...messages.map((message) => ({
+      role: message.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: message.content }]
+    }))
+  ];
+}
+
+function extractReplyText(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const candidates = (payload as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) return '';
+
+  const first = candidates[0] as { content?: { parts?: unknown } };
+  const parts = first?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+
+  return parts
+    .filter((part): part is { text?: unknown; thought?: unknown } => Boolean(part && typeof part === 'object'))
+    .filter((part) => part.thought !== true && typeof part.text === 'string')
+    .map((part) => (part.text as string).trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+async function readUpstreamError(response: Response): Promise<string> {
+  try {
+    const text = (await response.text()).trim();
+    if (!text) return `HTTP ${response.status}`;
+    try {
+      const parsed = JSON.parse(text) as ErrorPayload;
+      return parsed.error?.message || parsed.message || text.slice(0, 240);
+    } catch {
+      return text.slice(0, 240);
+    }
+  } catch {
+    return `HTTP ${response.status}`;
+  }
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  parentSignal: AbortSignal
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('Upstream timeout')), timeoutMs);
+  const forwardAbort = () => controller.abort(parentSignal.reason);
+  parentSignal.addEventListener('abort', forwardAbort, { once: true });
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    parentSignal.removeEventListener('abort', forwardAbort);
+  }
+}
+
+async function generateReply(
+  env: Env,
+  messages: ClientMessage[],
+  language: 'da' | 'en',
+  memories: UserMemories,
+  signal: AbortSignal,
+  id: string
+): Promise<{ text: string; model: string }> {
+  const keys = rotate(getKeys(env));
+  if (keys.length === 0) {
+    throw new HttpError(503, 'AI is not configured on the server. Add GEMINI_API_KEYS as a Worker secret.');
+  }
+
+  const models = getModels(env);
+  const contents = buildContents(messages, language, memories);
+  const deadline = Date.now() + 65_000;
+  let lastError = 'No model responded';
+
+  for (const model of models) {
+    for (let index = 0; index < keys.length; index += 1) {
+      if (Date.now() > deadline || signal.aborted) break;
+
+      const started = Date.now();
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        model
+      )}:generateContent?key=${encodeURIComponent(keys[index] as string)}`;
+
+      try {
+        const response = await fetchWithTimeout(
+          url,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents,
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 512
+              }
+            })
+          },
+          22_000,
+          signal
+        );
+
+        if (!response.ok) {
+          lastError = await readUpstreamError(response);
+          logEvent('gemini_error', {
+            id,
+            model,
+            key: `#${index + 1}`,
+            status: response.status,
+            ms: Date.now() - started,
+            error: lastError
+          });
+          continue;
+        }
+
+        const payload = (await response.json()) as unknown;
+        const text = extractReplyText(payload);
+        if (!text) {
+          lastError = 'The model returned an empty reply';
+          logEvent('gemini_empty', { id, model, key: `#${index + 1}`, ms: Date.now() - started });
+          continue;
+        }
+
+        logEvent('gemini_ok', {
+          id,
+          model,
+          key: `#${index + 1}`,
+          ms: Date.now() - started,
+          chars: text.length
+        });
+        return { text, model };
+      } catch (error) {
+        if (signal.aborted) throw error;
+        lastError = error instanceof Error ? error.message : String(error);
+        logEvent('gemini_exception', {
+          id,
+          model,
+          key: `#${index + 1}`,
+          ms: Date.now() - started,
+          error: lastError
+        });
       }
     }
-  } catch (e) {}
+
+    if (Date.now() > deadline || signal.aborted) break;
+  }
+
+  throw new HttpError(502, `AI request failed: ${lastError}`);
+}
+
+function tokenize(text: string): string[] {
+  const words = text.match(/\S+\s*/g) ?? [text];
+  const chunks: string[] = [];
+  for (let index = 0; index < words.length; index += 2) {
+    chunks.push(words.slice(index, index + 2).join(''));
+  }
+  return chunks;
+}
+
+function sseReply(text: string, model: string, signal: AbortSignal): Response {
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for (const token of tokenize(text)) {
+          if (signal.aborted) break;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
+          await new Promise((resolve) => setTimeout(resolve, 8));
+        }
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } catch (error) {
+        logEvent('sse_write_error', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // The client may have disconnected already.
+        }
+      }
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      ...CORS_HEADERS,
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'x-fastlearn-model': model
+    }
+  });
+}
+
+async function translateWithMyMemory(
+  text: string,
+  sourceLang: string,
+  targetLang: string
+): Promise<string> {
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 7_000);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      },
+      signal: controller.signal
+    });
+    if (!response.ok) return '';
+    const data = (await response.json()) as {
+      responseData?: { translatedText?: string };
+    };
+    const candidate = data.responseData?.translatedText;
+    if (!candidate || typeof candidate !== 'string') return '';
+    if (candidate.toUpperCase().includes('MYMEMORY WARNING')) return '';
+    return candidate.trim();
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function translateWithGoogle(
+  text: string,
+  sourceLang: string,
+  targetLang: string
+): Promise<string> {
+  const url = new URL('https://translate.googleapis.com/translate_a/single');
+  url.searchParams.set('client', 'gtx');
+  url.searchParams.set('sl', sourceLang);
+  url.searchParams.set('tl', targetLang);
+  url.searchParams.set('dt', 't');
+  url.searchParams.set('q', text);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 9_000);
+
+  try {
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      },
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`Google Translate returned HTTP ${response.status}`);
+
+    const data = (await response.json()) as unknown;
+    if (!Array.isArray(data) || !Array.isArray(data[0])) return '';
+    return (data[0] as unknown[])
+      .map((segment) => (Array.isArray(segment) && typeof segment[0] === 'string' ? segment[0] : ''))
+      .join('')
+      .trim();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function translateText(
+  text: string,
+  sourceLang: string,
+  targetLang: string
+): Promise<string> {
+  try {
+    const res = await translateWithMyMemory(text, sourceLang, targetLang);
+    if (res && res.toLowerCase() !== text.toLowerCase()) return res;
+  } catch {
+    // fallback
+  }
+  return translateWithGoogle(text, sourceLang, targetLang);
+}
+
+async function lookupGeminiIpa(text: string, language: 'da' | 'en', env: Env): Promise<string> {
+  const keys = rotate(getKeys(env));
+  if (keys.length === 0) return '';
+
+  const models = getModels(env);
+  const langLabel = language === 'da' ? 'Danish' : 'English';
+  const prompt = `Exact standard International Phonetic Alphabet (IPA) for ${langLabel} text: ${JSON.stringify(text)}. Include stress marks (ˈ) and stød (ˀ) where appropriate. Output ONLY the IPA transcription enclosed in slashes /.../ with NO other text.`;
+
+  for (const model of models) {
+    for (const key of keys.slice(0, 3)) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4_500);
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 35, temperature: 0.1 }
+          })
+        });
+        if (!res.ok) continue;
+        const data = (await res.json()) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+        const match = raw.match(/\/([^\n/]+)\//);
+        if (match?.[0]) return match[0];
+        if (raw.startsWith('/') && raw.endsWith('/')) return raw;
+      } catch {
+        // try next key
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  }
   return '';
 }
 
-const SYSTEM_PROMPTS: Record<string, string> = {
-  da: `Du er en ægte dansk ven og samtalepartner på WhatsApp/Signal.
-Varm, levende, humoristisk, nærværende og uformel.
-Hold altid svaret KORT: 1–2 naturlige sætninger (maks 30 ord).
-Hvis brugeren laver en sprogfejl, flet en venlig formulering ind først i parentes: *(Eller: "..." 😉)*, ellers svar direkte uden rettelse. Svar KUN med din besked.`,
-  en: `You are a genuine, close friend and texting buddy on WhatsApp/iMessage.
-Warm, relaxed, witty, and authentic.
-Keep replies SHORT and casual: 1 to 2 sentences max (under 30 words).
-If user makes a mistake, gently rephrase at the start: *(Or casually: "..." 😉)*, otherwise just reply directly. Output ONLY your message.`
-};
+async function lookupEnglishIpa(word: string): Promise<string> {
+  const clean = word.toLowerCase().replace(/[^a-z']/g, '');
+  if (!clean) return '';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+
+  try {
+    const response = await fetch(
+      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`,
+      { signal: controller.signal }
+    );
+    if (!response.ok) return '';
+    const data = (await response.json()) as unknown;
+    if (!Array.isArray(data) || data.length === 0) return '';
+    const entry = data[0] as {
+      phonetic?: unknown;
+      phonetics?: Array<{ text?: unknown }>;
+    };
+    if (typeof entry.phonetic === 'string' && entry.phonetic.trim()) return entry.phonetic.trim();
+    const phonetic = entry.phonetics?.find((item) => typeof item.text === 'string' && item.text.trim());
+    return typeof phonetic?.text === 'string' ? phonetic.text.trim() : '';
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function lookupDanishIpa(word: string): Promise<string> {
+  const clean = word.toLowerCase().replace(/[^a-zæøå]/g, '');
+  if (!clean) return '';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+
+  try {
+    const response = await fetch(
+      `https://en.wiktionary.org/w/api.php?action=query&prop=revisions&rvprop=content&titles=${encodeURIComponent(
+        clean
+      )}&format=json&origin=*`,
+      { signal: controller.signal }
+    );
+    if (!response.ok) return '';
+
+    const data = (await response.json()) as {
+      query?: {
+        pages?: Record<string, { revisions?: Array<{ '*'?: string; content?: string }> }>;
+      };
+    };
+    const pages = data.query?.pages;
+    if (!pages) return '';
+
+    const page = Object.values(pages)[0];
+    const content = page?.revisions?.[0]?.['*'] ?? page?.revisions?.[0]?.content ?? '';
+    if (!content) return '';
+
+    const match =
+      content.match(/\{\{IPA\|da\|([^}|]+)/i) ??
+      content.match(/\{\{lyd\|da\|([^}|]+)/i) ??
+      content.match(/\[([a-zæøåɡðŋʁɕʑʔˈˌː.\s]+)\]/i);
+    if (!match?.[1]) return '';
+
+    const ipa = match[1].replace(/[[\]/]/g, '').trim();
+    return ipa ? `/${ipa}/` : '';
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function resolveIpa(text: string, language: 'da' | 'en', env?: Env): Promise<string> {
+  const clean = text.trim();
+  if (!clean || clean.split(/\s+/).length > 10) return '';
+
+  if (env) {
+    try {
+      const gemini = await lookupGeminiIpa(clean, language, env);
+      if (gemini) return gemini;
+    } catch {
+      // fallback
+    }
+  }
+
+  const words = clean.split(/\s+/).filter(Boolean).slice(0, 4);
+  const values = await Promise.all(
+    words.map((word) => (language === 'da' ? lookupDanishIpa(word) : lookupEnglishIpa(word)))
+  );
+  return values.filter(Boolean).join(' ');
+}
+
+function splitTtsText(text: string, maxChars: number): string[] {
+  const chunks: string[] = [];
+  const sentences = text.match(/[^.!?…]+[.!?…]*\s*/g) ?? [text];
+  let current = '';
+
+  const pushWords = (value: string) => {
+    for (const word of value.split(/\s+/).filter(Boolean)) {
+      if (`${current} ${word}`.trim().length <= maxChars) {
+        current = `${current} ${word}`.trim();
+      } else {
+        if (current) chunks.push(current);
+        current = word.slice(0, maxChars);
+      }
+    }
+  };
+
+  for (const sentence of sentences) {
+    if ((current + sentence).trim().length <= maxChars) {
+      current += sentence;
+    } else {
+      if (current.trim()) chunks.push(current.trim());
+      current = '';
+      if (sentence.trim().length <= maxChars) {
+        current = sentence;
+      } else {
+        pushWords(sentence);
+      }
+    }
+  }
+
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.filter(Boolean);
+}
+
+async function googleTtsChunk(text: string, language: 'da' | 'en', speed: number): Promise<Uint8Array> {
+  const url = new URL('https://translate.google.com/translate_tts');
+  url.searchParams.set('ie', 'UTF-8');
+  url.searchParams.set('client', 'tw-ob');
+  url.searchParams.set('tl', language);
+  url.searchParams.set('ttsspeed', String(speed));
+  url.searchParams.set('total', '1');
+  url.searchParams.set('idx', '0');
+  url.searchParams.set('textlen', String(text.length));
+  url.searchParams.set('q', text);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+
+  try {
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: 'audio/mpeg,audio/*;q=0.9,*/*;q=0.5',
+        Referer: 'https://translate.google.com/',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) throw new Error(`Google TTS returned HTTP ${response.status}`);
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('audio')) {
+      throw new Error(`Google TTS returned ${contentType || 'an unknown content type'}`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0) throw new Error('Google TTS returned an empty audio file');
+    return new Uint8Array(buffer);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function synthesizeSpeech(
+  text: string,
+  language: 'da' | 'en',
+  speed: number,
+  id: string
+): Promise<Uint8Array> {
+  const clipped = text.length > MAX_TTS_CHARS ? text.slice(0, MAX_TTS_CHARS) : text;
+  if (clipped.length !== text.length) {
+    logEvent('tts_truncated', { id, original: text.length, used: clipped.length });
+  }
+
+  const chunks = splitTtsText(clipped, TTS_CHUNK_CHARS);
+  const buffers: Uint8Array[] = [];
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index] as string;
+    const started = Date.now();
+    try {
+      buffers.push(await googleTtsChunk(chunk, language, speed));
+      logEvent('tts_chunk_ok', {
+        id,
+        chunk: index + 1,
+        of: chunks.length,
+        chars: chunk.length,
+        ms: Date.now() - started
+      });
+    } catch (error) {
+      logEvent('tts_chunk_error', {
+        id,
+        chunk: index + 1,
+        of: chunks.length,
+        ms: Date.now() - started,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw new HttpError(502, 'Speech synthesis is unavailable right now');
+    }
+  }
+
+  const total = buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const buffer of buffers) {
+    merged.set(buffer, offset);
+    offset += buffer.byteLength;
+  }
+
+  logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed });
+  return merged;
+}
+
+async function handleChat(request: Request, env: Env, id: string): Promise<Response> {
+  if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/chat');
+  const body = (await readJsonBody(request)) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Request body must be an object');
+
+  const language = body.language === 'en' ? 'en' : 'da';
+  const messages = parseMessages(body.messages);
+  const memories = parseMemories(body.memories);
+
+  const reply = await generateReply(env, messages, language, memories, request.signal, id);
+  return sseReply(reply.text, reply.model, request.signal);
+}
+
+async function handleTranscribe(request: Request, env: Env, id: string): Promise<Response> {
+  if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/transcribe');
+  const body = (await readJsonBody(request)) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Request body must be an object');
+
+  const text = cleanString(body.text, 500);
+  if (!text) throw new HttpError(400, 'text is required');
+  if (body.lang !== 'da' && body.lang !== 'en') throw new HttpError(400, 'lang must be "da" or "en"');
+
+  const language = body.lang;
+  const userLang =
+    typeof body.userLang === 'string' && /^[a-z]{2}$/.test(body.userLang) ? body.userLang : 'uk';
+
+  const started = Date.now();
+  const [translation, ipa] = await Promise.all([
+    translateText(text, language, userLang),
+    resolveIpa(text, language, env)
+  ]);
+
+  if (!translation) throw new HttpError(502, 'Translation service returned an empty result');
+
+  logEvent('transcribe_ok', {
+    id,
+    language,
+    userLang,
+    chars: text.length,
+    ms: Date.now() - started,
+    hasIpa: Boolean(ipa)
+  });
+
+  return json({
+    original: text,
+    translation,
+    ipa,
+    sourceLang: language,
+    userLang
+  });
+}
+
+async function handleTts(url: URL, id: string): Promise<Response> {
+  const text = cleanString(url.searchParams.get('text'), MAX_TTS_CHARS);
+  if (!text) throw new HttpError(400, 'text is required');
+
+  const language = url.searchParams.get('lang') === 'en' ? 'en' : 'da';
+  const rawSpeed = Number.parseFloat(url.searchParams.get('speed') ?? '0.80');
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1, rawSpeed)) : 0.80;
+
+  const cacheKey = new Request(
+    `https://fastlearn-cache.internal/tts?lang=${language}&speed=${speed}&text=${encodeURIComponent(text)}`,
+    { method: 'GET' }
+  );
+
+  try {
+    const cached = await caches.default.match(cacheKey);
+    if (cached) {
+      logEvent('tts_cache_hit', { id, language, chars: text.length });
+      return cached;
+    }
+  } catch {
+    // Edge cache is an optimization only.
+  }
+
+  const audio = await synthesizeSpeech(text, language, speed, id);
+  const response = new Response(audio, {
+    headers: {
+      ...CORS_HEADERS,
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': String(audio.byteLength),
+      'Cache-Control': 'public, max-age=86400'
+    }
+  });
+
+  try {
+    await caches.default.put(cacheKey, response.clone());
+  } catch {
+    // Ignore cache write failures.
+  }
+
+  return response;
+}
+
+async function handleTitle(request: Request, env: Env, id: string): Promise<Response> {
+  if (request.method !== 'POST') {
+    throw new HttpError(405, 'POST required');
+  }
+
+  const raw = await readJsonBody(request);
+  const message = cleanString(raw.message, 500);
+  if (!message) throw new HttpError(400, 'message is required');
+
+  const language = raw.language === 'en' ? 'en' : 'da';
+  const keys = rotate(getKeys(env));
+  const models = getModels(env);
+
+  const prompt = language === 'da'
+    ? `Giv en meget kort og præcis overskrift (2-5 ord, maks 35 tegn) til en samtale, der starter med: "${message.slice(0, 300)}". Svar KUN med selve overskriften uden citationstegn, punktum eller forklaringer.`
+    : `Generate a very short, concise title (2-5 words, max 35 characters) for a conversation that starts with: "${message.slice(0, 300)}". Respond ONLY with the title itself, without quotes, periods, or explanations.`;
+
+  for (const model of models) {
+    for (const key of keys) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+        const upstream = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 30, temperature: 0.3 }
+          })
+        });
+        if (!upstream.ok) continue;
+        const data = (await upstream.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (rawText && typeof rawText === 'string') {
+          const title = rawText.replace(/["'\n\r#*_]/g, '').trim().slice(0, 45);
+          if (title) {
+            logEvent('title_ok', { id, model, title });
+            return json({ title });
+          }
+        }
+      } catch {
+        // try next
+      }
+    }
+  }
+
+  const fallback = message.slice(0, 35).trim();
+  const title = fallback.charAt(0).toUpperCase() + fallback.slice(1);
+  return json({ title });
+}
+
+async function routeApi(request: Request, env: Env, url: URL, id: string): Promise<Response> {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  if (url.pathname === '/api/health') {
+    const configured = getKeys(env).length > 0;
+    return json({
+      status: configured ? 'online' : 'degraded',
+      edge: 'Cloudflare Worker',
+      provider: 'Google Gemini',
+      models: getModels(env),
+      configured,
+      time: new Date().toISOString()
+    });
+  }
+
+  if (url.pathname === '/api/chat') return handleChat(request, env, id);
+  if (url.pathname === '/api/title') return handleTitle(request, env, id);
+  if (url.pathname === '/api/transcribe') return handleTranscribe(request, env, id);
+  if (url.pathname === '/api/tts') return handleTts(url, id);
+
+  throw new HttpError(404, `Unknown API route: ${url.pathname}`);
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // 1. API Route Handler
-    if (url.pathname.startsWith('/api/')) {
-      const corsHeaders = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-      };
-
-      if (request.method === 'OPTIONS') {
-        return new Response(null, { headers: corsHeaders });
-      }
-
-      // Health
-      if (url.pathname === '/api/health') {
-        return new Response(
-          JSON.stringify({
-            status: 'online',
-            edge: 'Cloudflare Worker',
-            models: ['gemini-flash-lite-latest', 'gemini-3-flash-preview', 'gemma-4-26b-a4b-it']
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // User & Auth
-      if (url.pathname === '/api/user' || url.pathname === '/api/auth/google') {
-        const defaultUser = {
-          id: 'usr_yaroslav_01',
-          name: 'Yaroslav Samchuk',
-          email: 'samchukyaroslav@gmail.com',
-          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&q=80',
-          currentLanguage: 'da',
-          voicePreferences: { da: 'da-DK-ChristelNeural', en: 'en-US-JennyNeural' },
-          messagesRemaining: 30,
-          dailyLimit: 30,
-          resetAt: new Date(Date.now() + 15 * 3600 * 1000).toISOString(),
-          memories: {
-            global: ['Рідна мова — українська. Цінує стислість та живий тон.'],
-            da: ['Вивчає розмовну данську мову (Dansk) для повсякденного життя.'],
-            en: ['Вільне повсякденне та ділове спілкування англійською.']
-          }
-        };
-
-        if (request.method === 'POST') {
-          try {
-            const body = await request.json();
-            return new Response(JSON.stringify({ ...defaultUser, ...body }), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          } catch {
-            return new Response(JSON.stringify(defaultUser), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          }
-        }
-
-        return new Response(JSON.stringify(defaultUser), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Chats List
-      if (url.pathname === '/api/chats') {
-        const lang = (url.searchParams.get('language') as 'da' | 'en') || 'da';
-        const defaultChat = {
-          _id: `chat_${lang}_default`,
-          userId: 'usr_yaroslav_01',
-          language: lang,
-          title: lang === 'da' ? 'Ny samtale' : 'New dialogue',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        if (request.method === 'POST') {
-          try {
-            const body: any = await request.json();
-            const newChat = {
-              _id: `chat_${Date.now()}`,
-              userId: 'usr_yaroslav_01',
-              language: body.language || 'da',
-              title: body.title || (lang === 'da' ? 'Ny samtale' : 'New dialogue'),
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-            return new Response(JSON.stringify(newChat), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          } catch {
-            return new Response(JSON.stringify(defaultChat), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          }
-        }
-
-        return new Response(JSON.stringify([defaultChat]), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Delete Chat
-      if (url.pathname.startsWith('/api/chats/') && request.method === 'DELETE') {
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Chat Messages List
-      if (url.pathname.match(/\/api\/chats\/[^/]+\/messages$/) && request.method === 'GET') {
-        const chatId = url.pathname.split('/')[3];
-        const msgs = inMemoryStore.messages.get(chatId) || [];
-        return new Response(JSON.stringify(msgs), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Post Chat Message & Stream Completion (Gemini SSE)
-      if (url.pathname.match(/\/api\/chats\/[^/]+\/messages$/) && request.method === 'POST') {
-        try {
-          const body: any = await request.json();
-          const userContent = (body.content || '').trim();
-          const lang = body.language || 'da';
-          const systemPrompt = SYSTEM_PROMPTS[lang] || SYSTEM_PROMPTS.da;
-          const chatId = url.pathname.split('/')[3] || 'default';
-
-          // Maintain conversation history
-          const chatHistory = inMemoryStore.messages.get(chatId) || [];
-          chatHistory.push({ role: 'user', content: userContent });
-          inMemoryStore.messages.set(chatId, chatHistory);
-
-          const keys = getRotatedKeys(env);
-          const models = [
-            'gemini-flash-lite-latest',
-            'gemini-3.5-flash',
-            'gemini-3-flash-preview',
-            'gemma-4-26b-a4b-it'
-          ];
-
-          // Create SSE streaming response
-          const { readable, writable } = new TransformStream();
-          const writer = writable.getWriter();
-          const encoder = new TextEncoder();
-
-          (async () => {
-            let streamed = false;
-
-            // Prepare contextual multi-turn conversation
-            const conversationContents = [
-              { role: 'user', parts: [{ text: `[System Instructions: ${systemPrompt}]` }] },
-              {
-                role: 'model',
-                parts: [
-                  { text: lang === 'da' ? 'Forstået, jeg skriver som en ven på dansk!' : 'Got it, let’s chat!' }
-                ]
-              },
-              ...chatHistory.slice(-8).map((m: any) => ({
-                role: m.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: m.content }]
-              }))
-            ];
-
-            for (const model of models) {
-              if (streamed) break;
-
-              for (const key of keys) {
-                if (streamed) break;
-
-                try {
-                  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-                  const payload = {
-                    contents: conversationContents,
-                    generationConfig: {
-                      temperature: 0.72,
-                      maxOutputTokens: 250
-                    }
-                  };
-
-                  const geminiRes = await fetch(geminiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                  });
-
-                  if (geminiRes.ok) {
-                    const data: any = await geminiRes.json();
-                    let text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                    text = text.trim();
-
-                    if (text) {
-                      // Save to chat history
-                      chatHistory.push({ role: 'assistant', content: text });
-                      inMemoryStore.messages.set(chatId, chatHistory);
-
-                      // Stream tokens word by word with micro-delay for kinetic feel
-                      const words = text.split(' ');
-                      for (let i = 0; i < words.length; i++) {
-                        const token = words[i] + (i < words.length - 1 ? ' ' : '');
-                        await writer.write(
-                          encoder.encode(`data: ${JSON.stringify({ token })}\n\n`)
-                        );
-                      }
-                      await writer.write(encoder.encode(`data: [DONE]\n\n`));
-                      streamed = true;
-                      break;
-                    }
-                  }
-                } catch (err) {}
-              }
-            }
-
-            // Fallback response if all API keys rate limited
-            if (!streamed) {
-              const fallback =
-                lang === 'da'
-                  ? 'Hej ven! Hvad vil du gerne snakke om i dag?'
-                  : 'Hey there! What would you like to talk about today?';
-              await writer.write(
-                encoder.encode(`data: ${JSON.stringify({ token: fallback })}\n\n`)
-              );
-              await writer.write(encoder.encode(`data: [DONE]\n\n`));
-            }
-
-            await writer.close();
-          })();
-
-          return new Response(readable, {
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'text/event-stream; charset=utf-8',
-              'Cache-Control': 'no-cache',
-              Connection: 'keep-alive'
-            }
-          });
-        } catch (err: any) {
-          return new Response(JSON.stringify({ error: err.message }), {
-            status: 500,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-      }
-
-      // Transcribe & Phonetics (Word Lens)
-      if (url.pathname === '/api/transcribe' && request.method === 'POST') {
-        try {
-          const body: any = await request.json();
-          const text = (body.text || '').trim();
-          const lang = body.lang || 'da';
-          const userLang = body.userLang || 'uk';
-
-          const [translation, ipa] = await Promise.all([
-            getGoogleTranslation(text, lang, userLang),
-            lang === 'da' ? getDanishIPA(text) : getEnglishIPA(text)
-          ]);
-
-          return new Response(
-            JSON.stringify({
-              original: text,
-              translation: translation || text,
-              ipa: ipa || (lang === 'da' ? `[da: ${text}]` : `/${text}/`)
-            }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        } catch (err: any) {
-          return new Response(JSON.stringify({ error: err.message }), {
-            status: 500,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-      }
-
-      // Word Vault Endpoints
-      if (url.pathname === '/api/words') {
-        const lang = url.searchParams.get('language') || 'da';
-        const list = inMemoryStore.words.get(lang) || [];
-
-        if (request.method === 'GET') {
-          return new Response(JSON.stringify(list), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-
-        if (request.method === 'POST') {
-          try {
-            const body: any = await request.json();
-            const current = inMemoryStore.words.get(body.language || lang) || [];
-            const updated = [body, ...current.filter((w: any) => w.phrase !== body.phrase)];
-            inMemoryStore.words.set(body.language || lang, updated);
-            return new Response(JSON.stringify({ success: true, word: body }), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          } catch {
-            return new Response(JSON.stringify({ success: true }), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          }
-        }
-
-        if (request.method === 'DELETE') {
-          try {
-            const body: any = await request.json();
-            const current = inMemoryStore.words.get(body.language || lang) || [];
-            inMemoryStore.words.set(
-              body.language || lang,
-              current.filter((w: any) => w.phrase !== body.phrase)
-            );
-            return new Response(JSON.stringify({ success: true }), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          } catch {
-            return new Response(JSON.stringify({ success: true }), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            });
-          }
-        }
-      }
-
-      // Fallback 404 for unknown API
-      return new Response(JSON.stringify({ error: 'Endpoint not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+    if (!url.pathname.startsWith('/api/')) {
+      return env.ASSETS.fetch(request);
     }
 
-    // 2. Static Assets Handler (Single-Page Application)
-    return env.ASSETS.fetch(request);
+    const id = requestId();
+    const started = Date.now();
+
+    try {
+      const response = await routeApi(request, env, url, id);
+      logEvent('request', {
+        id,
+        method: request.method,
+        path: url.pathname,
+        status: response.status,
+        ms: Date.now() - started
+      });
+      return response;
+    } catch (error) {
+      const status = error instanceof HttpError ? error.status : 500;
+      const message =
+        error instanceof HttpError
+          ? error.message
+          : 'The server hit an unexpected error. Check the Worker logs.';
+
+      logEvent('request_error', {
+        id,
+        method: request.method,
+        path: url.pathname,
+        status,
+        ms: Date.now() - started,
+        error: error instanceof Error ? error.message : String(error)
+      });
+
+      return json({ error: message }, status);
+    }
   }
 };

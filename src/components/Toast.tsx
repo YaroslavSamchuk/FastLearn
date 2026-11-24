@@ -1,6 +1,6 @@
 // language: TypeScript (React), file: src/components/Toast.tsx, target: Web / Mobile Browser
 import React from 'react';
-import { Check, Info, AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Check, Info, X } from 'lucide-react';
 
 export interface ToastMessage {
   id: string;
@@ -13,43 +13,49 @@ interface ToastProps {
   onDismiss: (id: string) => void;
 }
 
+const ICONS = {
+  success: Check,
+  info: Info,
+  warning: AlertTriangle
+} as const;
+
+const TONES = {
+  success: 'text-emerald-700 dark:text-emerald-400',
+  info: 'text-stone-500 dark:text-stone-400',
+  warning: 'text-red-600 dark:text-red-400'
+} as const;
+
 export const Toast: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
   if (toasts.length === 0) return null;
 
   return (
     <div
-      className="fixed top-4 sm:top-5 left-1/2 -translate-x-1/2 z-60 flex flex-col items-center gap-2 pointer-events-none select-none w-full max-w-sm px-4"
+      className="pointer-events-none fixed left-1/2 top-4 z-[60] flex w-full max-w-sm -translate-x-1/2 flex-col items-stretch gap-2 px-4 sm:top-5"
       aria-live="polite"
+      aria-atomic="false"
     >
       {toasts.map((toast) => {
-        const isSuccess = toast.type === 'success' || !toast.type;
-        const isWarning = toast.type === 'warning';
+        const type = toast.type ?? 'success';
+        const Icon = ICONS[type];
 
         return (
           <div
             key={toast.id}
-            onClick={() => onDismiss(toast.id)}
-            className="pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-full glass-pill border border-zinc-200/80 dark:border-white/10 text-zinc-900 dark:text-zinc-100 shadow-xl animate-spring-bounce cursor-pointer active:scale-95 transition-transform"
+            className="pointer-events-auto flex animate-toast-in items-start gap-2.5 rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 shadow-sm dark:border-white/[0.09] dark:bg-[#1c1917] dark:text-stone-100"
+            role="status"
           >
-            {isSuccess && (
-              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-amber-400 text-zinc-950">
-                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
-              </span>
-            )}
-            {isWarning && (
-              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-red-500 text-white">
-                <AlertTriangle className="w-3 h-3 stroke-[2.5]" />
-              </span>
-            )}
-            {!isSuccess && !isWarning && (
-              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
-                <Info className="w-3.5 h-3.5 stroke-[2.2]" />
-              </span>
-            )}
-
-            <span className="text-xs sm:text-[13px] font-medium tracking-tight">
+            <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${TONES[type]}`} strokeWidth={2} />
+            <p className="min-w-0 flex-1 text-[13px] font-medium leading-snug">
               {toast.text}
-            </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => onDismiss(toast.id)}
+              className="-mr-1 -mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-200"
+              aria-label="Закрити повідомлення"
+            >
+              <X className="h-3.5 w-3.5" strokeWidth={1.75} />
+            </button>
           </div>
         );
       })}

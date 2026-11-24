@@ -1,15 +1,17 @@
 // language: TypeScript (React), file: src/components/ChatInput.tsx, target: Web / Mobile Browser
-import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Loader2, AlertCircle, Mic, Sparkles } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ArrowUp, Loader2 } from 'lucide-react';
 import { Language } from '../types.ts';
-import { QuotaRing } from './QuotaRing.tsx';
 import { haptic } from '../utils/haptics.ts';
+import { formatResetAt } from '../lib/data.ts';
 
 interface ChatInputProps {
   onSend: (text: string) => void;
   disabled?: boolean;
   language: Language;
   remainingMessages?: number;
+  dailyLimit?: number;
+  resetAt?: string;
   isLoggedIn?: boolean;
   onLogin?: () => void;
 }
@@ -19,6 +21,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   disabled,
   language,
   remainingMessages = 30,
+  dailyLimit = 30,
+  resetAt,
   isLoggedIn = false,
   onLogin
 }) => {
@@ -26,10 +30,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const isLimitReached = remainingMessages <= 0;
-  const isInputDisabled = disabled || isLimitReached;
+  const isInputDisabled = Boolean(disabled) || isLimitReached;
 
-  const handleSubmit = (e?: React.FormEvent) => {
-    e?.preventDefault();
+  const handleSubmit = (event?: React.FormEvent) => {
+    event?.preventDefault();
     if (!text.trim() || isInputDisabled) return;
 
     haptic.send();
@@ -40,40 +44,39 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
       handleSubmit();
     }
   };
 
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
-    }
+    const node = textareaRef.current;
+    if (!node) return;
+    node.style.height = 'auto';
+    node.style.height = `${Math.min(node.scrollHeight, 128)}px`;
   }, [text]);
 
   const placeholder = isLimitReached
-    ? 'Денний ліміт вичерпано. Оновиться о 00:00...'
+    ? `Ліміт вичерпано. Оновлення через ${resetAt ? formatResetAt(resetAt) : 'кілька годин'}`
     : language === 'da'
-    ? 'Skriv på dansk eller ukrainsk...'
-    : 'Ask anything or practice in English...';
+      ? 'Напишіть данською або українською…'
+      : 'Write in English or Ukrainian…';
 
-  // Guest view: Elevated Sign-in Bar
   if (!isLoggedIn) {
     return (
-      <div className="border-t border-zinc-200/80 dark:border-white/5 glass-island p-3.5 sm:p-4 shrink-0 transition-colors select-none pb-safe">
-        <div className="max-w-3xl mx-auto">
+      <div className="shrink-0 border-t border-stone-200/80 bg-[#faf9f6] px-4 py-4 pb-safe transition-colors dark:border-white/[0.08] dark:bg-[#0c0a09] sm:px-6">
+        <div className="mx-auto max-w-2xl">
           <button
             type="button"
             onClick={() => {
               haptic.impact();
-              if (onLogin) onLogin();
+              onLogin?.();
             }}
-            className="w-full flex items-center justify-center gap-3 py-3.5 px-5 rounded-2xl bg-zinc-950 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-950 font-semibold text-xs sm:text-sm tracking-tight transition-all duration-200 cursor-pointer shadow-md active:scale-[0.98]"
+            className="flex w-full items-center justify-center gap-2.5 rounded-xl bg-stone-900 px-5 py-3 text-[14px] font-medium text-white transition-colors hover:bg-stone-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-500/30 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
           >
-            <svg className="w-4.5 h-4.5 shrink-0" viewBox="0 0 24 24">
+            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="#4285F4"
                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -91,58 +94,72 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
               />
             </svg>
-            <span>Увійти через Google для початку спілкування</span>
+            Увійти через Google
           </button>
+          <p className="mt-2 text-center text-[11px] text-stone-500 dark:text-stone-500">
+            Діалоги та пам’ять зберігаються на цьому пристрої
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="border-t border-zinc-200/80 dark:border-white/5 glass-island p-3 sm:p-4 shrink-0 transition-colors pb-safe">
-      <form
-        onSubmit={handleSubmit}
-        className={`max-w-3xl mx-auto flex items-end gap-2.5 rounded-3xl p-2 sm:p-2.5 transition-all duration-200 shadow-sm ${
-          isLimitReached
-            ? 'border border-red-500/30 bg-red-50/50 dark:bg-red-950/20'
-            : 'glass-pill border border-zinc-200/80 dark:border-white/10 focus-within:border-amber-400/80 dark:focus-within:border-amber-400/60 focus-within:ring-2 focus-within:ring-amber-400/20'
-        }`}
-      >
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          rows={1}
-          disabled={isInputDisabled}
-          className="flex-1 bg-transparent border-0 focus:ring-0 focus:outline-none resize-none text-[14px] sm:text-[15px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 max-h-32 px-3 py-1.5 leading-relaxed disabled:opacity-50"
-        />
+    <div className="shrink-0 border-t border-stone-200/80 bg-[#faf9f6] px-3 py-3 pb-safe transition-colors dark:border-white/[0.08] dark:bg-[#0c0a09] sm:px-6 sm:py-4">
+      <form onSubmit={handleSubmit} className="mx-auto max-w-2xl">
+        <div
+          className={`flex items-end gap-2 rounded-2xl border bg-white p-2 transition-colors dark:bg-[#191817] ${
+            isLimitReached
+              ? 'border-red-300/70 dark:border-red-500/30'
+              : 'border-stone-200 focus-within:border-stone-400 dark:border-white/[0.09] dark:focus-within:border-stone-500/60'
+          }`}
+        >
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            rows={1}
+            disabled={isInputDisabled}
+            enterKeyHint="send"
+            autoComplete="off"
+            aria-label="Повідомлення"
+            className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[16px] leading-relaxed text-stone-900 placeholder-stone-400 focus:outline-none disabled:opacity-50 dark:text-stone-100 dark:placeholder-stone-500 sm:text-[15px]"
+          />
 
-        <div className="flex items-center gap-1.5 shrink-0 pb-1">
-          {/* Circular Quota Gauge */}
-          <QuotaRing remaining={remainingMessages} total={30} />
+          <div className="flex items-center gap-2 pb-0.5">
+            <span
+              className={`font-mono text-[11px] tabular-nums ${
+                isLimitReached
+                  ? 'text-red-600 dark:text-red-400'
+                  : remainingMessages <= 5
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-stone-500 dark:text-stone-500'
+              }`}
+              title={`Залишилось ${remainingMessages} з ${dailyLimit} повідомлень`}
+            >
+              {remainingMessages}/{dailyLimit}
+            </span>
 
-          {/* Send or Loading Button */}
-          <button
-            type="submit"
-            disabled={!text.trim() || isInputDisabled}
-            className={`flex items-center justify-center w-9 h-9 rounded-full transition-all duration-200 cursor-pointer ${
-              text.trim() && !isInputDisabled
-                ? 'bg-amber-400 text-zinc-950 hover:bg-amber-300 active:scale-90 shadow-md shadow-amber-400/20 font-bold'
-                : 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
-            }`}
-            title={isLimitReached ? 'Ліміт вичерпано' : 'Надіслати'}
-            aria-label="Надіслати повідомлення"
-          >
-            {disabled ? (
-              <Loader2 className="w-4 h-4 animate-spin text-zinc-600 dark:text-zinc-300" />
-            ) : isLimitReached ? (
-              <AlertCircle className="w-4 h-4 text-red-500" />
-            ) : (
-              <ArrowUp className="w-4.5 h-4.5 stroke-[2.4]" />
-            )}
-          </button>
+            <button
+              type="submit"
+              disabled={!text.trim() || isInputDisabled}
+              className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 ${
+                text.trim() && !isInputDisabled
+                  ? 'bg-amber-500 text-stone-950 hover:bg-amber-400'
+                  : 'cursor-not-allowed bg-stone-200 text-stone-400 dark:bg-stone-800 dark:text-stone-600'
+              }`}
+              title={isLimitReached ? 'Ліміт вичерпано' : 'Надіслати'}
+              aria-label="Надіслати повідомлення"
+            >
+              {disabled ? (
+                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+              ) : (
+                <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2} />
+              )}
+            </button>
+          </div>
         </div>
       </form>
     </div>

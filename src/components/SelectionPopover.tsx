@@ -1,24 +1,23 @@
 // language: TypeScript (React), file: src/components/SelectionPopover.tsx, target: Web / Mobile Browser
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SelectionData, Language } from '../types.ts';
-import { Volume2, Bookmark, Check, X, Loader2 } from 'lucide-react';
+import { Volume2, X, Loader2, RotateCw } from 'lucide-react';
 import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { haptic } from '../utils/haptics.ts';
+import { log } from '../lib/logger.ts';
+import type { TranscribeResult } from '../lib/api.ts';
 
 interface SelectionPopoverProps {
   selection: SelectionData;
   language: Language;
   onClose: () => void;
   onPlayAudio: (speed: number) => void;
+  onStopAudio: () => void;
   isPlaying: boolean;
+  playingText?: string;
   currentSpeed: number | null;
   onShowToast?: (msg: string, type?: 'success' | 'info' | 'warning') => void;
-}
-
-interface TranscribeResult {
-  original: string;
-  translation: string;
-  ipa: string;
+  onTranslate: (text: string, language: Language) => Promise<TranscribeResult>;
 }
 
 export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
@@ -26,228 +25,175 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
   language,
   onClose,
   onPlayAudio,
+  onStopAudio,
   isPlaying,
+  playingText,
   currentSpeed,
-  onShowToast
+  onShowToast,
+  onTranslate
 }) => {
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const [data, setData] = useState<TranscribeResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [style, setStyle] = useState<React.CSSProperties>({
+    left: selection.x,
+    top: selection.y,
+    opacity: 0
+  });
+
+  const isCurrentPlaying = isPlaying && playingText === selection.text;
 
   useEffect(() => {
-    let isMounted = true;
+    let active = true;
     setLoading(true);
+    setError(null);
+    setData(null);
 
-    const fetchTranslation = async () => {
-      try {
-        const r = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: selection.text, lang: language, userLang: 'uk' })
-        });
-
-        const contentType = r.headers.get('content-type') || '';
-        if (r.ok && contentType.includes('application/json')) {
-          const res: TranscribeResult = await r.json();
-          if (isMounted) {
-            setData(res);
-            setLoading(false);
-            return;
-          }
-        }
-        throw new Error('Fallback to direct client translation');
-      } catch {
-        // Direct client fallback translation via public endpoint
-        try {
-          const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${language}&tl=uk&dt=t&q=${encodeURIComponent(selection.text)}`;
-          const gRes = await fetch(gUrl);
-          const gJson = await gRes.json();
-          const translated = gJson[0]?.map((item: any) => item[0]).filter(Boolean).join(' ') || selection.text;
-          if (isMounted) {
-            setData({
-              original: selection.text,
-              translation: translated,
-              ipa: language === 'da' ? `[da: ${selection.text}]` : `/${selection.text}/`
-            });
-            setLoading(false);
-          }
-        } catch {
-          if (isMounted) {
-            setData({
-              original: selection.text,
-              translation: selection.text,
-              ipa: ''
-            });
-            setLoading(false);
-          }
-        }
-      }
-    };
-
-    fetchTranslation();
+    onTranslate(selection.text, language)
+      .then((result) => {
+        if (!active) return;
+        setData(result);
+        setLoading(false);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        const message = reason instanceof Error ? reason.message : String(reason);
+        log.warn('translate', 'Selection lookup failed', { message });
+        setError(message);
+        setLoading(false);
+      });
 
     return () => {
-      isMounted = false;
+      active = false;
     };
-  }, [selection.text, language]);
+  }, [selection.text, language, attempt, onTranslate]);
 
-  const handleSaveWord = async () => {
-    if (!data) return;
-    haptic.success();
-    try {
-      await fetch('/api/words', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phrase: selection.text,
-          translation: data.translation,
-          ipa: data.ipa,
-          language
-        })
-      });
-    } catch {
-      // safe fallback
-    }
+  useLayoutEffect(() => {
+    const node = popoverRef.current;
+    if (!node) return;
 
-    setSaved(true);
-    if (onShowToast) {
-      onShowToast('Збережено у ваш словник!', 'success');
-    }
-    setTimeout(() => setSaved(false), 2400);
-  };
+    const rect = node.getBoundingClientRect();
+    const margin = 12;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
 
-  const handlePlay = (speed: number) => {
+    let left = selection.x - rect.width / 2;
+    left = Math.max(margin, Math.min(left, viewportWidth - rect.width - margin));
+
+    let top = selection.placement === 'top' ? selection.y - rect.height : selection.y;
+    top = Math.max(margin, Math.min(top, viewportHeight - rect.height - margin));
+
+    setStyle({ left, top, opacity: 1 });
+  }, [selection, loading, data, error]);
+
+  const handlePlay = () => {
     haptic.tap();
-    onPlayAudio(speed);
+    if (isCurrentPlaying) {
+      onStopAudio();
+      return;
+    }
+    onPlayAudio(0.8);
   };
 
   const wordCount = selection.text.split(/\s+/).filter(Boolean).length;
-  const isTop = selection.placement === 'top';
 
   return (
     <div
-      className={`fixed z-50 pointer-events-auto ${
-        isTop ? 'animate-popover-top' : 'animate-popover-bottom'
-      }`}
-      style={{
-        left: `${selection.x}px`,
-        top: isTop ? `${selection.y}px` : undefined,
-        bottom: !isTop ? `${window.innerHeight - selection.y}px` : undefined,
-        width: 'min(340px, calc(100vw - 28px))'
-      }}
-      onClick={(e) => e.stopPropagation()}
+      ref={popoverRef}
+      data-selection-popover
+      onPointerDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      className="fixed z-50 w-[min(350px,calc(100vw-24px))] transition-[opacity,transform] duration-150 ease-out"
+      style={style}
     >
-      <div className="glass-pill border border-zinc-200/90 dark:border-white/10 rounded-2xl p-3.5 shadow-2xl text-zinc-900 dark:text-zinc-100 transition-colors">
-        {/* Top Header: Selected text & actions */}
-        <div className="flex items-start justify-between gap-2 pb-2 border-b border-zinc-200/60 dark:border-white/5">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-bold text-sm sm:text-[15px] truncate block tracking-tight">
-                {selection.text}
-              </span>
-              {wordCount > 1 && (
-                <span className="text-[10px] font-mono text-zinc-400 dark:text-zinc-500 bg-zinc-100 dark:bg-white/5 px-1.5 py-0.5 rounded-md shrink-0">
-                  {wordCount} сл.
-                </span>
-              )}
-            </div>
+      <div className="animate-popover rounded-2xl border border-stone-200/90 bg-white text-stone-900 shadow-lg shadow-stone-900/10 dark:border-white/[0.1] dark:bg-[#191817] dark:text-stone-100 dark:shadow-black/30">
+        <div className="flex items-start justify-between gap-2 border-b border-stone-100 pb-2.5 dark:border-white/[0.07]">
+          <div className="min-w-0 flex-1">
+            <p className="line-clamp-2 text-[14px] font-medium leading-snug text-stone-950 dark:text-stone-50">
+              {selection.text}
+            </p>
+            {wordCount > 1 && (
+              <p className="mt-0.5 font-mono text-[11px] text-stone-400 dark:text-stone-500">
+                {wordCount} слів
+              </p>
+            )}
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex shrink-0 items-center gap-0.5">
             <button
-              onClick={handleSaveWord}
-              disabled={saved || loading}
-              className={`p-1.5 rounded-full transition-all cursor-pointer ${
-                saved
-                  ? 'bg-amber-400 text-zinc-950 font-bold'
-                  : 'hover:bg-zinc-100 dark:hover:bg-white/5 text-zinc-500 hover:text-amber-500'
-              }`}
-              title="Зберегти у словник"
-              aria-label="Зберегти"
-            >
-              {saved ? (
-                <Check className="w-4 h-4 stroke-[2.4]" />
-              ) : (
-                <Bookmark className="w-4 h-4 stroke-[1.8]" />
-              )}
-            </button>
-
-            <button
+              type="button"
               onClick={() => {
                 haptic.tap();
                 onClose();
               }}
-              className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-white/5 text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer"
-              aria-label="Закрити"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:text-stone-500 dark:hover:bg-white/[0.08] dark:hover:text-stone-200"
+              title="Закрити"
+              aria-label="Закрити панель перекладу"
             >
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" strokeWidth={1.75} />
             </button>
           </div>
         </div>
 
-        {/* Translation & Phonetic IPA Body */}
-        <div className="py-2.5">
+        <div className="py-3">
           {loading ? (
-            <div className="flex items-center justify-center py-3 text-zinc-400 text-xs font-mono gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />
-              <span>Аналіз вимови & переклад...</span>
+            <div className="flex items-center gap-2 py-1 text-[12px] text-stone-500 dark:text-stone-500">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+              Переклад і вимова…
+            </div>
+          ) : error ? (
+            <div className="space-y-2">
+              <p className="text-[12px] leading-relaxed text-red-600 dark:text-red-400">
+                Не вдалося отримати переклад
+              </p>
+              <button
+                type="button"
+                onClick={() => setAttempt((value) => value + 1)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
+              >
+                <RotateCw className="h-3 w-3" strokeWidth={2} />
+                Повторити
+              </button>
             </div>
           ) : data ? (
             <div className="space-y-1.5">
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-zinc-950 dark:text-zinc-100">
-                  {data.translation}
-                </span>
-                {data.ipa && (
-                  <span className="font-mono text-xs px-1.5 py-0.5 rounded-md bg-amber-400/15 dark:bg-amber-400/10 text-amber-700 dark:text-amber-400 font-semibold tracking-wide">
-                    {data.ipa}
-                  </span>
-                )}
-              </div>
+              <p className="text-[14px] leading-snug text-stone-800 dark:text-stone-200">
+                {data.translation}
+              </p>
+              {data.ipa && (
+                <p className="font-mono text-[12px] leading-relaxed text-amber-700 dark:text-amber-400">
+                  {data.ipa}
+                </p>
+              )}
             </div>
           ) : (
-            <div className="text-xs text-zinc-400">Не вдалося завантажити переклад</div>
+            <p className="text-[12px] text-stone-500">Немає даних</p>
           )}
         </div>
 
-        {/* Audio Speed Controls Pill Bar */}
-        <div className="pt-2 border-t border-zinc-200/60 dark:border-white/5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => handlePlay(0.8)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${
-                isPlaying && currentSpeed === 0.8
-                  ? 'bg-amber-400 text-zinc-950 font-bold shadow-xs'
-                  : 'bg-zinc-100 dark:bg-white/5 hover:bg-zinc-200 dark:hover:bg-white/10 text-zinc-700 dark:text-zinc-300'
-              }`}
-            >
-              {isPlaying && currentSpeed === 0.8 ? (
-                <AudioVisualizer isPlaying={true} barColor="bg-zinc-950" />
-              ) : (
-                <Volume2 className="w-3.5 h-3.5 stroke-[2]" />
-              )}
-              <span>0.8x Повільно</span>
-            </button>
+        <div className="flex items-center justify-between gap-2 border-t border-stone-100 pt-2.5 dark:border-white/[0.07]">
+          <button
+            type="button"
+            onClick={handlePlay}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+              isCurrentPlaying
+                ? 'bg-amber-400 text-stone-950'
+                : 'bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-white/[0.06] dark:text-stone-300 dark:hover:bg-white/[0.1]'
+            }`}
+          >
+            {isCurrentPlaying ? (
+              <AudioVisualizer isPlaying barColor="bg-stone-950" />
+            ) : (
+              <Volume2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+            )}
+            <span>{isCurrentPlaying ? 'Зупинити' : 'Прослухати 0.8×'}</span>
+          </button>
 
-            <button
-              onClick={() => handlePlay(1.0)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${
-                isPlaying && currentSpeed === 1.0
-                  ? 'bg-amber-400 text-zinc-950 font-bold shadow-xs'
-                  : 'bg-zinc-100 dark:bg-white/5 hover:bg-zinc-200 dark:hover:bg-white/10 text-zinc-700 dark:text-zinc-300'
-              }`}
-            >
-              {isPlaying && currentSpeed === 1.0 ? (
-                <AudioVisualizer isPlaying={true} barColor="bg-zinc-950" />
-              ) : (
-                <Volume2 className="w-3.5 h-3.5 stroke-[2]" />
-              )}
-              <span>1.0x Звично</span>
-            </button>
-          </div>
-
-          <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-wider">
-            {language === 'da' ? 'DK' : 'EN'}
+          <span className="font-mono text-[11px] text-stone-500 dark:text-stone-500">
+            {language === 'da' ? 'DA' : 'EN'}
+            {currentSpeed ? ` · ${currentSpeed}×` : ''}
           </span>
         </div>
       </div>
