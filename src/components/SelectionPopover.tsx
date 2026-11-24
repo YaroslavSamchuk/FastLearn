@@ -143,10 +143,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       }
 
       const speechText = toSpeechText(selection.text);
-      const speechVariants = [
-        { speed: 1, cachedAudio: cached?.normalAudio },
-        { speed: 0.8, cachedAudio: cached?.slowAudio }
-      ];
+      const speechVariants = [{ speed: 0.8, cachedAudio: cached?.slowAudio }];
       for (const variant of speechVariants) {
         if (!speechText || variant.cachedAudio) continue;
         tasks.push(

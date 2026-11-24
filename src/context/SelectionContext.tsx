@@ -39,6 +39,7 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const containerElRef = useRef<HTMLElement | null>(null);
   const rangeRef = useRef<{ start: number; end: number } | null>(null);
   const messageIdRef = useRef<string | null>(null);
+  const selectionIdRef = useRef(0);
 
   const clearSelection = useCallback(() => {
     setSelection(null);
@@ -52,7 +53,14 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   const calculateSelectionGeometry = useCallback(
-    (messageId: string, startIdx: number, endIdx: number, containerEl: HTMLElement, tokens: WordToken[]) => {
+    (
+      messageId: string,
+      startIdx: number,
+      endIdx: number,
+      containerEl: HTMLElement,
+      tokens: WordToken[],
+      selectionId: number
+    ) => {
       const minIdx = Math.min(startIdx, endIdx);
       const maxIdx = Math.max(startIdx, endIdx);
 
@@ -97,6 +105,7 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const y = placement === 'top' ? minY - 8 : maxY + 8;
 
       setSelection({
+        id: selectionId,
         text: cleanPhrase,
         x,
         y,
@@ -139,7 +148,14 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const tokens = activeTokensRef.current;
 
     if (range && msgId && container && tokens.length > 0) {
-      calculateSelectionGeometry(msgId, range.start, range.end, container, tokens);
+      calculateSelectionGeometry(
+        msgId,
+        range.start,
+        range.end,
+        container,
+        tokens,
+        ++selectionIdRef.current
+      );
     }
   }, [calculateSelectionGeometry]);
 
@@ -153,7 +169,14 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       activeTokensRef.current = tokens;
       containerElRef.current = containerEl;
       haptic.tap();
-      calculateSelectionGeometry(messageId, wordIndex, wordIndex, containerEl, tokens);
+      calculateSelectionGeometry(
+        messageId,
+        wordIndex,
+        wordIndex,
+        containerEl,
+        tokens,
+        ++selectionIdRef.current
+      );
     },
     [calculateSelectionGeometry]
   );
@@ -227,7 +250,7 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return;
       }
 
-      calculateSelectionGeometry(msgId, range.start, range.end, container, tokens);
+      calculateSelectionGeometry(msgId, range.start, range.end, container, tokens, selectionIdRef.current);
     };
 
     window.addEventListener('scroll', handleScroll, true);

@@ -340,6 +340,11 @@ const AppContent: React.FC = () => {
     setPlayingPhrase(undefined);
   }, [stop]);
 
+  useEffect(() => {
+    if (!selection) return;
+    handlePlayAudio(selection.text, 1, true);
+  }, [selection?.id, handlePlayAudio]);
+
   const handleSelectLanguage = (language: Language) => {
     if (language === currentLanguage) return;
     haptic.tap();

@@ -58,6 +58,7 @@ export interface AppData {
 }
 
 export interface SelectionData {
+  id: number;
   text: string;
   x: number;
   y: number;
