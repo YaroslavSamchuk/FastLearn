@@ -74,7 +74,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = language === 'da' ? 'da-DK' : 'en-US';
-      utterance.rate = Math.max(0.5, Math.min(2, speed));
+      utterance.rate = Math.max(0.4, Math.min(2, speed));
       utterance.pitch = 1;
 
       const targetPrefix = language === 'da' ? 'da' : 'en';
@@ -112,7 +112,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
       stop();
       const requestId = requestRef.current;
       const safeSpeed = clampPlaybackSpeed(speed, addPhrasePauses);
-      const cacheKey = `${userId}:${language}:${spokenText}`;
+      const cacheKey = `${userId}:${language}:${safeSpeed}:${spokenText}`;
 
       setIsPlaying(true);
       setCurrentSpeed(safeSpeed);
@@ -129,7 +129,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
 
         if (!url) {
           let blob: Blob | null = null;
-          if (userId && !addPhrasePauses) {
+          if (userId && !addPhrasePauses && safeSpeed === 1) {
             try {
               blob = await getCachedSpeech(userId, language, text, 1);
             } catch (error) {
@@ -147,12 +147,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         if (requestRef.current !== requestId) return;
 
         const isRemoteStream = !url;
-        const audio = new Audio(url ?? ttsUrl(spokenText, language, 1));
-        audio.playbackRate = safeSpeed;
-        audio.preservesPitch = true;
-        audio.onloadedmetadata = () => {
-          if (requestRef.current === requestId) audio.playbackRate = safeSpeed;
-        };
+        const audio = new Audio(url ?? ttsUrl(spokenText, language, safeSpeed));
         audioRef.current = audio;
         audio.onended = () => {
           if (isRemoteStream && cacheForHistory && userId && !addPhrasePauses) {

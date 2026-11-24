@@ -456,7 +456,7 @@ app.get('/api/tts', requireAuth, async (req, res) => {
 
   const language = req.query.lang === 'en' ? 'en' : 'da';
   const rawSpeed = Number.parseFloat(req.query.speed ?? '1');
-  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1.4, rawSpeed)) : 1;
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1.4, rawSpeed)) : 1;
   const voice = typeof req.query.voice === 'string' ? req.query.voice : null;
 
   const allowedVoices = new Set(Object.values(VOICES[language] || {}));

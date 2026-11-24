@@ -1435,7 +1435,7 @@ async function handleTts(url: URL, id: string): Promise<Response> {
 
   const language = url.searchParams.get('lang') === 'en' ? 'en' : 'da';
   const rawSpeed = Number.parseFloat(url.searchParams.get('speed') ?? '1');
-  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1, rawSpeed)) : 1;
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1, rawSpeed)) : 1;
 
   const cacheKey = new Request(
     `https://fastlearn-cache.internal/tts?lang=${language}&speed=${speed}&text=${encodeURIComponent(text)}`,

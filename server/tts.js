@@ -25,7 +25,7 @@ let edgeCooldownUntil = 0;
 export function mapSpeedToRate(speed) {
   const value = Number.parseFloat(speed);
   if (!Number.isFinite(value)) return 1;
-  return Math.max(0.5, Math.min(1.4, value));
+  return Math.max(0.4, Math.min(1.4, value));
 }
 
 function collectStream(stream, timeoutMs) {
@@ -64,7 +64,7 @@ async function synthesizeEdge(text, language, speed, voiceName) {
   for (const voice of voicesToTry) {
     const tts = new MsEdgeTTS();
     try {
-      await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+      await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
       const stream = await tts.toStream(text, {
         rate: mapSpeedToRate(speed),
         pitch: '+0Hz'
@@ -185,7 +185,7 @@ function writeCache(key, value) {
 export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceName = null) {
   const cleanText = text.trim();
   const parsedSpeed = Number.parseFloat(speed);
-  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.5, Math.min(1.4, parsedSpeed)) : 1;
+  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.4, parsedSpeed)) : 1;
   const voice = voiceName || VOICES[language]?.default || VOICES.en.default;
   const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
   const cached = readCache(cacheKey);
@@ -207,7 +207,7 @@ export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceNa
 export async function synthesizeSpeechStream(text, language = 'da', speed = 1, voiceName = null) {
   const cleanText = text.trim();
   const parsedSpeed = Number.parseFloat(speed);
-  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.5, Math.min(1.4, parsedSpeed)) : 1;
+  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.4, parsedSpeed)) : 1;
   const voice = voiceName || VOICES[language]?.default || VOICES.en.default;
   const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
   const cached = readCache(cacheKey);
@@ -229,7 +229,7 @@ export async function synthesizeSpeechStream(text, language = 'da', speed = 1, v
     for (const voiceNameToTry of voicesToTry) {
       const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 15_000 });
       try {
-        await tts.setMetadata(voiceNameToTry, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+        await tts.setMetadata(voiceNameToTry, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
         const { audioStream } = await tts.toStream(cleanText, {
           rate: mapSpeedToRate(safeSpeed),
           pitch: '+0Hz'
