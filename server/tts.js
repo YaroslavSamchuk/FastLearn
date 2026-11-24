@@ -24,9 +24,8 @@ let edgeCooldownUntil = 0;
 
 export function mapSpeedToRate(speed) {
   const value = Number.parseFloat(speed);
-  if (!Number.isFinite(value)) return '+0%';
-  const percentage = Math.round((value - 1) * 100);
-  return `${percentage >= 0 ? '+' : ''}${percentage}%`;
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0.5, Math.min(1.4, value));
 }
 
 function collectStream(stream, timeoutMs) {

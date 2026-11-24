@@ -116,7 +116,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
       stop();
       const requestId = requestRef.current;
       const safeSpeed = clampSpeed(speed);
-      const cacheKey = `${userId}:${language}:${safeSpeed}:${spokenText}`;
+      const cacheKey = `${userId}:${language}:${spokenText}`;
 
       setIsPlaying(true);
       setCurrentSpeed(safeSpeed);
@@ -135,7 +135,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
           let blob: Blob | null = null;
           if (userId) {
             try {
-              blob = await getCachedSpeech(userId, language, text, safeSpeed);
+              blob = await getCachedSpeech(userId, language, text, 1);
             } catch (error) {
               log.warn('audio', 'Could not read persistent speech cache', {
                 error: error instanceof Error ? error.message : String(error)
@@ -151,14 +151,19 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         if (requestRef.current !== requestId) return;
 
         const isRemoteStream = !url;
-        const audio = new Audio(url ?? ttsUrl(spokenText, language, safeSpeed));
+        const audio = new Audio(url ?? ttsUrl(spokenText, language, 1));
+        audio.playbackRate = safeSpeed;
+        audio.preservesPitch = true;
+        audio.onloadedmetadata = () => {
+          if (requestRef.current === requestId) audio.playbackRate = safeSpeed;
+        };
         audioRef.current = audio;
         audio.onended = () => {
           if (isRemoteStream && cacheForHistory && userId) {
             const controller = new AbortController();
             fetchRef.current = controller;
-            void fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal)
-              .then((blob) => saveCachedSpeech(userId, language, text, safeSpeed, blob))
+            void fetchSpeechAudio(spokenText, language, 1, controller.signal)
+              .then((blob) => saveCachedSpeech(userId, language, text, 1, blob))
               .catch((error: unknown) => {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
                 log.warn('audio', 'Could not save persistent speech cache', {
