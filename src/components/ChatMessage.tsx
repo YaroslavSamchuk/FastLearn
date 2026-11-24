@@ -7,6 +7,8 @@ import { SelectableText } from './SelectableText.tsx';
 interface ChatMessageProps {
   message: Message;
   onPlayFull: (text: string, speed?: number) => void;
+  playbackSpeed?: number;
+  onPlaybackSpeedChange?: (speed: number) => void;
   onStopAudio?: () => void;
   isStreaming?: boolean;
   isPlaying?: boolean;
@@ -17,6 +19,8 @@ interface ChatMessageProps {
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
   onPlayFull,
+  playbackSpeed = 1,
+  onPlaybackSpeedChange = () => {},
   onStopAudio,
   isStreaming = false,
   isPlaying = false,
@@ -59,8 +63,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               content={message.content}
               isUser={isUser}
               isPlaying={isCurrentPlaying}
+              speed={playbackSpeed}
               onPlay={(speed) => onPlayFull(message.content, speed)}
               onStop={onStopAudio}
+              onSpeedChange={onPlaybackSpeedChange}
               onShowToast={onShowToast}
             />
 

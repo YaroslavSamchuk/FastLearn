@@ -9,6 +9,8 @@ interface ChatStreamProps {
   messages: Message[];
   language: Language;
   onPlayFull: (text: string, speed?: number) => void;
+  playbackSpeed: number;
+  onPlaybackSpeedChange: (speed: number) => void;
   onStopAudio: () => void;
   streamingContent?: string;
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -66,6 +68,8 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   messages,
   language,
   onPlayFull,
+  playbackSpeed,
+  onPlaybackSpeedChange,
   onStopAudio,
   streamingContent,
   containerRef,
@@ -171,6 +175,8 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 key={message._id ?? `${message.createdAt}-${message.role}`}
                 message={message}
                 onPlayFull={onPlayFull}
+                playbackSpeed={playbackSpeed}
+                onPlaybackSpeedChange={onPlaybackSpeedChange}
                 onStopAudio={onStopAudio}
                 isPlaying={isPlaying}
                 playingText={playingText}
@@ -188,6 +194,8 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   createdAt: new Date().toISOString()
                 }}
                 onPlayFull={onPlayFull}
+                playbackSpeed={playbackSpeed}
+                onPlaybackSpeedChange={onPlaybackSpeedChange}
                 isPlaying={false}
                 isStreaming
                 onShowToast={onShowToast}

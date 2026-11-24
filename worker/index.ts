@@ -141,6 +141,46 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Expose-Headers': 'x-fastlearn-model'
 };
 
+const MEMORY_TOOLS = [
+  {
+    name: 'save_memory',
+    description: 'Save a durable, non-sensitive fact, preference, or goal the user has shared. Never invent a fact.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        fact: { type: 'STRING', description: 'A concise factual note, up to 200 characters.' },
+        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
+      },
+      required: ['fact', 'scope']
+    }
+  },
+  {
+    name: 'update_memory',
+    description: 'Replace an existing memory when the user corrects it or explicitly asks to change it.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        previousFact: { type: 'STRING', description: 'The exact current memory text to replace.' },
+        fact: { type: 'STRING', description: 'The corrected memory text, up to 200 characters.' },
+        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
+      },
+      required: ['previousFact', 'fact', 'scope']
+    }
+  },
+  {
+    name: 'forget_memory',
+    description: 'Remove a memory only when the user explicitly asks you to forget or delete it.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        fact: { type: 'STRING', description: 'The exact current memory text to remove.' },
+        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
+      },
+      required: ['fact', 'scope']
+    }
+  }
+];
+
 const BASE_PROMPTS: Record<string, string> = {
   da: `Du er en hjælpsom og naturlig partner til at øve dansk. Vær venlig og samtalende, men prioritér et korrekt, nyttigt svar frem for at være kort for enhver pris.
 
@@ -181,6 +221,13 @@ interface UserMemories {
   global: string[];
   da: string[];
   en: string[];
+}
+
+interface MemoryToolEvent {
+  action: 'save' | 'update' | 'forget';
+  scope: keyof UserMemories;
+  fact: string;
+  previousFact?: string;
 }
 
 interface ErrorPayload {
@@ -468,16 +515,23 @@ function buildSystemPrompt(language: 'da' | 'en', memories: UserMemories): strin
 
   const globalNotes = memories.global;
   const languageNotes = memories[language];
-  if (globalNotes.length === 0 && languageNotes.length === 0) return prompt;
+  if (globalNotes.length > 0 || languageNotes.length > 0) {
+    prompt += '\n\n=== HUKOMMELSE / MEMORY ===';
+    if (globalNotes.length > 0) {
+      prompt += '\n' + globalNotes.map((note) => `- ${note}`).join('\n');
+    }
+    if (languageNotes.length > 0) {
+      prompt += `\n${language.toUpperCase()} notes:\n` + languageNotes.map((note) => `- ${note}`).join('\n');
+    }
+    prompt += '\nUse these notes naturally without letting them override response format, accuracy, or the need for a sufficiently detailed answer.';
+  }
 
-  prompt += '\n\n=== HUKOMMELSE / MEMORY ===';
-  if (globalNotes.length > 0) {
-    prompt += '\n' + globalNotes.map((note) => `- ${note}`).join('\n');
-  }
-  if (languageNotes.length > 0) {
-    prompt += `\n${language.toUpperCase()} notes:\n` + languageNotes.map((note) => `- ${note}`).join('\n');
-  }
-  prompt += '\nUse these notes naturally without letting them override response format, accuracy, or the need for a sufficiently detailed answer.';
+  prompt += `\n\n=== LONG-TERM MEMORY ===
+Actively use the memory tools so you can remember the user over time:
+- Automatically save stable, useful, non-sensitive personal facts, preferences, and goals the user shares. Choose global for general context and da/en for language-learning context.
+- Do not save guesses, temporary details, or sensitive personal information unless the user explicitly asks you to remember it.
+- If the user corrects or explicitly changes a saved fact, use update_memory with the exact existing text. If they explicitly ask you to forget something, use forget_memory.
+- Do not claim that a memory was saved, changed, or forgotten unless the tool confirms it. Avoid saving duplicates.`;
   return prompt;
 }
 
@@ -495,6 +549,83 @@ function buildContents(messages: ClientMessage[], language: 'da' | 'en', memorie
       parts: [{ text: message.content }]
     }))
   ];
+}
+
+async function applyMemoryTool(
+  env: Env,
+  ownerId: string,
+  memories: UserMemories,
+  name: string,
+  args: unknown
+): Promise<{ memories: UserMemories; result: { ok: boolean; message: string }; event?: MemoryToolEvent }> {
+  if (!['save_memory', 'update_memory', 'forget_memory'].includes(name)) {
+    throw new HttpError(400, 'Unsupported memory action');
+  }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    throw new HttpError(400, 'Memory tool arguments must be an object');
+  }
+
+  const record = args as Record<string, unknown>;
+  const scope =
+    record.scope === 'global' || record.scope === 'da' || record.scope === 'en'
+      ? record.scope
+      : null;
+  const fact = cleanString(record.fact, 200);
+  if (!scope || !fact) throw new HttpError(400, 'A valid memory scope and fact are required');
+
+  const currentFacts = memories[scope];
+  let action: MemoryToolEvent['action'];
+  let previousFact: string | undefined;
+  let nextFacts: string[];
+
+  if (name === 'save_memory') {
+    if (currentFacts.includes(fact)) {
+      return { memories, result: { ok: true, message: 'That fact is already saved.' } };
+    }
+    if (currentFacts.length >= MAX_MEMORY_ITEMS) {
+      return { memories, result: { ok: false, message: 'Memory is full; no fact was saved.' } };
+    }
+    action = 'save';
+    nextFacts = [...currentFacts, fact];
+  } else if (name === 'update_memory') {
+    previousFact = cleanString(record.previousFact, 200);
+    if (!previousFact) throw new HttpError(400, 'The exact existing fact to update is required');
+    const index = currentFacts.indexOf(previousFact);
+    if (index < 0) {
+      return { memories, result: { ok: false, message: 'The existing fact was not found; no changes were made.' } };
+    }
+    if (fact !== previousFact && currentFacts.includes(fact)) {
+      return { memories, result: { ok: false, message: 'The updated fact already exists; no changes were made.' } };
+    }
+    action = 'update';
+    nextFacts = currentFacts.map((item, itemIndex) => (itemIndex === index ? fact : item));
+  } else {
+    if (!currentFacts.includes(fact)) {
+      return { memories, result: { ok: false, message: 'The fact was not found; no changes were made.' } };
+    }
+    action = 'forget';
+    nextFacts = currentFacts.filter((item) => item !== fact);
+  }
+
+  const nextMemories: UserMemories = { ...memories, [scope]: nextFacts };
+  await mongoCommand(env, {
+    operation: 'updateOne',
+    collection: 'workspaces',
+    filter: { ownerId },
+    update: { $set: { memories: nextMemories, updatedAt: Date.now() } },
+    upsert: true
+  });
+
+  return {
+    memories: nextMemories,
+    result: { ok: true, message: `Memory ${action} completed.` },
+    event: {
+      action,
+      scope,
+      fact,
+      ...(previousFact ? { previousFact } : {})
+    }
+  };
 }
 
 function extractReplyText(payload: unknown): string {
@@ -555,7 +686,9 @@ async function generateReply(
   language: 'da' | 'en',
   memories: UserMemories,
   signal: AbortSignal,
-  id: string
+  id: string,
+  ownerId: string,
+  onMemory: (event: MemoryToolEvent) => void
 ): Promise<{ text: string; model: string }> {
   const keys = rotate(getKeys(env));
   if (keys.length === 0) {
@@ -584,6 +717,8 @@ async function generateReply(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents,
+              tools: [{ functionDeclarations: MEMORY_TOOLS }],
+              toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
               generationConfig: {
                 temperature: 0.7,
                 maxOutputTokens: 512
@@ -608,6 +743,76 @@ async function generateReply(
         }
 
         const payload = (await response.json()) as unknown;
+        const candidates = payload && typeof payload === 'object'
+          ? (payload as { candidates?: unknown }).candidates
+          : null;
+        const parts = Array.isArray(candidates) && candidates[0] && typeof candidates[0] === 'object'
+          ? (candidates[0] as { content?: { parts?: unknown } }).content?.parts
+          : null;
+        const functionCallPart = Array.isArray(parts)
+          ? parts.find((part) =>
+              Boolean(part && typeof part === 'object' && 'functionCall' in part)
+            )
+          : undefined;
+
+        if (functionCallPart && typeof functionCallPart === 'object') {
+          const call = (functionCallPart as {
+            functionCall?: { name?: unknown; args?: unknown };
+          }).functionCall;
+          if (typeof call?.name !== 'string') {
+            lastError = 'The model returned an invalid memory action';
+            continue;
+          }
+
+          const operation = await applyMemoryTool(env, ownerId, memories, call.name, call.args);
+          memories = operation.memories;
+          if (operation.event) onMemory(operation.event);
+
+          const followUpResponse = await fetchWithTimeout(
+            url,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [
+                  ...contents,
+                  { role: 'model', parts: [functionCallPart] },
+                  {
+                    role: 'user',
+                    parts: [{
+                      functionResponse: {
+                        name: call.name,
+                        response: { result: operation.result }
+                      }
+                    }]
+                  }
+                ],
+                generationConfig: { temperature: 0.7, maxOutputTokens: 512 }
+              })
+            },
+            22_000,
+            signal
+          );
+          if (!followUpResponse.ok) {
+            lastError = await readUpstreamError(followUpResponse);
+            continue;
+          }
+
+          const text = extractReplyText(await followUpResponse.json() as unknown);
+          if (!text) {
+            lastError = 'The model returned no response after the memory action';
+            continue;
+          }
+          logEvent('gemini_memory_tool', {
+            id,
+            model,
+            action: call.name,
+            scope: operation.event?.scope,
+            ms: Date.now() - started
+          });
+          return { text, model };
+        }
+
         const text = extractReplyText(payload);
         if (!text) {
           lastError = 'The model returned an empty reply';
@@ -651,22 +856,36 @@ function tokenize(text: string): string[] {
   return chunks;
 }
 
-function sseReply(text: string, model: string, signal: AbortSignal): Response {
+function sseReply(
+  generate: (onMemory: (event: MemoryToolEvent) => void) => Promise<{ text: string; model: string }>,
+  signal: AbortSignal
+): Response {
   const encoder = new TextEncoder();
+  let cancelled = false;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      const send = (payload: unknown) => {
+        if (cancelled || signal.aborted) return;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      };
+
       try {
-        for (const token of tokenize(text)) {
-          if (signal.aborted) break;
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
+        const reply = await generate((event) => send({ memory: event }));
+        for (const token of tokenize(reply.text)) {
+          if (signal.aborted || cancelled) break;
+          send({ token });
           await new Promise((resolve) => setTimeout(resolve, 8));
         }
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        send('[DONE]');
       } catch (error) {
-        logEvent('sse_write_error', {
-          error: error instanceof Error ? error.message : String(error)
-        });
+        if (!signal.aborted && !cancelled) {
+          logEvent('chat_stream_error', {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          send({ error: error instanceof Error ? error.message : 'Chat request failed' });
+          send('[DONE]');
+        }
       } finally {
         try {
           controller.close();
@@ -674,6 +893,9 @@ function sseReply(text: string, model: string, signal: AbortSignal): Response {
           // The client may have disconnected already.
         }
       }
+    },
+    cancel() {
+      cancelled = true;
     }
   });
 
@@ -681,8 +903,7 @@ function sseReply(text: string, model: string, signal: AbortSignal): Response {
     headers: {
       ...CORS_HEADERS,
       'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      'x-fastlearn-model': model
+      'Cache-Control': 'no-cache, no-transform'
     }
   });
 }
@@ -1157,8 +1378,20 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
   const workspace = await getWorkspace(env, user.googleSub);
   const memories = parseMemories(workspace.memories);
 
-  const reply = await generateReply(env, messages, language, memories, request.signal, id);
-  return sseReply(reply.text, reply.model, request.signal);
+  return sseReply(
+    (onMemory) =>
+      generateReply(
+        env,
+        messages,
+        language,
+        memories,
+        request.signal,
+        id,
+        workspace.ownerId,
+        onMemory
+      ),
+    request.signal
+  );
 }
 
 async function handleTranslation(request: Request, env: Env, id: string): Promise<Response> {
@@ -1250,8 +1483,8 @@ async function handleTts(url: URL, id: string): Promise<Response> {
   if (!text) throw new HttpError(400, 'text is required');
 
   const language = url.searchParams.get('lang') === 'en' ? 'en' : 'da';
-  const rawSpeed = Number.parseFloat(url.searchParams.get('speed') ?? '0.80');
-  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1, rawSpeed)) : 0.80;
+  const rawSpeed = Number.parseFloat(url.searchParams.get('speed') ?? '1');
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1, rawSpeed)) : 1;
 
   const cacheKey = new Request(
     `https://fastlearn-cache.internal/tts?lang=${language}&speed=${speed}&text=${encodeURIComponent(text)}`,

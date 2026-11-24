@@ -11,12 +11,13 @@ export interface TranslationHistoryEntry {
   ipa?: string;
   normalAudio?: Blob;
   slowAudio?: Blob;
+  slowAudio06?: Blob;
   sizeBytes: number;
   lastUsedAt: number;
 }
 
 type TranslationHistoryUpdate = Partial<
-  Pick<TranslationHistoryEntry, 'translation' | 'ipa' | 'normalAudio' | 'slowAudio'>
+  Pick<TranslationHistoryEntry, 'translation' | 'ipa' | 'normalAudio' | 'slowAudio' | 'slowAudio06'>
 >;
 
 const DATABASE_NAME = 'fastlearn_translation_history';
@@ -68,7 +69,10 @@ function entrySize(entry: Omit<TranslationHistoryEntry, 'sizeBytes'>): number {
   const textBytes = new TextEncoder().encode(
     `${entry.userId}\u0000${entry.language}\u0000${entry.text}\u0000${entry.translation ?? ''}\u0000${entry.ipa ?? ''}`
   ).byteLength;
-  return textBytes + (entry.normalAudio?.size ?? 0) + (entry.slowAudio?.size ?? 0);
+  return textBytes
+    + (entry.normalAudio?.size ?? 0)
+    + (entry.slowAudio?.size ?? 0)
+    + (entry.slowAudio06?.size ?? 0);
 }
 
 export async function getTranslationHistoryEntry(
@@ -117,6 +121,7 @@ export async function updateTranslationHistoryEntry(
     ipa: update.ipa ?? existing?.ipa,
     normalAudio: update.normalAudio ?? existing?.normalAudio,
     slowAudio: update.slowAudio ?? existing?.slowAudio,
+    slowAudio06: update.slowAudio06 ?? existing?.slowAudio06,
     lastUsedAt: Date.now()
   };
   const next: TranslationHistoryEntry = {
@@ -157,9 +162,12 @@ export function getCachedSpeech(
   text: string,
   speed: number
 ): Promise<Blob | null> {
-  return getTranslationHistoryEntry(userId, language, text).then((entry) =>
-    speed === 1 ? entry?.normalAudio ?? null : entry?.slowAudio ?? null
-  );
+  return getTranslationHistoryEntry(userId, language, text).then((entry) => {
+    if (speed === 1) return entry?.normalAudio ?? null;
+    if (speed === 0.8) return entry?.slowAudio ?? null;
+    if (speed === 0.6) return entry?.slowAudio06 ?? null;
+    return null;
+  });
 }
 
 export function saveCachedSpeech(
@@ -169,10 +177,20 @@ export function saveCachedSpeech(
   speed: number,
   audio: Blob
 ): Promise<void> {
+  const update =
+    speed === 1
+      ? { normalAudio: audio }
+      : speed === 0.8
+        ? { slowAudio: audio }
+        : speed === 0.6
+          ? { slowAudio06: audio }
+          : null;
+  if (!update) return Promise.reject(new RangeError(`Unsupported speech speed: ${speed}`));
+
   return updateTranslationHistoryEntry(
     userId,
     language,
     text,
-    speed === 1 ? { normalAudio: audio } : { slowAudio: audio }
+    update
   );
 }

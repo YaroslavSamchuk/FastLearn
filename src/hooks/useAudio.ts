@@ -1,12 +1,13 @@
 // language: TypeScript, file: src/hooks/useAudio.ts, target: Web / Mobile Browser
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchSpeechAudio } from '../lib/api.ts';
+import { fetchSpeechAudio, ttsUrl } from '../lib/api.ts';
 import { toSpeechText } from '../lib/speech.ts';
 import { log } from '../lib/logger.ts';
 import { getCachedSpeech, saveCachedSpeech } from '../lib/translationHistory.ts';
 
 const CACHE_LIMIT = 30;
 const audioCache = new Map<string, string>();
+const SPEEDS = [1, 0.8, 0.6];
 
 function rememberUrl(key: string, url: string) {
   audioCache.set(key, url);
@@ -20,8 +21,10 @@ function rememberUrl(key: string, url: string) {
 }
 
 function clampSpeed(speed: number): number {
-  if (!Number.isFinite(speed)) return 0.80;
-  return Math.max(0.5, Math.min(1.4, speed));
+  if (!Number.isFinite(speed)) return 1;
+  return SPEEDS.reduce((closest, candidate) =>
+    Math.abs(candidate - speed) < Math.abs(closest - speed) ? candidate : closest
+  , 1);
 }
 
 export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
@@ -104,7 +107,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
   );
 
   const play = useCallback(
-    async (text: string, speed = 0.80, cacheForHistory = false) => {
+    async (text: string, speed = 1, cacheForHistory = false) => {
       const spokenText = toSpeechText(text);
       if (!spokenText) return;
 
@@ -127,9 +130,6 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         let url = audioCache.get(cacheKey);
 
         if (!url) {
-          const controller = new AbortController();
-          fetchRef.current = controller;
-          const startedAt = performance.now();
           let blob: Blob | null = null;
           if (userId) {
             try {
@@ -140,30 +140,35 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
               });
             }
           }
-          if (!blob) {
-            blob = await fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal);
-            if (cacheForHistory && userId) {
-              void saveCachedSpeech(userId, language, text, safeSpeed, blob).catch((error: unknown) => {
-                log.warn('audio', 'Could not save persistent speech cache', {
-                  error: error instanceof Error ? error.message : String(error)
-                });
-              });
-            }
+          if (blob) {
+            url = URL.createObjectURL(blob);
+            rememberUrl(cacheKey, url);
           }
-
-          url = URL.createObjectURL(blob);
-          rememberUrl(cacheKey, url);
-          log.info('audio', 'TTS audio downloaded', {
-            ms: Math.round(performance.now() - startedAt),
-            bytes: blob.size
-          });
         }
 
         if (requestRef.current !== requestId) return;
 
-        const audio = new Audio(url);
+        const isRemoteStream = !url;
+        const audio = new Audio(url ?? ttsUrl(spokenText, language, safeSpeed));
         audioRef.current = audio;
-        audio.onended = () => finish(requestId);
+        audio.onended = () => {
+          if (isRemoteStream && cacheForHistory && userId) {
+            const controller = new AbortController();
+            fetchRef.current = controller;
+            void fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal)
+              .then((blob) => saveCachedSpeech(userId, language, text, safeSpeed, blob))
+              .catch((error: unknown) => {
+                if (error instanceof DOMException && error.name === 'AbortError') return;
+                log.warn('audio', 'Could not save persistent speech cache', {
+                  error: error instanceof Error ? error.message : String(error)
+                });
+              })
+              .finally(() => {
+                if (fetchRef.current === controller) fetchRef.current = null;
+              });
+          }
+          finish(requestId);
+        };
         audio.onerror = () => {
           if (requestRef.current !== requestId) return;
           log.warn('audio', 'Audio element could not play the TTS file, falling back');

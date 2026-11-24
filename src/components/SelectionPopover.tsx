@@ -44,9 +44,10 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
 }) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [data, setData] = useState<TranscribeResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingTranslation, setLoadingTranslation] = useState(true);
   const [loadingPronunciation, setLoadingPronunciation] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [translationError, setTranslationError] = useState<string | null>(null);
+  const [pronunciationError, setPronunciationError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [style, setStyle] = useState<React.CSSProperties>({
     left: selection.x,
@@ -59,9 +60,10 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    setLoading(true);
+    setLoadingTranslation(true);
     setLoadingPronunciation(true);
-    setError(null);
+    setTranslationError(null);
+    setPronunciationError(false);
     setData(null);
 
     const saveHistory = (
@@ -91,10 +93,9 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         userLang: 'uk'
       };
 
-      if (cached?.translation) {
-        setData(base);
-        setLoading(false);
-      }
+      setData(base);
+      setLoadingTranslation(!cached?.translation);
+      setLoadingPronunciation(!cached?.ipa);
 
       const tasks: Promise<unknown>[] = [];
       if (!cached?.translation) {
@@ -104,15 +105,15 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               await saveHistory({ translation });
               if (!active) return;
               setData((previous) => ({ ...(previous ?? base), translation }));
-              setLoading(false);
+              setLoadingTranslation(false);
             })
             .catch((reason: unknown) => {
               if (reason instanceof DOMException && reason.name === 'AbortError') return;
               if (active) {
                 const message = reason instanceof Error ? reason.message : String(reason);
                 log.warn('translate', 'Selection translation failed', { message });
-                setError(message);
-                setLoading(false);
+                setTranslationError(message);
+                setLoadingTranslation(false);
               }
             })
         );
@@ -134,6 +135,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                 log.warn('translate', 'Pronunciation lookup failed', {
                   error: reason instanceof Error ? reason.message : String(reason)
                 });
+                setPronunciationError(true);
                 setLoadingPronunciation(false);
               }
             })
@@ -143,7 +145,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       }
 
       const speechText = toSpeechText(selection.text);
-      const speechVariants = [{ speed: 0.8, cachedAudio: cached?.slowAudio }];
+      const speechVariants = [{ speed: 1, cachedAudio: cached?.normalAudio }];
       for (const variant of speechVariants) {
         if (!speechText || variant.cachedAudio) continue;
         tasks.push(
@@ -219,15 +221,15 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       window.removeEventListener('resize', positionPopover);
       window.visualViewport?.removeEventListener('resize', positionPopover);
     };
-  }, [selection, loading, data, error]);
+  }, [selection, loadingTranslation, loadingPronunciation, data, translationError, pronunciationError]);
 
-  const handlePlay = () => {
+  const handlePlay = (speed: number) => {
     haptic.tap();
-    if (isCurrentPlaying) {
+    if (isCurrentPlaying && currentSpeed === speed) {
       onStopAudio();
       return;
     }
-    onPlayAudio(0.8);
+    onPlayAudio(speed);
   };
 
   const wordCount = selection.text.split(/\s+/).filter(Boolean).length;
@@ -271,73 +273,95 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         </div>
 
         <div className="px-4 py-3">
-          {loading ? (
-            <div className="flex items-center gap-2 py-1 text-[12px] text-stone-500 dark:text-stone-500">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-              Переклад і вимова…
-            </div>
-          ) : error ? (
-            <div className="space-y-2">
-              <p className="text-[12px] leading-relaxed text-red-600 dark:text-red-400">
-                Не вдалося отримати переклад
-              </p>
-              <p className="break-words text-[11px] leading-relaxed text-stone-500 dark:text-stone-400">
-                {error}
-              </p>
-              <button
-                type="button"
-                onClick={() => setAttempt((value) => value + 1)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
-              >
-                <RotateCw className="h-3 w-3" strokeWidth={2} />
-                Повторити
-              </button>
-            </div>
-          ) : data ? (
-            <div className="space-y-2">
-              {data.translation && (
+          <div className="space-y-2.5">
+            <section aria-label="Переклад" aria-live="polite">
+              {data?.translation ? (
                 <p className="text-[14px] leading-snug text-stone-800 dark:text-stone-200">
                   {data.translation}
                 </p>
+              ) : loadingTranslation ? (
+                <div className="flex items-center gap-2 py-1 text-[12px] text-stone-500 dark:text-stone-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                  Перекладаємо…
+                </div>
+              ) : translationError ? (
+                <div className="space-y-1.5">
+                  <p className="text-[12px] leading-relaxed text-red-600 dark:text-red-400">
+                    Не вдалося отримати переклад
+                  </p>
+                  <p className="break-words text-[11px] leading-relaxed text-stone-500 dark:text-stone-400">
+                    {translationError}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAttempt((value) => value + 1)}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
+                  >
+                    <RotateCw className="h-3 w-3" strokeWidth={2} />
+                    Повторити переклад
+                  </button>
+                </div>
+              ) : (
+                <p className="text-[12px] text-stone-500 dark:text-stone-500">
+                  Переклад недоступний
+                </p>
               )}
-              {data.ipa && (
+            </section>
+
+            <section aria-label="Транскрипція" aria-live="polite">
+              {data?.ipa ? (
                 <p className="font-mono text-[12px] leading-relaxed text-amber-700 dark:text-amber-400">
                   {data.ipa}
                 </p>
-              )}
-              {!data.ipa && loadingPronunciation && (
-                <p className="text-[12px] text-stone-500 dark:text-stone-500">
-                  Шукаємо вимову…
-                </p>
-              )}
-            </div>
-          ) : (
-            <p className="text-[12px] text-stone-500">Немає даних</p>
-          )}
+              ) : loadingPronunciation ? (
+                <div className="flex items-center gap-2 py-1 text-[12px] text-stone-500 dark:text-stone-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                  Шукаємо транскрипцію…
+                </div>
+              ) : pronunciationError ? (
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[12px] text-stone-500 dark:text-stone-500">
+                    Транскрипція недоступна
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAttempt((value) => value + 1)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
+                  >
+                    <RotateCw className="h-3 w-3" strokeWidth={2} />
+                    Повторити
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          </div>
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-stone-100 px-4 pt-2.5 pb-4 dark:border-white/[0.07]">
-          <button
-            type="button"
-            onClick={handlePlay}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
-              isCurrentPlaying
-                ? 'bg-amber-400 text-stone-950'
-                : 'bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-white/[0.06] dark:text-stone-300 dark:hover:bg-white/[0.1]'
-            }`}
-          >
-            {isCurrentPlaying ? (
-              <AudioVisualizer isPlaying barColor="bg-stone-950" />
-            ) : (
-              <Volume2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-            )}
-            <span>{isCurrentPlaying ? 'Зупинити' : 'Прослухати 0.8×'}</span>
-          </button>
-
-          <span className="font-mono text-[11px] text-stone-500 dark:text-stone-500">
-            {language === 'da' ? 'DA' : 'EN'}
-            {currentSpeed ? ` · ${currentSpeed}×` : ''}
-          </span>
+        <div className="grid grid-cols-3 gap-2 border-t border-stone-100 px-4 pt-3 pb-4 dark:border-white/[0.07]">
+          {[1, 0.8, 0.6].map((speed) => {
+            const active = isCurrentPlaying && currentSpeed === speed;
+            return (
+              <button
+                key={speed}
+                type="button"
+                onClick={() => handlePlay(speed)}
+                className={`flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-medium transition-colors ${
+                  active
+                    ? 'bg-amber-400 text-stone-950'
+                    : 'bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-white/[0.06] dark:text-stone-300 dark:hover:bg-white/[0.1]'
+                }`}
+                aria-label={`Прослухати виділену фразу зі швидкістю ${speed}×`}
+                aria-pressed={active}
+              >
+                {active ? (
+                  <AudioVisualizer isPlaying barColor="bg-stone-950" />
+                ) : (
+                  <Volume2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                )}
+                <span>{speed}×</span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

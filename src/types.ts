@@ -6,6 +6,13 @@ export interface UserMemories {
   en: string[];
 }
 
+export interface MemoryToolEvent {
+  action: 'save' | 'update' | 'forget';
+  scope: keyof UserMemories;
+  fact: string;
+  previousFact?: string;
+}
+
 export interface User {
   id: string;
   name: string;

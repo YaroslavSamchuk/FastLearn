@@ -1,6 +1,6 @@
 // language: TypeScript (React), file: src/App.tsx, target: Web / Mobile Browser
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Chat, Language, Message, Quota, User, UserMemories } from './types.ts';
+import { Chat, Language, MemoryToolEvent, Message, Quota, User, UserMemories } from './types.ts';
 import { Header } from './components/Header.tsx';
 import { BurgerDrawer } from './components/BurgerDrawer.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
@@ -56,6 +56,9 @@ const AppContent: React.FC = () => {
   const [authChecked, setAuthChecked] = useState(false);
   const [data, setData] = useState(() => createDefaultData());
   const [currentLanguage, setCurrentLanguage] = useState<Language>(() => user?.currentLanguage ?? 'da');
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const playbackSpeedRef = useRef(playbackSpeed);
+  playbackSpeedRef.current = playbackSpeed;
 
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingChatId, setStreamingChatId] = useState<string | null>(null);
@@ -327,7 +330,7 @@ const AppContent: React.FC = () => {
   };
 
   const handlePlayAudio = useCallback(
-    (text: string, speed = 0.80, cacheForHistory = false) => {
+    (text: string, speed = playbackSpeedRef.current, cacheForHistory = false) => {
       if (!text.trim()) return;
       setPlayingPhrase(text);
       void play(text, speed, cacheForHistory);
@@ -339,6 +342,14 @@ const AppContent: React.FC = () => {
     stop();
     setPlayingPhrase(undefined);
   }, [stop]);
+
+  const handlePlaybackSpeedChange = useCallback(
+    (speed: number) => {
+      setPlaybackSpeed(speed);
+      if (isPlaying && playingPhrase) void play(playingPhrase, speed);
+    },
+    [isPlaying, play, playingPhrase]
+  );
 
   useEffect(() => {
     if (!selection) return;
@@ -566,18 +577,37 @@ const AppContent: React.FC = () => {
         memories: data.memories,
         signal: controller.signal,
         onToken: setStreamingContent,
-        onMemory: (fact, scope) => {
+        onMemory: (event: MemoryToolEvent) => {
           setData((previous) => {
-            if (previous.memories[scope].includes(fact)) return previous;
+            const currentFacts = previous.memories[event.scope];
+            let nextFacts: string[];
+            if (event.action === 'save') {
+              if (currentFacts.includes(event.fact)) return previous;
+              nextFacts = [...currentFacts, event.fact];
+            } else if (event.action === 'update') {
+              const index = event.previousFact ? currentFacts.indexOf(event.previousFact) : -1;
+              if (index < 0) return previous;
+              nextFacts = currentFacts.map((fact, factIndex) =>
+                factIndex === index ? event.fact : fact
+              );
+            } else {
+              nextFacts = currentFacts.filter((fact) => fact !== event.fact);
+              if (nextFacts.length === currentFacts.length) return previous;
+            }
+
             return {
               ...previous,
               memories: {
                 ...previous.memories,
-                [scope]: [...previous.memories[scope], fact]
+                [event.scope]: nextFacts
               }
             };
           });
-          log.info('memory', 'AI saved a new memory fact', { scope, chars: fact.length });
+          log.info('memory', 'AI updated user memory', {
+            action: event.action,
+            scope: event.scope,
+            chars: event.fact.length
+          });
         }
       });
 
@@ -755,6 +785,8 @@ const AppContent: React.FC = () => {
         messages={visibleMessages}
         language={currentLanguage}
         onPlayFull={handlePlayAudio}
+        playbackSpeed={playbackSpeed}
+        onPlaybackSpeedChange={handlePlaybackSpeedChange}
         onStopAudio={handleStopAudio}
         streamingContent={activeChatId === streamingChatId ? streamingContent : ''}
         onQuickSend={handleSendMessage}

@@ -1,5 +1,6 @@
 // language: JavaScript, file: server/tts.js, target: Node.js / Local dev proxy
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import { Readable } from 'node:stream';
 
 export const VOICES = {
   da: {
@@ -184,9 +185,10 @@ function writeCache(key, value) {
   }
 }
 
-export async function synthesizeSpeech(text, language = 'da', speed = 0.80, voiceName = null) {
+export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceName = null) {
   const cleanText = text.trim();
-  const safeSpeed = Math.max(0.5, Math.min(1.4, Number.parseFloat(speed) || 0.80));
+  const parsedSpeed = Number.parseFloat(speed);
+  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.5, Math.min(1.4, parsedSpeed)) : 1;
   const voice = voiceName || VOICES[language]?.default || VOICES.en.default;
   const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
   const cached = readCache(cacheKey);
@@ -203,4 +205,59 @@ export async function synthesizeSpeech(text, language = 'da', speed = 0.80, voic
   const result = { buffer, source };
   writeCache(cacheKey, result);
   return { ...result, cached: false };
+}
+
+export async function synthesizeSpeechStream(text, language = 'da', speed = 1, voiceName = null) {
+  const cleanText = text.trim();
+  const parsedSpeed = Number.parseFloat(speed);
+  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.5, Math.min(1.4, parsedSpeed)) : 1;
+  const voice = voiceName || VOICES[language]?.default || VOICES.en.default;
+  const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
+  const cached = readCache(cacheKey);
+  if (cached) {
+    return {
+      stream: Readable.from([cached.buffer]),
+      source: cached.source,
+      cached: true,
+      cacheKey
+    };
+  }
+
+  if (Date.now() >= edgeCooldownUntil) {
+    const voicesToTry = [voice];
+    if (language === 'da' && voice === 'da-DK-ChristelNeural') {
+      voicesToTry.push('da-DK-JeppeNeural');
+    }
+
+    for (const voiceNameToTry of voicesToTry) {
+      const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 15_000 });
+      try {
+        await tts.setMetadata(voiceNameToTry, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+        const { audioStream } = await tts.toStream(cleanText, {
+          rate: mapSpeedToRate(safeSpeed),
+          pitch: '+0Hz'
+        });
+        audioStream.once('error', (error) => {
+          edgeCooldownUntil = Date.now() + 30_000;
+          console.warn(`[tts] Edge voice ${voiceNameToTry} stream failed:`, error.message);
+        });
+        return { stream: audioStream, source: 'edge', cached: false, cacheKey };
+      } catch (error) {
+        console.warn(`[tts] Edge voice ${voiceNameToTry} stream setup failed:`, error.message);
+      }
+    }
+  }
+
+  edgeCooldownUntil = Date.now() + 30_000;
+  const buffer = await synthesizeGoogle(cleanText, language, Math.min(1, safeSpeed));
+  return {
+    stream: Readable.from([buffer]),
+    source: 'google',
+    cached: false,
+    cacheKey
+  };
+}
+
+export function cacheSpeechResult(cacheKey, buffer, source) {
+  writeCache(cacheKey, { buffer, source });
 }

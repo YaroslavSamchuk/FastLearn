@@ -9,23 +9,26 @@ interface MessageActionsDockProps {
   content: string;
   isUser: boolean;
   isPlaying?: boolean;
+  speed: number;
   onPlay: (speed?: number) => void;
   onStop?: () => void;
+  onSpeedChange: (speed: number) => void;
   onShowToast: (msg: string, type?: 'success' | 'info' | 'warning') => void;
 }
 
-const SPEEDS = [0.8, 1, 1.2];
+const SPEEDS = [1, 0.8, 0.6];
 
 export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
   content,
   isUser,
   isPlaying = false,
+  speed,
   onPlay,
   onStop,
+  onSpeedChange,
   onShowToast
 }) => {
   const [copied, setCopied] = useState(false);
-  const [speed, setSpeed] = useState(0.8);
 
   const handleCopy = async () => {
     haptic.tap();
@@ -45,9 +48,8 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
   const handleToggleSpeed = () => {
     haptic.tap();
     const currentIndex = SPEEDS.indexOf(speed);
-    const nextSpeed = SPEEDS[(currentIndex + 1) % SPEEDS.length] ?? 0.8;
-    setSpeed(nextSpeed);
-    if (isPlaying) onPlay(nextSpeed);
+    const nextSpeed = SPEEDS[(currentIndex + 1) % SPEEDS.length] ?? 1;
+    onSpeedChange(nextSpeed);
     log.debug('audio', 'Playback speed changed', { speed: nextSpeed });
   };
 
@@ -89,7 +91,7 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
             onClick={handleToggleSpeed}
             className="h-7 rounded-md px-1 font-mono text-[11px] text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-800 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-200"
             title="Змінити темп мовлення"
-            aria-label={`Темп мовлення ${speed}x`}
+            aria-label={`Темп мовлення ${speed}×. Натисніть, щоб змінити`}
           >
             {speed}×
           </button>

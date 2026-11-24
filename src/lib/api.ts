@@ -1,6 +1,6 @@
 // language: TypeScript, file: src/lib/api.ts, target: Web
 
-import { ChatTurn, Language, UserMemories } from '../types.ts';
+import { ChatTurn, Language, MemoryToolEvent, UserMemories } from '../types.ts';
 import { log } from './logger';
 
 const API_SCOPE = 'api';
@@ -67,7 +67,7 @@ interface StreamChatOptions {
   memories: UserMemories;
   signal?: AbortSignal;
   onToken: (token: string) => void;
-  onMemory?: (fact: string, scope: keyof UserMemories) => void;
+  onMemory?: (event: MemoryToolEvent) => void;
 }
 
 interface StreamChatResult {
@@ -118,7 +118,7 @@ async function readErrorMessage(response: Response): Promise<string> {
 
 function parseSseEvent(
   raw: string
-): { token?: string; error?: string; memory?: { fact: string; scope: keyof UserMemories }; done?: boolean } | null {
+): { token?: string; error?: string; memory?: MemoryToolEvent; done?: boolean } | null {
   const dataLines = raw
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data:'))
@@ -133,7 +133,7 @@ function parseSseEvent(
     const parsed = JSON.parse(payload) as {
       token?: unknown;
       error?: unknown;
-      memory?: { fact?: unknown; scope?: unknown };
+      memory?: { action?: unknown; fact?: unknown; previousFact?: unknown; scope?: unknown };
       message?: unknown;
     };
     if (typeof parsed.error === 'string') return { error: parsed.error };
@@ -141,12 +141,19 @@ function parseSseEvent(
     if (
       parsed.memory &&
       typeof parsed.memory.fact === 'string' &&
+      (parsed.memory.action === 'save' ||
+        parsed.memory.action === 'update' ||
+        parsed.memory.action === 'forget') &&
       (parsed.memory.scope === 'global' || parsed.memory.scope === 'da' || parsed.memory.scope === 'en')
     ) {
       return {
         memory: {
+          action: parsed.memory.action,
           fact: parsed.memory.fact,
-          scope: parsed.memory.scope
+          scope: parsed.memory.scope,
+          ...(typeof parsed.memory.previousFact === 'string'
+            ? { previousFact: parsed.memory.previousFact }
+            : {})
         }
       };
     }
@@ -220,7 +227,7 @@ export async function streamChat({
         return;
       }
       if (event.memory) {
-        onMemory?.(event.memory.fact, event.memory.scope);
+        onMemory?.(event.memory);
         return;
       }
       if (event.token) {

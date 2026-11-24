@@ -4,7 +4,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
 import { generateChatTitle, keyRotator, streamChatCompletion } from './llm.js';
-import { synthesizeSpeech, VOICES } from './tts.js';
+import {
+  cacheSpeechResult,
+  synthesizeSpeech,
+  synthesizeSpeechStream,
+  VOICES
+} from './tts.js';
 import {
   resolveIpaOnly,
   resolveTranslation,
@@ -168,6 +173,68 @@ async function ensureWorkspace(ownerId) {
   };
   await db.collection('workspaces').insertOne(workspace);
   return workspace;
+}
+
+async function applyMemoryTool(ownerId, name, args) {
+  if (!['save_memory', 'update_memory', 'forget_memory'].includes(name)) {
+    throw new Error('Unsupported memory action');
+  }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    throw new Error('Memory tool arguments must be an object');
+  }
+
+  const scope = args.scope === 'global' || args.scope === 'da' || args.scope === 'en'
+    ? args.scope
+    : null;
+  const fact = cleanString(args.fact, 200);
+  if (!scope || !fact) throw new Error('A valid memory scope and fact are required');
+
+  const workspace = await ensureWorkspace(ownerId);
+  const memories = parseMemories(workspace.memories);
+  const facts = memories[scope];
+  let action;
+  let previousFact;
+  let nextFacts;
+
+  if (name === 'save_memory') {
+    if (facts.includes(fact)) return { ok: true, message: 'That fact is already saved.' };
+    if (facts.length >= 40) return { ok: false, message: 'Memory is full; no fact was saved.' };
+    action = 'save';
+    nextFacts = [...facts, fact];
+  } else if (name === 'update_memory') {
+    previousFact = cleanString(args.previousFact, 200);
+    if (!previousFact) throw new Error('The exact existing fact to update is required');
+    const index = facts.indexOf(previousFact);
+    if (index < 0) return { ok: false, message: 'The existing fact was not found; no changes were made.' };
+    if (fact !== previousFact && facts.includes(fact)) {
+      return { ok: false, message: 'The updated fact already exists; no changes were made.' };
+    }
+    action = 'update';
+    nextFacts = facts.map((item, itemIndex) => (itemIndex === index ? fact : item));
+  } else {
+    const index = facts.indexOf(fact);
+    if (index < 0) return { ok: false, message: 'The fact was not found; no changes were made.' };
+    action = 'forget';
+    nextFacts = facts.filter((_, itemIndex) => itemIndex !== index);
+  }
+
+  const nextMemories = { ...memories, [scope]: nextFacts };
+  await getDatabase().collection('workspaces').updateOne(
+    { ownerId },
+    { $set: { memories: nextMemories, updatedAt: new Date() } },
+    { upsert: true }
+  );
+
+  return {
+    ok: true,
+    message: `Memory ${action} completed.`,
+    event: {
+      action,
+      scope,
+      fact,
+      ...(previousFact ? { previousFact } : {})
+    }
+  };
 }
 
 app.get('/api/auth/google/start', async (req, res, next) => {
@@ -385,16 +452,9 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       enableTools: true,
       onToken: (token) => send({ token }),
       onToolCall: async (name, args) => {
-        if (name !== 'save_memory' || !args || typeof args !== 'object') {
-          throw new Error('Unsupported memory action');
-        }
-
-        const fact = cleanString(args.fact, 200);
-        const scope = args.scope === 'global' || args.scope === 'da' || args.scope === 'en' ? args.scope : null;
-        if (!fact || !scope) throw new Error('Memory fact and scope are required');
-
-        send({ memory: { fact, scope } });
-        return 'Memory saved';
+        const result = await applyMemoryTool(req.user.googleSub, name, args);
+        if (result.event) send({ memory: result.event });
+        return { ok: result.ok, message: result.message };
       },
       onDone: () => {
         if (closed || res.writableEnded) return;
@@ -422,8 +482,8 @@ app.get('/api/tts', requireAuth, async (req, res) => {
   }
 
   const language = req.query.lang === 'en' ? 'en' : 'da';
-  const rawSpeed = Number.parseFloat(req.query.speed ?? '0.80');
-  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1.4, rawSpeed)) : 0.80;
+  const rawSpeed = Number.parseFloat(req.query.speed ?? '1');
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.5, Math.min(1.4, rawSpeed)) : 1;
   const voice = typeof req.query.voice === 'string' ? req.query.voice : null;
 
   const allowedVoices = new Set(Object.values(VOICES[language] || {}));
@@ -434,24 +494,54 @@ app.get('/api/tts', requireAuth, async (req, res) => {
 
   try {
     const started = Date.now();
-    const { buffer, source, cached } = await synthesizeSpeech(text, language, speed, voice);
-
+    const synthesis = await synthesizeSpeechStream(text, language, speed, voice);
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(buffer);
+    const chunks = [];
+    let bytes = 0;
+    const onClose = () => {
+      if (!res.writableEnded) synthesis.stream.destroy?.();
+    };
+    res.on('close', onClose);
 
-    console.log(
-      JSON.stringify({
+    try {
+      for await (const chunk of synthesis.stream) {
+        if (res.destroyed) return;
+        const buffer = Buffer.from(chunk);
+        chunks.push(buffer);
+        bytes += buffer.byteLength;
+        if (!res.write(buffer)) {
+          await new Promise((resolve) => res.once('drain', resolve));
+        }
+      }
+
+      if (res.destroyed) return;
+      res.end();
+      if (bytes > 0 && !synthesis.cached) {
+        cacheSpeechResult(synthesis.cacheKey, Buffer.concat(chunks), synthesis.source);
+      }
+
+      console.log(JSON.stringify({
         at: new Date().toISOString(),
         event: 'tts_ok',
-        source,
-        cached,
+        source: synthesis.source,
+        cached: synthesis.cached,
         language,
         chars: text.length,
-        bytes: buffer.byteLength,
+        bytes,
         ms: Date.now() - started
-      })
-    );
+      }));
+    } catch (streamError) {
+      if (bytes === 0 && synthesis.source === 'edge' && !res.destroyed) {
+        console.warn('[tts] Edge stream failed before audio started; using fallback');
+        const fallback = await synthesizeSpeech(text, language, speed, voice);
+        res.send(fallback.buffer);
+        return;
+      }
+      if (!res.destroyed) res.destroy(streamError);
+    } finally {
+      res.removeListener('close', onClose);
+    }
   } catch (error) {
     console.error('[tts] synthesis failed', error.message);
     if (!res.headersSent) {

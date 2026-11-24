@@ -114,19 +114,44 @@ Carefully check the latest user message. Correct only English the user is attemp
 export const AI_TOOLS = [
   {
     name: 'save_memory',
-    description: 'Autonomously remember an important fact about the user. Choose scope="global" for user personal life facts/hobbies/work/name, or scope="da" / "en" for language-specific vocabulary/grammar notes or learning goals.',
+    description: 'Save a durable, non-sensitive fact, preference, or goal the user has shared. Use global for general personal context and da/en for language-learning context. Never invent a fact.',
     parameters: {
       type: 'OBJECT',
       properties: {
         fact: {
           type: 'STRING',
-          description: 'The concise fact to remember (e.g. "Works as a software developer", "Practicing Danish past tense", "Dog named Bella").'
+          description: 'A concise, factual note of up to 200 characters.'
         },
         scope: {
           type: 'STRING',
           enum: ['global', 'da', 'en'],
-          description: '"global" for general user facts; "da" for Danish language notes; "en" for English language notes.'
+          description: 'global for general context; da or en for language-specific context.'
         }
+      },
+      required: ['fact', 'scope']
+    }
+  },
+  {
+    name: 'update_memory',
+    description: 'Replace an existing memory with a corrected or updated fact when the user corrects it or explicitly asks to change it.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        previousFact: { type: 'STRING', description: 'The exact current memory text to replace.' },
+        fact: { type: 'STRING', description: 'The corrected memory text, up to 200 characters.' },
+        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
+      },
+      required: ['previousFact', 'fact', 'scope']
+    }
+  },
+  {
+    name: 'forget_memory',
+    description: 'Remove a memory only when the user explicitly asks you to forget or delete it.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        fact: { type: 'STRING', description: 'The exact current memory text to remove.' },
+        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
       },
       required: ['fact', 'scope']
     }
@@ -154,8 +179,12 @@ export function buildSystemPrompt(language = 'da', userMemories = null, enableTo
   }
 
   if (enableTools) {
-    prompt +=
-      '\n\nHvis brugeren fortæller et nyt, reelt faktum, kan du gemme det med værktøjet save_memory. Opfind aldrig fakta.';
+    prompt += `\n\n=== LONG-TERM MEMORY ===
+Actively use the memory tools so you can remember the user over time:
+- Automatically save stable, useful, non-sensitive personal facts, preferences, and goals the user shares. Choose global for general context and da/en for language-learning context.
+- Do not save guesses, temporary details, or sensitive personal information unless the user explicitly asks you to remember it.
+- If the user corrects or explicitly changes a saved fact, use update_memory with the exact existing text. If they explicitly ask you to forget something, use forget_memory.
+- Do not claim that a memory was saved, changed, or forgotten unless the tool confirms it. Avoid saving duplicates.`;
   }
 
   return prompt;
@@ -227,6 +256,9 @@ export async function streamChatCompletion({
         const payload = {
           contents,
           ...(enableTools && onToolCall ? { tools: [{ functionDeclarations: AI_TOOLS }] } : {}),
+          ...(enableTools && onToolCall
+            ? { toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }
+            : {}),
           generationConfig: {
             maxOutputTokens: 512,
             temperature: 0.72
@@ -256,53 +288,57 @@ export async function streamChatCompletion({
         // Check if model emitted a function call
         const functionCallPart = parts.find(p => p.functionCall);
         if (enableTools && onToolCall && functionCallPart) {
+          const { name, args } = functionCallPart.functionCall;
+          let toolResult;
           try {
-            const { name, args } = functionCallPart.functionCall;
-            const toolResult = await onToolCall(name, args);
-
-            // Send tool result back to model to get final conversational response
-            const secondPayload = {
-              contents: [
-                ...contents,
-                { role: 'model', parts: [functionCallPart] },
-                {
-                  role: 'user',
-                  parts: [{
-                    functionResponse: {
-                      name,
-                      response: { result: toolResult || 'success' }
-                    }
-                  }]
-                }
-              ],
-              generationConfig: {
-                maxOutputTokens: 1200,
-                temperature: 0.72
-              }
-            };
-
-            const secondRes = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(secondPayload)
-            });
-
-            if (secondRes.ok) {
-              const secondData = await secondRes.json();
-              const secondParts = secondData.candidates?.[0]?.content?.parts || [];
-              const textPart = secondParts.find(p => p.text && !p.thought) || secondParts.find(p => p.text);
-              if (textPart && textPart.text && textPart.text.trim()) {
-                let cleanText = textPart.text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
-                if (cleanText) {
-                  await streamWords(cleanText, onToken);
-                  success = true;
-                  if (onDone) onDone();
-                  break;
-                }
-              }
-            }
+            toolResult = await onToolCall(name, args);
           } catch (toolErr) {
             console.warn('[Tool Execution Error]', toolErr.message);
+            toolResult = { error: toolErr instanceof Error ? toolErr.message : String(toolErr) };
+          }
+
+          const secondPayload = {
+            contents: [
+              ...contents,
+              { role: 'model', parts: [functionCallPart] },
+              {
+                role: 'user',
+                parts: [{
+                  functionResponse: {
+                    name,
+                    response: { result: toolResult ?? { ok: true } }
+                  }
+                }]
+              }
+            ],
+            generationConfig: {
+              maxOutputTokens: 1200,
+              temperature: 0.72
+            }
+          };
+
+          const secondRes = await fetch(url, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(secondPayload)
+          });
+          if (!secondRes.ok) {
+            const errJson = await secondRes.json().catch(() => ({}));
+            throw new Error(`Gemini memory follow-up failed: ${errJson.error?.message || secondRes.statusText}`);
+          }
+
+          const secondData = await secondRes.json();
+          const secondParts = secondData.candidates?.[0]?.content?.parts || [];
+          const textPart = secondParts.find(p => p.text && !p.thought) || secondParts.find(p => p.text);
+          if (textPart && textPart.text && textPart.text.trim()) {
+            let cleanText = textPart.text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+            if (cleanText) {
+              await streamWords(cleanText, onToken);
+              success = true;
+              if (onDone) onDone();
+              break;
+            }
           }
         }
 
