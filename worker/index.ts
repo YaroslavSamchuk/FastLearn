@@ -672,11 +672,14 @@ function sseReply(text: string, model: string, signal: AbortSignal): Response {
 async function translateWithMyMemory(
   text: string,
   sourceLang: string,
-  targetLang: string
+  targetLang: string,
+  signal?: AbortSignal
 ): Promise<string> {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 7_000);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
 
   try {
     const response = await fetch(url, {
@@ -696,13 +699,15 @@ async function translateWithMyMemory(
     return candidate.trim();
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
 async function translateWithGoogle(
   text: string,
   sourceLang: string,
-  targetLang: string
+  targetLang: string,
+  signal?: AbortSignal
 ): Promise<string> {
   const url = new URL('https://translate.googleapis.com/translate_a/single');
   url.searchParams.set('client', 'gtx');
@@ -713,6 +718,8 @@ async function translateWithGoogle(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 9_000);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
 
   try {
     const response = await fetch(url.toString(), {
@@ -732,6 +739,7 @@ async function translateWithGoogle(
       .trim();
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -821,29 +829,42 @@ async function translateText(
   id: string
 ): Promise<string> {
   const failures: string[] = [];
+  const providerControllers = [new AbortController(), new AbortController()];
+  const providers = [
+    {
+      name: 'MyMemory',
+      fetch: () => translateWithMyMemory(text, sourceLang, targetLang, providerControllers[0]?.signal)
+    },
+    {
+      name: 'Google Translate',
+      fetch: () => translateWithGoogle(text, sourceLang, targetLang, providerControllers[1]?.signal)
+    }
+  ];
 
   try {
-    const res = await translateWithMyMemory(text, sourceLang, targetLang);
-    if (res && res.toLowerCase() !== text.toLowerCase()) return res;
-    failures.push('MyMemory returned no translation');
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'unknown error';
-    failures.push(`MyMemory: ${reason}`);
-    logEvent('translation_provider_failed', { id, provider: 'MyMemory', reason });
-  }
-
-  try {
-    const translation = await translateWithGoogle(text, sourceLang, targetLang);
-    if (translation && translation.toLowerCase() !== text.toLowerCase()) return translation;
-    failures.push('Google Translate returned no translation');
-  } catch (error) {
-    const reason = error instanceof Error && error.name === 'AbortError'
-      ? 'request timed out'
-      : error instanceof Error
-        ? error.message
-        : 'unknown error';
-    failures.push(`Google Translate: ${reason}`);
-    logEvent('translation_provider_failed', { id, provider: 'Google Translate', reason });
+    const translation = await Promise.any(providers.map(async (provider) => {
+      try {
+        const result = await provider.fetch();
+        if (!result || result.toLowerCase() === text.toLowerCase()) {
+          throw new Error('returned no translation');
+        }
+        return result;
+      } catch (error) {
+        const reason = error instanceof Error && error.name === 'AbortError'
+          ? 'request timed out'
+          : error instanceof Error
+            ? error.message
+            : 'unknown error';
+        failures.push(`${provider.name}: ${reason}`);
+        logEvent('translation_provider_failed', { id, provider: provider.name, reason });
+        throw error;
+      }
+    }));
+    return translation;
+  } catch {
+    // Both external translation providers failed; try the configured Gemini fallback.
+  } finally {
+    providerControllers.forEach((controller) => controller.abort());
   }
 
   const gemini = await translateWithGemini(text, sourceLang, targetLang, env);
@@ -1072,13 +1093,10 @@ async function synthesizeSpeech(
   }
 
   const chunks = splitTtsText(clipped, TTS_CHUNK_CHARS);
-  const buffers: Uint8Array[] = [];
-
-  for (let index = 0; index < chunks.length; index += 1) {
-    const chunk = chunks[index] as string;
+  const buffers = await Promise.all(chunks.map(async (chunk, index) => {
     const started = Date.now();
     try {
-      buffers.push(await googleTtsChunk(chunk, language, speed));
+      const buffer = await googleTtsChunk(chunk, language, speed);
       logEvent('tts_chunk_ok', {
         id,
         chunk: index + 1,
@@ -1086,6 +1104,7 @@ async function synthesizeSpeech(
         chars: chunk.length,
         ms: Date.now() - started
       });
+      return buffer;
     } catch (error) {
       logEvent('tts_chunk_error', {
         id,
@@ -1096,7 +1115,7 @@ async function synthesizeSpeech(
       });
       throw new HttpError(502, 'Speech synthesis is unavailable right now');
     }
-  }
+  }));
 
   const total = buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
   const merged = new Uint8Array(total);
@@ -1122,6 +1141,45 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
 
   const reply = await generateReply(env, messages, language, memories, request.signal, id);
   return sseReply(reply.text, reply.model, request.signal);
+}
+
+async function handleTranslation(request: Request, env: Env, id: string): Promise<Response> {
+  if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/translate');
+  const body = await readJsonBody(request) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new HttpError(400, 'Request body must be an object');
+  }
+
+  const text = cleanString(body.text, 500);
+  if (!text) throw new HttpError(400, 'text is required');
+  if (body.lang !== 'da' && body.lang !== 'en') throw new HttpError(400, 'lang must be "da" or "en"');
+  const userLang = typeof body.userLang === 'string' && /^[a-z]{2}$/.test(body.userLang)
+    ? body.userLang
+    : 'uk';
+  const translation = await translateText(text, body.lang, userLang, env, id);
+  return json({ original: text, translation, sourceLang: body.lang, userLang });
+}
+
+async function handlePronunciation(request: Request, env: Env, id: string): Promise<Response> {
+  if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/ipa');
+  const body = await readJsonBody(request) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new HttpError(400, 'Request body must be an object');
+  }
+
+  const text = cleanString(body.text, 500);
+  if (!text) throw new HttpError(400, 'text is required');
+  if (body.lang !== 'da' && body.lang !== 'en') throw new HttpError(400, 'lang must be "da" or "en"');
+  const started = Date.now();
+  const ipa = await resolveIpa(text, body.lang, env);
+  logEvent('pronunciation_ok', {
+    id,
+    language: body.lang,
+    chars: text.length,
+    ms: Date.now() - started,
+    hasIpa: Boolean(ipa)
+  });
+  return json({ ipa, sourceLang: body.lang });
 }
 
 async function handleTranscribe(request: Request, env: Env, id: string): Promise<Response> {
@@ -1574,6 +1632,8 @@ async function routeApi(request: Request, env: Env, url: URL, id: string): Promi
   const user = await requireAuthenticatedUser(request, env);
   if (url.pathname === '/api/chat') return handleChat(request, env, id, user);
   if (url.pathname === '/api/title') return handleTitle(request, env, id);
+  if (url.pathname === '/api/translate') return handleTranslation(request, env, id);
+  if (url.pathname === '/api/ipa') return handlePronunciation(request, env, id);
   if (url.pathname === '/api/transcribe') return handleTranscribe(request, env, id);
   if (url.pathname === '/api/tts') return handleTts(url, id);
 

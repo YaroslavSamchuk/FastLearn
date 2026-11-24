@@ -1,8 +1,9 @@
 // language: TypeScript, file: src/hooks/useAudio.ts, target: Web / Mobile Browser
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ttsUrl } from '../lib/api.ts';
+import { fetchSpeechAudio } from '../lib/api.ts';
 import { toSpeechText } from '../lib/speech.ts';
 import { log } from '../lib/logger.ts';
+import { getCachedSpeech, saveCachedSpeech } from '../lib/translationHistory.ts';
 
 const CACHE_LIMIT = 30;
 const audioCache = new Map<string, string>();
@@ -23,7 +24,7 @@ function clampSpeed(speed: number): number {
   return Math.max(0.5, Math.min(1.4, speed));
 }
 
-export function useAudio(language: 'da' | 'en' = 'da') {
+export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -103,14 +104,14 @@ export function useAudio(language: 'da' | 'en' = 'da') {
   );
 
   const play = useCallback(
-    async (text: string, speed = 0.80) => {
+    async (text: string, speed = 0.80, cacheForHistory = false) => {
       const spokenText = toSpeechText(text);
       if (!spokenText) return;
 
       stop();
       const requestId = requestRef.current;
       const safeSpeed = clampSpeed(speed);
-      const cacheKey = `${language}:${safeSpeed}:${spokenText}`;
+      const cacheKey = `${userId}:${language}:${safeSpeed}:${spokenText}`;
 
       setIsPlaying(true);
       setCurrentSpeed(safeSpeed);
@@ -129,17 +130,26 @@ export function useAudio(language: 'da' | 'en' = 'da') {
           const controller = new AbortController();
           fetchRef.current = controller;
           const startedAt = performance.now();
-          const response = await fetch(ttsUrl(spokenText, language, safeSpeed), {
-            signal: controller.signal
-          });
-          const contentType = response.headers.get('content-type') ?? '';
-
-          if (!response.ok || !contentType.includes('audio')) {
-            throw new Error(`TTS returned HTTP ${response.status} (${contentType || 'no content type'})`);
+          let blob: Blob | null = null;
+          if (userId) {
+            try {
+              blob = await getCachedSpeech(userId, language, text, safeSpeed);
+            } catch (error) {
+              log.warn('audio', 'Could not read persistent speech cache', {
+                error: error instanceof Error ? error.message : String(error)
+              });
+            }
           }
-
-          const blob = await response.blob();
-          if (blob.size === 0) throw new Error('TTS returned an empty audio file');
+          if (!blob) {
+            blob = await fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal);
+            if (cacheForHistory && userId) {
+              void saveCachedSpeech(userId, language, text, safeSpeed, blob).catch((error: unknown) => {
+                log.warn('audio', 'Could not save persistent speech cache', {
+                  error: error instanceof Error ? error.message : String(error)
+                });
+              });
+            }
+          }
 
           url = URL.createObjectURL(blob);
           rememberUrl(cacheKey, url);
@@ -174,7 +184,7 @@ export function useAudio(language: 'da' | 'en' = 'da') {
         if (fetchRef.current && requestRef.current === requestId) fetchRef.current = null;
       }
     },
-    [finish, language, playWithWebSpeech, stop]
+    [finish, language, playWithWebSpeech, stop, userId]
   );
 
   useEffect(() => {

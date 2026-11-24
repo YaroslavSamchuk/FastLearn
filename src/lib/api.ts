@@ -318,6 +318,63 @@ export async function transcribe(text: string, language: Language): Promise<Tran
   }
 }
 
+export async function translateSelection(
+  text: string,
+  language: Language,
+  signal?: AbortSignal
+): Promise<string> {
+  const response = await fetch('/api/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, lang: language, userLang: 'uk' }),
+    signal
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+
+  const data = await response.json() as { translation?: unknown };
+  if (typeof data.translation !== 'string' || !data.translation.trim()) {
+    throw new ApiError('Translation service returned an empty result', response.status);
+  }
+  return data.translation.trim();
+}
+
+export async function getPronunciation(
+  text: string,
+  language: Language,
+  signal?: AbortSignal
+): Promise<string> {
+  const response = await fetch('/api/ipa', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, lang: language }),
+    signal
+  });
+  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+
+  const data = await response.json() as { ipa?: unknown };
+  return typeof data.ipa === 'string' ? data.ipa : '';
+}
+
+export async function fetchSpeechAudio(
+  text: string,
+  language: Language,
+  speed: number,
+  signal?: AbortSignal
+): Promise<Blob> {
+  const response = await fetch(ttsUrl(text, language, speed), { signal });
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!response.ok || !contentType.includes('audio')) {
+    throw new ApiError(
+      `TTS returned HTTP ${response.status} (${contentType || 'no content type'})`,
+      response.status
+    );
+  }
+
+  const audio = await response.blob();
+  if (audio.size === 0) throw new ApiError('TTS returned an empty audio file', response.status);
+  return audio;
+}
+
 export function ttsUrl(text: string, language: Language, speed: number): string {
   const query = new URLSearchParams({
     text,

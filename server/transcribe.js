@@ -8,14 +8,22 @@ const cache = new Map();
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const forwardAbort = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) {
+    forwardAbort();
+  } else {
+    options.signal?.addEventListener('abort', forwardAbort, { once: true });
+  }
+
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener('abort', forwardAbort);
   }
 }
 
-async function translateWithMyMemory(text, sourceLang, targetLang) {
+async function translateWithMyMemory(text, sourceLang, targetLang, signal) {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
   const response = await fetchWithTimeout(
     url,
@@ -23,7 +31,8 @@ async function translateWithMyMemory(text, sourceLang, targetLang) {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      }
+      },
+      signal
     },
     7_000
   );
@@ -36,7 +45,7 @@ async function translateWithMyMemory(text, sourceLang, targetLang) {
   return candidate.trim();
 }
 
-async function translateWithGoogle(text, sourceLang, targetLang) {
+async function translateWithGoogle(text, sourceLang, targetLang, signal) {
   const url = new URL('https://translate.googleapis.com/translate_a/single');
   url.searchParams.set('client', 'gtx');
   url.searchParams.set('sl', sourceLang);
@@ -50,7 +59,8 @@ async function translateWithGoogle(text, sourceLang, targetLang) {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      }
+      },
+      signal
     },
     8_000
   );
@@ -67,18 +77,25 @@ async function translateWithGoogle(text, sourceLang, targetLang) {
 }
 
 async function translateText(text, sourceLang, targetLang) {
-  // 1. Primary: MyMemory Translator (neural / translation memory)
-  try {
-    const result = await translateWithMyMemory(text, sourceLang, targetLang);
-    if (result && result.toLowerCase() !== text.toLowerCase()) {
-      return result;
-    }
-  } catch (err) {
-    console.warn('[transcribe] MyMemory failed, falling back to Google:', err.message);
-  }
+  const controllers = [new AbortController(), new AbortController()];
+  const providers = [
+    () => translateWithMyMemory(text, sourceLang, targetLang, controllers[0].signal),
+    () => translateWithGoogle(text, sourceLang, targetLang, controllers[1].signal)
+  ];
 
-  // 2. Secondary fallback: Google Translate GTX
-  return translateWithGoogle(text, sourceLang, targetLang);
+  try {
+    return await Promise.any(providers.map(async (provider) => {
+      const result = await provider();
+      if (!result || result.toLowerCase() === text.toLowerCase()) {
+        throw new Error('Translation provider returned no translated text');
+      }
+      return result;
+    }));
+  } catch {
+    return '';
+  } finally {
+    controllers.forEach((controller) => controller.abort());
+  }
 }
 
 async function lookupGeminiIpa(text, language) {
@@ -217,15 +234,19 @@ function writeCache(key, value) {
   }
 }
 
+function mergeCache(key, value) {
+  writeCache(key, { ...(readCache(key) ?? {}), ...value });
+}
+
 export async function resolveTranscriptionAndTranslation(text, sourceLang = 'da', userLang = 'uk') {
   const cleanText = text.trim();
   const cacheKey = `${sourceLang}:${userLang}:${cleanText.toLowerCase()}`;
   const cached = readCache(cacheKey);
-  if (cached) return cached;
+  if (cached?.translation && typeof cached.ipa === 'string') return cached;
 
   const [translation, ipa] = await Promise.all([
-    translateText(cleanText, sourceLang, userLang),
-    resolveIpa(cleanText, sourceLang)
+    cached?.translation ?? translateText(cleanText, sourceLang, userLang),
+    typeof cached?.ipa === 'string' ? cached.ipa : resolveIpa(cleanText, sourceLang)
   ]);
 
   if (!translation) throw new Error('Translation service returned an empty result');
@@ -238,6 +259,39 @@ export async function resolveTranscriptionAndTranslation(text, sourceLang = 'da'
     userLang
   };
 
-  writeCache(cacheKey, result);
+  mergeCache(cacheKey, result);
   return result;
+}
+
+export async function resolveTranslation(text, sourceLang = 'da', userLang = 'uk') {
+  const cleanText = text.trim();
+  const cacheKey = `${sourceLang}:${userLang}:${cleanText.toLowerCase()}`;
+  const cached = readCache(cacheKey);
+  if (cached?.translation) return cached.translation;
+
+  const translation = await translateText(cleanText, sourceLang, userLang);
+  if (!translation) throw new Error('Translation providers returned no translation');
+  mergeCache(cacheKey, {
+    original: cleanText,
+    translation,
+    sourceLang,
+    userLang
+  });
+  return translation;
+}
+
+export async function resolveIpaOnly(text, language = 'da') {
+  const cleanText = text.trim();
+  const cacheKey = `${language}:uk:${cleanText.toLowerCase()}`;
+  const cached = readCache(cacheKey);
+  if (typeof cached?.ipa === 'string') return cached.ipa;
+
+  const ipa = await resolveIpa(cleanText, language);
+  mergeCache(cacheKey, {
+    original: cleanText,
+    ipa,
+    sourceLang: language,
+    userLang: 'uk'
+  });
+  return ipa;
 }

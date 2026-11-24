@@ -5,7 +5,11 @@ import dotenv from 'dotenv';
 import crypto from 'node:crypto';
 import { generateChatTitle, keyRotator, streamChatCompletion } from './llm.js';
 import { synthesizeSpeech, VOICES } from './tts.js';
-import { resolveTranscriptionAndTranslation } from './transcribe.js';
+import {
+  resolveIpaOnly,
+  resolveTranslation,
+  resolveTranscriptionAndTranslation
+} from './transcribe.js';
 import { closeDatabase, connectDatabase, getDatabase } from './db.js';
 
 dotenv.config();
@@ -479,6 +483,50 @@ app.post('/api/transcribe', requireAuth, async (req, res) => {
   } catch (error) {
     console.error('[transcribe] failed', error.message);
     res.status(502).json({ error: error.message || 'Translation is unavailable right now' });
+  }
+});
+
+app.post('/api/translate', requireAuth, async (req, res) => {
+  const text = cleanString(req.body?.text, 500);
+  if (!text) {
+    res.status(400).json({ error: 'text is required' });
+    return;
+  }
+  if (req.body?.lang !== 'da' && req.body?.lang !== 'en') {
+    res.status(400).json({ error: 'lang must be "da" or "en"' });
+    return;
+  }
+
+  const userLang =
+    typeof req.body?.userLang === 'string' && /^[a-z]{2}$/.test(req.body.userLang)
+      ? req.body.userLang
+      : 'uk';
+  try {
+    const translation = await resolveTranslation(text, req.body.lang, userLang);
+    res.json({ original: text, translation, sourceLang: req.body.lang, userLang });
+  } catch (error) {
+    console.error('[translate] failed', error.message);
+    res.status(502).json({ error: error.message || 'Translation is unavailable right now' });
+  }
+});
+
+app.post('/api/ipa', requireAuth, async (req, res) => {
+  const text = cleanString(req.body?.text, 500);
+  if (!text) {
+    res.status(400).json({ error: 'text is required' });
+    return;
+  }
+  if (req.body?.lang !== 'da' && req.body?.lang !== 'en') {
+    res.status(400).json({ error: 'lang must be "da" or "en"' });
+    return;
+  }
+
+  try {
+    const ipa = await resolveIpaOnly(text, req.body.lang);
+    res.json({ ipa, sourceLang: req.body.lang });
+  } catch (error) {
+    console.error('[ipa] lookup failed', error.message);
+    res.status(502).json({ error: error.message || 'Pronunciation is unavailable right now' });
   }
 });
 

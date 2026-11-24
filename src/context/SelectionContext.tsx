@@ -92,7 +92,7 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       let x = (minX + maxX) / 2;
       x = Math.max(12 + halfWidth, Math.min(x, viewportWidth - 12 - halfWidth));
 
-      const estimatedHeight = 135;
+      const estimatedHeight = 210;
       const placement: 'top' | 'bottom' = minY - estimatedHeight - 12 > 0 ? 'top' : 'bottom';
       const y = placement === 'top' ? minY - 8 : maxY + 8;
 

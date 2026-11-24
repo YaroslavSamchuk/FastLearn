@@ -20,8 +20,7 @@ import {
   getWorkspace,
   logoutSession,
   saveWorkspace,
-  streamChat,
-  transcribe
+  streamChat
 } from './lib/api.ts';
 import { goToGoogleLogin } from './lib/auth.ts';
 import {
@@ -74,7 +73,7 @@ const AppContent: React.FC = () => {
 
   const { toasts, showToast, dismissToast } = useToast();
 
-  const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage);
+  const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage, user?.id ?? '');
   const { selection, clearSelection } = useWordSelection();
 
   const currentChats = useMemo(
@@ -328,10 +327,10 @@ const AppContent: React.FC = () => {
   };
 
   const handlePlayAudio = useCallback(
-    (text: string, speed = 0.80) => {
+    (text: string, speed = 0.80, cacheForHistory = false) => {
       if (!text.trim()) return;
       setPlayingPhrase(text);
-      void play(text, speed);
+      void play(text, speed, cacheForHistory);
     },
     [play]
   );
@@ -764,14 +763,13 @@ const AppContent: React.FC = () => {
         <SelectionPopover
           selection={selection}
           language={currentLanguage}
+          userId={user?.id ?? ''}
           onClose={clearSelection}
-          onPlayAudio={(speed) => handlePlayAudio(selection.text, speed)}
+          onPlayAudio={(speed) => handlePlayAudio(selection.text, speed, true)}
           onStopAudio={handleStopAudio}
           isPlaying={isPlaying}
           playingText={playingPhrase}
           currentSpeed={currentSpeed}
-          onShowToast={showToast}
-          onTranslate={transcribe}
         />
       )}
 

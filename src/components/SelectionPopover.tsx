@@ -6,10 +6,22 @@ import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { haptic } from '../utils/haptics.ts';
 import { log } from '../lib/logger.ts';
 import type { TranscribeResult } from '../lib/api.ts';
+import {
+  fetchSpeechAudio,
+  getPronunciation,
+  translateSelection
+} from '../lib/api.ts';
+import { toSpeechText } from '../lib/speech.ts';
+import {
+  getTranslationHistoryEntry,
+  saveCachedSpeech,
+  updateTranslationHistoryEntry
+} from '../lib/translationHistory.ts';
 
 interface SelectionPopoverProps {
   selection: SelectionData;
   language: Language;
+  userId: string;
   onClose: () => void;
   onPlayAudio: (speed: number) => void;
   onStopAudio: () => void;
@@ -17,24 +29,23 @@ interface SelectionPopoverProps {
   playingText?: string;
   currentSpeed: number | null;
   onShowToast?: (msg: string, type?: 'success' | 'info' | 'warning') => void;
-  onTranslate: (text: string, language: Language) => Promise<TranscribeResult>;
 }
 
 export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
   selection,
   language,
+  userId,
   onClose,
   onPlayAudio,
   onStopAudio,
   isPlaying,
   playingText,
-  currentSpeed,
-  onShowToast,
-  onTranslate
+  currentSpeed
 }) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [data, setData] = useState<TranscribeResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingPronunciation, setLoadingPronunciation] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [style, setStyle] = useState<React.CSSProperties>({
@@ -47,28 +58,126 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     setLoading(true);
+    setLoadingPronunciation(true);
     setError(null);
     setData(null);
 
-    onTranslate(selection.text, language)
-      .then((result) => {
-        if (!active) return;
-        setData(result);
-        setLoading(false);
-      })
-      .catch((reason: unknown) => {
-        if (!active) return;
-        const message = reason instanceof Error ? reason.message : String(reason);
-        log.warn('translate', 'Selection lookup failed', { message });
-        setError(message);
-        setLoading(false);
+    const saveHistory = (
+      update: Parameters<typeof updateTranslationHistoryEntry>[3]
+    ) => updateTranslationHistoryEntry(userId, language, selection.text, update).catch((reason: unknown) => {
+      log.warn('translation-history', 'Could not save translation cache entry', {
+        error: reason instanceof Error ? reason.message : String(reason)
       });
+    });
+
+    const loadSelection = async () => {
+      let cached = null;
+      try {
+        cached = await getTranslationHistoryEntry(userId, language, selection.text);
+      } catch (reason) {
+        log.warn('translation-history', 'Could not read translation cache', {
+          error: reason instanceof Error ? reason.message : String(reason)
+        });
+      }
+      if (!active) return;
+
+      const base: TranscribeResult = {
+        original: selection.text,
+        translation: cached?.translation ?? '',
+        ipa: cached?.ipa ?? '',
+        sourceLang: language,
+        userLang: 'uk'
+      };
+
+      if (cached?.translation) {
+        setData(base);
+        setLoading(false);
+      }
+
+      const tasks: Promise<unknown>[] = [];
+      if (!cached?.translation) {
+        tasks.push(
+          translateSelection(selection.text, language, controller.signal)
+            .then(async (translation) => {
+              await saveHistory({ translation });
+              if (!active) return;
+              setData((previous) => ({ ...(previous ?? base), translation }));
+              setLoading(false);
+            })
+            .catch((reason: unknown) => {
+              if (reason instanceof DOMException && reason.name === 'AbortError') return;
+              if (active) {
+                const message = reason instanceof Error ? reason.message : String(reason);
+                log.warn('translate', 'Selection translation failed', { message });
+                setError(message);
+                setLoading(false);
+              }
+            })
+        );
+      }
+
+      if (!cached?.ipa) {
+        tasks.push(
+          getPronunciation(selection.text, language, controller.signal)
+            .then(async (ipa) => {
+              await saveHistory({ ipa });
+              if (active) {
+                setData((previous) => ({ ...(previous ?? base), ipa }));
+                setLoadingPronunciation(false);
+              }
+            })
+            .catch((reason: unknown) => {
+              if (reason instanceof DOMException && reason.name === 'AbortError') return;
+              if (active) {
+                log.warn('translate', 'Pronunciation lookup failed', {
+                  error: reason instanceof Error ? reason.message : String(reason)
+                });
+                setLoadingPronunciation(false);
+              }
+            })
+        );
+      } else {
+        setLoadingPronunciation(false);
+      }
+
+      const speechText = toSpeechText(selection.text);
+      const speechVariants = [
+        { speed: 1, cachedAudio: cached?.normalAudio },
+        { speed: 0.8, cachedAudio: cached?.slowAudio }
+      ];
+      for (const variant of speechVariants) {
+        if (!speechText || variant.cachedAudio) continue;
+        tasks.push(
+          fetchSpeechAudio(speechText, language, variant.speed, controller.signal)
+            .then((audio) => saveCachedSpeech(
+              userId,
+              language,
+              selection.text,
+              variant.speed,
+              audio
+            ))
+            .catch((reason: unknown) => {
+              if (reason instanceof DOMException && reason.name === 'AbortError') return;
+              log.warn('audio', 'Could not prefetch selected phrase audio', {
+                speed: variant.speed,
+                error: reason instanceof Error ? reason.message : String(reason)
+              });
+            })
+        );
+      }
+
+      void Promise.allSettled(tasks);
+    };
+
+    void loadSelection();
 
     return () => {
       active = false;
+      controller.abort();
     };
-  }, [selection.text, language, attempt, onTranslate]);
+  }, [selection.text, language, userId, attempt]);
 
   useEffect(() => {
     const handleOutsidePointerDown = (event: PointerEvent) => {
@@ -86,18 +195,33 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
     const node = popoverRef.current;
     if (!node) return;
 
-    const rect = node.getBoundingClientRect();
     const margin = 12;
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
+    const positionPopover = () => {
+      const rect = node.getBoundingClientRect();
+      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      const maxLeft = Math.max(margin, viewportWidth - rect.width - margin);
+      const left = Math.max(margin, Math.min(selection.x - rect.width / 2, maxLeft));
+      const desiredTop = selection.placement === 'top' ? selection.y - rect.height : selection.y;
+      const maxTop = Math.max(margin, viewportHeight - rect.height - margin);
+      const top = Math.max(margin, Math.min(desiredTop, maxTop));
 
-    let left = selection.x - rect.width / 2;
-    left = Math.max(margin, Math.min(left, viewportWidth - rect.width - margin));
+      setStyle({
+        left,
+        top,
+        maxHeight: `${Math.max(1, viewportHeight - margin * 2)}px`,
+        opacity: 1
+      });
+    };
 
-    let top = selection.placement === 'top' ? selection.y - rect.height : selection.y;
-    top = Math.max(margin, Math.min(top, viewportHeight - rect.height - margin));
+    positionPopover();
+    window.addEventListener('resize', positionPopover);
+    window.visualViewport?.addEventListener('resize', positionPopover);
 
-    setStyle({ left, top, opacity: 1 });
+    return () => {
+      window.removeEventListener('resize', positionPopover);
+      window.visualViewport?.removeEventListener('resize', positionPopover);
+    };
   }, [selection, loading, data, error]);
 
   const handlePlay = () => {
@@ -117,7 +241,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       data-selection-popover
       onPointerDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
-      className="fixed z-50 w-[min(350px,calc(100vw-24px))] transition-[opacity,transform] duration-150 ease-out"
+      className="fixed z-50 max-h-[calc(100dvh-24px)] w-[min(350px,calc(100vw-24px))] overflow-y-auto overscroll-contain transition-[opacity,transform] duration-150 ease-out"
       style={style}
     >
       <div className="animate-popover rounded-2xl border border-stone-200/90 bg-white text-stone-900 shadow-lg shadow-stone-900/10 dark:border-white/[0.1] dark:bg-[#191817] dark:text-stone-100 dark:shadow-black/30">
@@ -174,12 +298,19 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
             </div>
           ) : data ? (
             <div className="space-y-2">
-              <p className="text-[14px] leading-snug text-stone-800 dark:text-stone-200">
-                {data.translation}
-              </p>
+              {data.translation && (
+                <p className="text-[14px] leading-snug text-stone-800 dark:text-stone-200">
+                  {data.translation}
+                </p>
+              )}
               {data.ipa && (
                 <p className="font-mono text-[12px] leading-relaxed text-amber-700 dark:text-amber-400">
                   {data.ipa}
+                </p>
+              )}
+              {!data.ipa && loadingPronunciation && (
+                <p className="text-[12px] text-stone-500 dark:text-stone-500">
+                  Шукаємо вимову…
                 </p>
               )}
             </div>
