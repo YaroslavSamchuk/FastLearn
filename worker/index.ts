@@ -1,8 +1,122 @@
 // language: TypeScript, file: worker/index.ts, target: Cloudflare Workers
+import { DurableObject } from 'cloudflare:workers';
+import { MongoClient, type Document, type Filter, type UpdateFilter } from 'mongodb';
+
 export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
+  MONGO: DurableObjectNamespace;
+  MONGODB_URI: string;
+  DB_NAME?: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
   GEMINI_API_KEYS?: string;
   GEMINI_MODELS?: string;
+}
+
+type MongoCommand =
+  | { operation: 'findOne'; collection: string; filter: Record<string, unknown> }
+  | { operation: 'findOneAndDelete'; collection: string; filter: Record<string, unknown> }
+  | { operation: 'insertOne'; collection: string; document: Record<string, unknown> }
+  | {
+      operation: 'updateOne';
+      collection: string;
+      filter: Record<string, unknown>;
+      update: Record<string, unknown>;
+      upsert?: boolean;
+    }
+  | { operation: 'deleteOne'; collection: string; filter: Record<string, unknown> };
+
+function mongoFilter(filter: Record<string, unknown>): Filter<Document> {
+  const normalized = { ...filter };
+  const expiresAt = normalized.expiresAt;
+  if (expiresAt && typeof expiresAt === 'object') {
+    const operators = { ...(expiresAt as Record<string, unknown>) };
+    if (typeof operators.$gt === 'number') operators.$gt = new Date(operators.$gt);
+    normalized.expiresAt = operators;
+  }
+  return normalized as Filter<Document>;
+}
+
+function mongoDocument(document: Record<string, unknown>): Document {
+  const normalized = { ...document };
+  if (typeof normalized.expiresAt === 'number') normalized.expiresAt = new Date(normalized.expiresAt);
+  return normalized;
+}
+
+export class MongoDatabase extends DurableObject<Env> {
+  private clientPromise?: Promise<MongoClient>;
+
+  private async getDatabase() {
+    if (!this.clientPromise) {
+      this.clientPromise = (async () => {
+        const client = new MongoClient(this.env.MONGODB_URI, {
+          maxPoolSize: 5,
+          minPoolSize: 0,
+          serverSelectionTimeoutMS: 8000,
+          maxIdleTimeMS: 60_000
+        });
+        await client.connect();
+        const db = client.db(this.env.DB_NAME || 'fastlearn');
+        await Promise.all([
+          db.collection('users').createIndex({ googleSub: 1 }, { unique: true }),
+          db.collection('sessions').createIndex({ tokenHash: 1 }, { unique: true }),
+          db.collection('sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+          db.collection('oauth_states').createIndex({ state: 1 }, { unique: true }),
+          db.collection('oauth_states').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+          db.collection('workspaces').createIndex({ ownerId: 1 }, { unique: true })
+        ]);
+        return client;
+      })();
+    }
+    return (await this.clientPromise).db(this.env.DB_NAME || 'fastlearn');
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.method !== 'POST' || new URL(request.url).pathname !== '/execute') {
+      return Response.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    try {
+      const command = await request.json() as MongoCommand;
+      const allowedCollections = new Set(['users', 'sessions', 'oauth_states', 'workspaces']);
+      if (!allowedCollections.has(command.collection)) {
+        return Response.json({ error: 'Unsupported collection' }, { status: 400 });
+      }
+
+      const db = await this.getDatabase();
+      const collection = db.collection<Document>(command.collection);
+      let result: unknown;
+
+      switch (command.operation) {
+        case 'findOne':
+          result = await collection.findOne(mongoFilter(command.filter));
+          break;
+        case 'findOneAndDelete':
+          result = await collection.findOneAndDelete(mongoFilter(command.filter));
+          break;
+        case 'insertOne':
+          result = await collection.insertOne(mongoDocument(command.document));
+          break;
+        case 'updateOne':
+          result = await collection.updateOne(
+            mongoFilter(command.filter),
+            command.update as UpdateFilter<Document>,
+            { upsert: command.upsert ?? false }
+          );
+          break;
+        case 'deleteOne':
+          result = await collection.deleteOne(command.filter as Filter<Document>);
+          break;
+        default:
+          return Response.json({ error: 'Unsupported operation' }, { status: 400 });
+      }
+
+      return Response.json({ result });
+    } catch (error) {
+      console.error('[mongo] operation failed', error);
+      return Response.json({ error: 'Database operation failed' }, { status: 500 });
+    }
+  }
 }
 
 const DEFAULT_MODELS = [
@@ -88,6 +202,158 @@ function json(data: unknown, status = 200, extra: Record<string, string> = {}): 
       ...extra
     }
   });
+}
+
+const AUTH_ORIGINS = new Set([
+  'https://fastlearn.pages.dev',
+  'https://fastlearn.samchukyaroslav.workers.dev',
+  'http://localhost:8787',
+  'http://127.0.0.1:8787',
+  'http://localhost:8788',
+  'http://127.0.0.1:8788'
+]);
+const SESSION_COOKIE = 'fastlearn_session';
+const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+
+async function mongoCommand<T>(env: Env, command: MongoCommand): Promise<T> {
+  const stub = env.MONGO.get(env.MONGO.idFromName('fastlearn-mongo'));
+  const response = await stub.fetch('https://mongo.internal/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(command)
+  });
+  if (!response.ok) throw new HttpError(503, 'MongoDB is unavailable');
+  const payload = await response.json() as { result: T };
+  return payload.result;
+}
+
+function getAllowedOrigin(request: Request): string {
+  const forwardedOrigin = request.headers.get('x-fastlearn-origin');
+  const requestOrigin = new URL(request.url).origin;
+  const origin = forwardedOrigin && AUTH_ORIGINS.has(forwardedOrigin) ? forwardedOrigin : requestOrigin;
+  if (!AUTH_ORIGINS.has(origin)) throw new HttpError(403, 'Unrecognized application origin');
+  return origin;
+}
+
+function randomToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+async function hashToken(token: string): Promise<string> {
+  const bytes = new TextEncoder().encode(token);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function oauthCodeChallenge(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function cookieValue(request: Request, name: string): string | null {
+  const cookieHeader = request.headers.get('Cookie');
+  if (!cookieHeader) return null;
+  const part = cookieHeader.split(';').map((item) => item.trim()).find((item) => item.startsWith(`${name}=`));
+  return part ? decodeURIComponent(part.slice(name.length + 1)) : null;
+}
+
+function sessionCookie(token: string, origin: string, clear = false): string {
+  const secure = origin.startsWith('https://') ? '; Secure' : '';
+  const maxAge = clear ? 0 : SESSION_LIFETIME_MS / 1000;
+  const value = clear ? '' : encodeURIComponent(token);
+  return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+
+interface StoredUser {
+  googleSub: string;
+  name: string;
+  email: string;
+  avatar: string;
+}
+
+interface Workspace {
+  ownerId: string;
+  theme: 'dark' | 'light';
+  currentLanguage: 'da' | 'en';
+  chats: unknown[];
+  messages: Record<string, unknown[]>;
+  memories: UserMemories;
+  quota: { remaining: number; limit: number; resetAt: string };
+  activeChatId: Record<'da' | 'en', string | null>;
+}
+
+async function getAuthenticatedUser(request: Request, env: Env): Promise<StoredUser | null> {
+  const token = cookieValue(request, SESSION_COOKIE);
+  if (!token) return null;
+
+  const session = await mongoCommand<{ googleSub: string; expiresAt: number } | null>(env, {
+    operation: 'findOne',
+    collection: 'sessions',
+    filter: { tokenHash: await hashToken(token), expiresAt: { $gt: Date.now() } }
+  });
+  if (!session) return null;
+
+  return mongoCommand<StoredUser | null>(env, {
+    operation: 'findOne',
+    collection: 'users',
+    filter: { googleSub: session.googleSub }
+  });
+}
+
+async function requireAuthenticatedUser(request: Request, env: Env): Promise<StoredUser> {
+  const user = await getAuthenticatedUser(request, env);
+  if (!user) throw new HttpError(401, 'Sign in required');
+  return user;
+}
+
+function emptyWorkspace(ownerId: string): Workspace {
+  const resetAt = new Date(Date.now() + 15 * 60 * 60 * 1000).toISOString();
+  return {
+    ownerId,
+    theme: 'dark',
+    currentLanguage: 'da',
+    chats: [],
+    messages: {},
+    memories: {
+      global: ['Рідна мова — українська.', 'Цінує короткі, природні відповіді без повчань і зайвих слів.'],
+      da: ['Вивчає розмовну данську для повсякденного спілкування.'],
+      en: ['Практикує природну англійську для роботи та подорожей.']
+    },
+    quota: { remaining: 30, limit: 30, resetAt },
+    activeChatId: { da: null, en: null }
+  };
+}
+
+async function getWorkspace(env: Env, ownerId: string): Promise<Workspace> {
+  let workspace = await mongoCommand<Workspace | null>(env, {
+    operation: 'findOne',
+    collection: 'workspaces',
+    filter: { ownerId }
+  });
+  if (workspace) return workspace;
+
+  const initial = emptyWorkspace(ownerId);
+  await mongoCommand(env, {
+    operation: 'updateOne',
+    collection: 'workspaces',
+    filter: { ownerId },
+    update: { $setOnInsert: { ...initial, updatedAt: Date.now() } },
+    upsert: true
+  });
+  workspace = await mongoCommand<Workspace | null>(env, {
+    operation: 'findOne',
+    collection: 'workspaces',
+    filter: { ownerId }
+  });
+  if (!workspace) throw new HttpError(503, 'Could not load account workspace');
+  return workspace;
 }
 
 function getKeys(env: Env): string[] {
@@ -741,14 +1007,15 @@ async function synthesizeSpeech(
   return merged;
 }
 
-async function handleChat(request: Request, env: Env, id: string): Promise<Response> {
+async function handleChat(request: Request, env: Env, id: string, user: StoredUser): Promise<Response> {
   if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/chat');
   const body = (await readJsonBody(request)) as Record<string, unknown> | null;
   if (!body || typeof body !== 'object') throw new HttpError(400, 'Request body must be an object');
 
   const language = body.language === 'en' ? 'en' : 'da';
   const messages = parseMessages(body.messages);
-  const memories = parseMemories(body.memories);
+  const workspace = await getWorkspace(env, user.googleSub);
+  const memories = parseMemories(workspace.memories);
 
   const reply = await generateReply(env, messages, language, memories, request.signal, id);
   return sseReply(reply.text, reply.model, request.signal);
@@ -840,7 +1107,11 @@ async function handleTitle(request: Request, env: Env, id: string): Promise<Resp
     throw new HttpError(405, 'POST required');
   }
 
-  const raw = await readJsonBody(request);
+  const parsed = await readJsonBody(request);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new HttpError(400, 'Request body must be an object');
+  }
+  const raw = parsed as Record<string, unknown>;
   const message = cleanString(raw.message, 500);
   if (!message) throw new HttpError(400, 'message is required');
 
@@ -885,6 +1156,263 @@ async function handleTitle(request: Request, env: Env, id: string): Promise<Resp
   return json({ title });
 }
 
+async function handleGoogleStart(request: Request, env: Env): Promise<Response> {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.MONGODB_URI) {
+    throw new HttpError(503, 'Google login is not configured on this Worker');
+  }
+
+  const origin = getAllowedOrigin(request);
+  const state = randomToken();
+  const codeVerifier = randomToken();
+  await mongoCommand(env, {
+    operation: 'insertOne',
+    collection: 'oauth_states',
+    document: {
+      state,
+      origin,
+      codeVerifier,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    }
+  });
+
+  const redirectUri = `${origin}/api/auth/google/callback`;
+  const params = new URLSearchParams({
+    client_id: env.GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile',
+    prompt: 'select_account',
+    state,
+    code_challenge: await oauthCodeChallenge(codeVerifier),
+    code_challenge_method: 'S256'
+  });
+  return Response.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`, 302);
+}
+
+async function handleGoogleCallback(request: Request, env: Env, url: URL): Promise<Response> {
+  const origin = getAllowedOrigin(request);
+  const code = url.searchParams.get('code') ?? '';
+  const state = url.searchParams.get('state') ?? '';
+  const oauthError = url.searchParams.get('error');
+  if (oauthError) throw new HttpError(400, url.searchParams.get('error_description') || oauthError);
+  if (!code || !state) throw new HttpError(400, 'Google returned an incomplete response');
+
+  const pending = await mongoCommand<{ origin: string; codeVerifier: string } | null>(env, {
+    operation: 'findOneAndDelete',
+    collection: 'oauth_states',
+    filter: { state, expiresAt: { $gt: Date.now() } }
+  });
+  if (!pending || pending.origin !== origin) {
+    throw new HttpError(400, 'Google login state is invalid or expired');
+  }
+
+  const redirectUri = `${pending.origin}/api/auth/google/callback`;
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code',
+      code_verifier: pending.codeVerifier
+    })
+  });
+  if (!tokenResponse.ok) {
+    logEvent('google_token_exchange_failed', { status: tokenResponse.status });
+    throw new HttpError(502, 'Google could not complete sign-in');
+  }
+
+  const tokens = await tokenResponse.json() as { access_token?: string };
+  if (!tokens.access_token) throw new HttpError(502, 'Google did not return an access token');
+  const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: `Bearer ${tokens.access_token}` }
+  });
+  if (!profileResponse.ok) throw new HttpError(502, 'Google could not load the account profile');
+
+  const profile = await profileResponse.json() as {
+    sub?: string;
+    name?: string;
+    email?: string;
+    email_verified?: boolean;
+    picture?: string;
+  };
+  if (!profile.sub || !profile.email || profile.email_verified !== true) {
+    throw new HttpError(403, 'Google account profile is missing a verified email');
+  }
+
+  const name = cleanString(profile.name, 120) || profile.email.split('@')[0];
+  await mongoCommand(env, {
+    operation: 'updateOne',
+    collection: 'users',
+    filter: { googleSub: profile.sub },
+    update: {
+      $set: {
+        googleSub: profile.sub,
+        name,
+        email: profile.email,
+        avatar: cleanString(profile.picture, 1000),
+        updatedAt: Date.now()
+      },
+      $setOnInsert: { createdAt: Date.now() }
+    },
+    upsert: true
+  });
+
+  const sessionToken = randomToken();
+  const now = Date.now();
+  await mongoCommand(env, {
+    operation: 'insertOne',
+    collection: 'sessions',
+    document: {
+      tokenHash: await hashToken(sessionToken),
+      googleSub: profile.sub,
+      expiresAt: now + SESSION_LIFETIME_MS,
+      createdAt: now
+    }
+  });
+  await getWorkspace(env, profile.sub);
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: `${origin}/`,
+      'Cache-Control': 'no-store',
+      'Set-Cookie': sessionCookie(sessionToken, origin)
+    }
+  });
+}
+
+async function handleAuthMe(request: Request, env: Env): Promise<Response> {
+  const origin = getAllowedOrigin(request);
+  const user = await getAuthenticatedUser(request, env);
+  if (!user) return json({ user: null });
+  const workspace = await getWorkspace(env, user.googleSub);
+  return json({
+    user: {
+      id: `google_${user.googleSub}`,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      currentLanguage: workspace.currentLanguage
+    }
+  }, 200, { 'Access-Control-Allow-Origin': origin });
+}
+
+async function handleLogout(request: Request, env: Env): Promise<Response> {
+  const origin = getAllowedOrigin(request);
+  const token = cookieValue(request, SESSION_COOKIE);
+  if (token) {
+    await mongoCommand(env, {
+      operation: 'deleteOne',
+      collection: 'sessions',
+      filter: { tokenHash: await hashToken(token) }
+    });
+  }
+  return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie('', origin, true) });
+}
+
+async function handleWorkspace(request: Request, env: Env, user: StoredUser): Promise<Response> {
+  if (request.method === 'GET') {
+    return json({ workspace: await getWorkspace(env, user.googleSub) });
+  }
+  if (request.method !== 'PUT') throw new HttpError(405, 'Use GET or PUT for /api/workspace');
+
+  const rawBody = await request.text();
+  if (rawBody.length > 2_000_000) throw new HttpError(413, 'Workspace is too large');
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new HttpError(400, 'Workspace must be valid JSON');
+  }
+  if (!parsedBody || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    throw new HttpError(400, 'Workspace must be a JSON object');
+  }
+  const body = parsedBody as Record<string, unknown>;
+
+  const update: Record<string, unknown> = { updatedAt: Date.now() };
+  if (body.theme === 'dark' || body.theme === 'light') update.theme = body.theme;
+  if (body.currentLanguage === 'da' || body.currentLanguage === 'en') {
+    update.currentLanguage = body.currentLanguage;
+  }
+  if (Array.isArray(body.chats)) {
+    update.chats = body.chats.slice(0, 60).flatMap((chat) => {
+      if (!chat || typeof chat !== 'object') return [];
+      const item = chat as Record<string, unknown>;
+      const id = cleanString(item._id, 160);
+      if (!id || (item.language !== 'da' && item.language !== 'en')) return [];
+      const now = new Date().toISOString();
+      return [{
+        _id: id,
+        userId: `google_${user.googleSub}`,
+        language: item.language,
+        title: cleanString(item.title, 80) || 'New conversation',
+        createdAt: cleanString(item.createdAt, 40) || now,
+        updatedAt: cleanString(item.updatedAt, 40) || now
+      }];
+    });
+  }
+  if (body.messages && typeof body.messages === 'object' && !Array.isArray(body.messages)) {
+    const messages = body.messages as Record<string, unknown>;
+    const chatIds = new Set(
+      (Array.isArray(update.chats) ? update.chats as Array<{ _id: string }> : [])
+        .map((chat) => chat._id)
+    );
+    const cleaned: Record<string, unknown[]> = {};
+    for (const [chatId, list] of Object.entries(messages)) {
+      if (!chatIds.has(chatId) || !Array.isArray(list)) continue;
+      cleaned[chatId] = list.slice(-300).flatMap((message) => {
+        if (!message || typeof message !== 'object') return [];
+        const item = message as Record<string, unknown>;
+        if (item.role !== 'assistant' && item.role !== 'user') return [];
+        const content = cleanString(item.content, MAX_MESSAGE_CHARS);
+        if (!content) return [];
+        return [{
+          _id: cleanString(item._id, 160),
+          chatId,
+          userId: item.role === 'user' ? `google_${user.googleSub}` : 'ai',
+          role: item.role,
+          content,
+          createdAt: cleanString(item.createdAt, 40) || new Date().toISOString()
+        }];
+      });
+    }
+    update.messages = cleaned;
+  }
+  if (body.memories && typeof body.memories === 'object') update.memories = parseMemories(body.memories);
+  if (body.activeChatId && typeof body.activeChatId === 'object') {
+    const active = body.activeChatId as Record<string, unknown>;
+    update.activeChatId = {
+      da: cleanString(active.da, 160) || null,
+      en: cleanString(active.en, 160) || null
+    };
+  }
+  if (body.quota && typeof body.quota === 'object') {
+    const quota = body.quota as Record<string, unknown>;
+    const limit = Math.max(1, Math.min(30, Number(quota.limit) || 30));
+    const remaining = Math.max(0, Math.min(limit, Number(quota.remaining) || 0));
+    const resetAt = cleanString(quota.resetAt, 40);
+    update.quota = {
+      remaining,
+      limit,
+      resetAt: Number.isFinite(Date.parse(resetAt))
+        ? resetAt
+        : new Date(Date.now() + 15 * 60 * 60 * 1000).toISOString()
+    };
+  }
+
+  await mongoCommand(env, {
+    operation: 'updateOne',
+    collection: 'workspaces',
+    filter: { ownerId: user.googleSub },
+    update: { $set: update },
+    upsert: true
+  });
+  return json({ ok: true });
+}
+
 async function routeApi(request: Request, env: Env, url: URL, id: string): Promise<Response> {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -902,7 +1430,26 @@ async function routeApi(request: Request, env: Env, url: URL, id: string): Promi
     });
   }
 
-  if (url.pathname === '/api/chat') return handleChat(request, env, id);
+  if (url.pathname === '/api/auth/google/start') {
+    if (request.method !== 'GET') throw new HttpError(405, 'Use GET to start Google login');
+    return handleGoogleStart(request, env);
+  }
+  if (url.pathname === '/api/auth/google/callback') return handleGoogleCallback(request, env, url);
+  if (url.pathname === '/api/auth/me') {
+    if (request.method !== 'GET') throw new HttpError(405, 'Use GET for /api/auth/me');
+    return handleAuthMe(request, env);
+  }
+  if (url.pathname === '/api/auth/logout') {
+    if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/auth/logout');
+    return handleLogout(request, env);
+  }
+  if (url.pathname === '/api/workspace') {
+    const user = await requireAuthenticatedUser(request, env);
+    return handleWorkspace(request, env, user);
+  }
+
+  const user = await requireAuthenticatedUser(request, env);
+  if (url.pathname === '/api/chat') return handleChat(request, env, id, user);
   if (url.pathname === '/api/title') return handleTitle(request, env, id);
   if (url.pathname === '/api/transcribe') return handleTranscribe(request, env, id);
   if (url.pathname === '/api/tts') return handleTts(url, id);

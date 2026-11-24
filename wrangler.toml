@@ -3,6 +3,17 @@ main = "worker/index.ts"
 compatibility_date = "2026-11-01"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+DB_NAME = "fastlearn"
+
+[[durable_objects.bindings]]
+name = "MONGO"
+class_name = "MongoDatabase"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MongoDatabase"]
+
 [assets]
 directory = "./dist"
 binding = "ASSETS"

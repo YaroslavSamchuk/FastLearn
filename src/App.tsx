@@ -30,9 +30,7 @@ import {
   createDefaultData,
   createUserMessage,
   formatResetAt,
-  loadData,
-  normalizeQuota,
-  saveData
+  normalizeQuota
 } from './lib/data.ts';
 import { log } from './lib/logger.ts';
 import { readString, storageKeys, writeString } from './lib/storage.ts';
@@ -57,7 +55,7 @@ const AppContent: React.FC = () => {
   });
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  const [data, setData] = useState(() => loadData());
+  const [data, setData] = useState(() => createDefaultData());
   const [currentLanguage, setCurrentLanguage] = useState<Language>(() => user?.currentLanguage ?? 'da');
 
   const [streamingContent, setStreamingContent] = useState('');
@@ -173,8 +171,6 @@ const AppContent: React.FC = () => {
           return;
         }
 
-        setUser(sessionUser);
-        setCurrentLanguage(sessionUser.currentLanguage);
         const workspace = await getWorkspace();
         if (!active) return;
 
@@ -193,7 +189,6 @@ const AppContent: React.FC = () => {
           : { da: null, en: null };
 
         setTheme(workspace.theme === 'light' ? 'light' : 'dark');
-        setCurrentLanguage(workspace.currentLanguage === 'en' ? 'en' : 'da');
         setData({
           ownerId: sessionUser.id,
           chats,
@@ -202,6 +197,11 @@ const AppContent: React.FC = () => {
           memories,
           quota,
           activeChatId: activeChatIdValue
+        });
+        setCurrentLanguage(workspace.currentLanguage === 'en' ? 'en' : 'da');
+        setUser({
+          ...sessionUser,
+          currentLanguage: workspace.currentLanguage === 'en' ? 'en' : 'da'
         });
         setAuthChecked(true);
         haptic.success();
@@ -421,7 +421,7 @@ const AppContent: React.FC = () => {
     }
 
     const confirmed = window.confirm(
-      `Видалити діалог «${chat.title}»? Повідомлення буде видалено з цього пристрою.`
+      `Видалити діалог «${chat.title}»? Повідомлення буде видалено з вашого акаунта.`
     );
     if (!confirmed) {
       log.debug('chat', 'Chat deletion cancelled', { chatId });
