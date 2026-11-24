@@ -1,6 +1,10 @@
 // language: TypeScript, file: worker/index.ts, target: Cloudflare Workers
 import { DurableObject } from 'cloudflare:workers';
 import { MongoClient, type Document, type Filter, type UpdateFilter } from 'mongodb';
+import {
+  applyMemoryTool as applyMemoryMutation,
+  type MemoryToolEvent
+} from '../server/memory.js';
 
 export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
@@ -221,13 +225,6 @@ interface UserMemories {
   global: string[];
   da: string[];
   en: string[];
-}
-
-interface MemoryToolEvent {
-  action: 'save' | 'update' | 'forget';
-  scope: keyof UserMemories;
-  fact: string;
-  previousFact?: string;
 }
 
 interface ErrorPayload {
@@ -557,75 +554,18 @@ async function applyMemoryTool(
   memories: UserMemories,
   name: string,
   args: unknown
-): Promise<{ memories: UserMemories; result: { ok: boolean; message: string }; event?: MemoryToolEvent }> {
-  if (!['save_memory', 'update_memory', 'forget_memory'].includes(name)) {
-    throw new HttpError(400, 'Unsupported memory action');
+): Promise<ReturnType<typeof applyMemoryMutation>> {
+  const result = applyMemoryMutation(memories, name, args);
+  if (result.event) {
+    await mongoCommand(env, {
+      operation: 'updateOne',
+      collection: 'workspaces',
+      filter: { ownerId },
+      update: { $set: { memories: result.memories, updatedAt: Date.now() } },
+      upsert: true
+    });
   }
-  if (!args || typeof args !== 'object' || Array.isArray(args)) {
-    throw new HttpError(400, 'Memory tool arguments must be an object');
-  }
-
-  const record = args as Record<string, unknown>;
-  const scope =
-    record.scope === 'global' || record.scope === 'da' || record.scope === 'en'
-      ? record.scope
-      : null;
-  const fact = cleanString(record.fact, 200);
-  if (!scope || !fact) throw new HttpError(400, 'A valid memory scope and fact are required');
-
-  const currentFacts = memories[scope];
-  let action: MemoryToolEvent['action'];
-  let previousFact: string | undefined;
-  let nextFacts: string[];
-
-  if (name === 'save_memory') {
-    if (currentFacts.includes(fact)) {
-      return { memories, result: { ok: true, message: 'That fact is already saved.' } };
-    }
-    if (currentFacts.length >= MAX_MEMORY_ITEMS) {
-      return { memories, result: { ok: false, message: 'Memory is full; no fact was saved.' } };
-    }
-    action = 'save';
-    nextFacts = [...currentFacts, fact];
-  } else if (name === 'update_memory') {
-    previousFact = cleanString(record.previousFact, 200);
-    if (!previousFact) throw new HttpError(400, 'The exact existing fact to update is required');
-    const index = currentFacts.indexOf(previousFact);
-    if (index < 0) {
-      return { memories, result: { ok: false, message: 'The existing fact was not found; no changes were made.' } };
-    }
-    if (fact !== previousFact && currentFacts.includes(fact)) {
-      return { memories, result: { ok: false, message: 'The updated fact already exists; no changes were made.' } };
-    }
-    action = 'update';
-    nextFacts = currentFacts.map((item, itemIndex) => (itemIndex === index ? fact : item));
-  } else {
-    if (!currentFacts.includes(fact)) {
-      return { memories, result: { ok: false, message: 'The fact was not found; no changes were made.' } };
-    }
-    action = 'forget';
-    nextFacts = currentFacts.filter((item) => item !== fact);
-  }
-
-  const nextMemories: UserMemories = { ...memories, [scope]: nextFacts };
-  await mongoCommand(env, {
-    operation: 'updateOne',
-    collection: 'workspaces',
-    filter: { ownerId },
-    update: { $set: { memories: nextMemories, updatedAt: Date.now() } },
-    upsert: true
-  });
-
-  return {
-    memories: nextMemories,
-    result: { ok: true, message: `Memory ${action} completed.` },
-    event: {
-      action,
-      scope,
-      fact,
-      ...(previousFact ? { previousFact } : {})
-    }
-  };
+  return result;
 }
 
 function extractReplyText(payload: unknown): string {

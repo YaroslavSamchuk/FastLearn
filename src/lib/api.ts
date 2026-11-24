@@ -1,6 +1,7 @@
 // language: TypeScript, file: src/lib/api.ts, target: Web
 
 import { ChatTurn, Language, MemoryToolEvent, UserMemories } from '../types.ts';
+import { normalizeAssistantText } from '../utils/textTokens.ts';
 import { log } from './logger';
 
 const API_SCOPE = 'api';
@@ -66,7 +67,7 @@ interface StreamChatOptions {
   language: Language;
   memories: UserMemories;
   signal?: AbortSignal;
-  onToken: (token: string) => void;
+  onText: (text: string) => void;
   onMemory?: (event: MemoryToolEvent) => void;
 }
 
@@ -169,7 +170,7 @@ export async function streamChat({
   language,
   memories,
   signal,
-  onToken,
+  onText,
   onMemory
 }: StreamChatOptions): Promise<StreamChatResult> {
   const id = requestId();
@@ -232,7 +233,7 @@ export async function streamChat({
       }
       if (event.token) {
         text += event.token;
-        onToken(event.token);
+        onText(normalizeAssistantText(text));
       }
     };
 
@@ -264,7 +265,7 @@ export async function streamChat({
       model
     });
 
-    return { text: text.trim(), model, status: response.status };
+    return { text: normalizeAssistantText(text.trim()), model, status: response.status };
   } catch (error) {
     const duration = Math.round(performance.now() - startedAt);
     if (error instanceof DOMException && error.name === 'AbortError') {

@@ -22,9 +22,11 @@ function rememberUrl(key: string, url: string) {
 
 function clampSpeed(speed: number): number {
   if (!Number.isFinite(speed)) return 1;
-  return SPEEDS.reduce((closest, candidate) =>
-    Math.abs(candidate - speed) < Math.abs(closest - speed) ? candidate : closest
-  , 1);
+  return SPEEDS.reduce(
+    (closest, candidate) =>
+      Math.abs(candidate - speed) < Math.abs(closest - speed) ? candidate : closest,
+    1
+  );
 }
 
 export function useAudio(language: 'da' | 'en' = 'da', userId = '') {

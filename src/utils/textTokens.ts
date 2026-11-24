@@ -8,6 +8,10 @@ export interface WordToken {
   isItalic?: boolean;
 }
 
+export function normalizeAssistantText(text: string): string {
+  return text.replace(/\s+([,.;:!?…])/gu, '$1');
+}
+
 // Regex matching markdown bold/italic tags
 const EMPHASIS_REGEX = /(\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*)/g;
 

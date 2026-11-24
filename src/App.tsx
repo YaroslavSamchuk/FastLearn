@@ -576,7 +576,7 @@ const AppContent: React.FC = () => {
         language: currentLanguage,
         memories: data.memories,
         signal: controller.signal,
-        onToken: setStreamingContent,
+        onText: setStreamingContent,
         onMemory: (event: MemoryToolEvent) => {
           setData((previous) => {
             const currentFacts = previous.memories[event.scope];

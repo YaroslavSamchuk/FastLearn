@@ -101,11 +101,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       if (!cached?.translation) {
         tasks.push(
           translateSelection(selection.text, language, controller.signal)
-            .then(async (translation) => {
-              await saveHistory({ translation });
+            .then((translation) => {
               if (!active) return;
               setData((previous) => ({ ...(previous ?? base), translation }));
               setLoadingTranslation(false);
+              void saveHistory({ translation });
             })
             .catch((reason: unknown) => {
               if (reason instanceof DOMException && reason.name === 'AbortError') return;
@@ -122,11 +122,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       if (!cached?.ipa) {
         tasks.push(
           getPronunciation(selection.text, language, controller.signal)
-            .then(async (ipa) => {
-              await saveHistory({ ipa });
+            .then((ipa) => {
               if (active) {
                 setData((previous) => ({ ...(previous ?? base), ipa }));
                 setLoadingPronunciation(false);
+                void saveHistory({ ipa });
               }
             })
             .catch((reason: unknown) => {

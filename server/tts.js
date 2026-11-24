@@ -24,7 +24,7 @@ let edgeCooldownUntil = 0;
 
 export function mapSpeedToRate(speed) {
   const value = Number.parseFloat(speed);
-  if (!Number.isFinite(value)) return '-20%';
+  if (!Number.isFinite(value)) return '+0%';
   const percentage = Math.round((value - 1) * 100);
   return `${percentage >= 0 ? '+' : ''}${percentage}%`;
 }
@@ -58,7 +58,6 @@ async function synthesizeEdge(text, language, speed, voiceName) {
 
   const primaryVoice = voiceName || VOICES[language]?.default || VOICES.en.default;
   const voicesToTry = [primaryVoice];
-  // If user or caller specified Christel, keep Jeppe as immediate fallback
   if (language === 'da' && primaryVoice === 'da-DK-ChristelNeural') {
     voicesToTry.push('da-DK-JeppeNeural');
   }
@@ -79,9 +78,8 @@ async function synthesizeEdge(text, language, speed, voiceName) {
     }
   }
 
-  // Brief 30s cooldown before retrying Edge TTS if both attempts failed
-  edgeCooldownUntil = Date.now() + 30 * 1000;
   console.warn('[tts] Edge TTS unavailable, using Google fallback');
+  edgeCooldownUntil = Date.now() + 30 * 1000;
   return null;
 }
 

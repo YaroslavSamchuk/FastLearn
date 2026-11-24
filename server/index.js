@@ -4,6 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
 import { generateChatTitle, keyRotator, streamChatCompletion } from './llm.js';
+import { applyMemoryTool } from './memory.js';
 import {
   cacheSpeechResult,
   synthesizeSpeech,
@@ -173,68 +174,6 @@ async function ensureWorkspace(ownerId) {
   };
   await db.collection('workspaces').insertOne(workspace);
   return workspace;
-}
-
-async function applyMemoryTool(ownerId, name, args) {
-  if (!['save_memory', 'update_memory', 'forget_memory'].includes(name)) {
-    throw new Error('Unsupported memory action');
-  }
-  if (!args || typeof args !== 'object' || Array.isArray(args)) {
-    throw new Error('Memory tool arguments must be an object');
-  }
-
-  const scope = args.scope === 'global' || args.scope === 'da' || args.scope === 'en'
-    ? args.scope
-    : null;
-  const fact = cleanString(args.fact, 200);
-  if (!scope || !fact) throw new Error('A valid memory scope and fact are required');
-
-  const workspace = await ensureWorkspace(ownerId);
-  const memories = parseMemories(workspace.memories);
-  const facts = memories[scope];
-  let action;
-  let previousFact;
-  let nextFacts;
-
-  if (name === 'save_memory') {
-    if (facts.includes(fact)) return { ok: true, message: 'That fact is already saved.' };
-    if (facts.length >= 40) return { ok: false, message: 'Memory is full; no fact was saved.' };
-    action = 'save';
-    nextFacts = [...facts, fact];
-  } else if (name === 'update_memory') {
-    previousFact = cleanString(args.previousFact, 200);
-    if (!previousFact) throw new Error('The exact existing fact to update is required');
-    const index = facts.indexOf(previousFact);
-    if (index < 0) return { ok: false, message: 'The existing fact was not found; no changes were made.' };
-    if (fact !== previousFact && facts.includes(fact)) {
-      return { ok: false, message: 'The updated fact already exists; no changes were made.' };
-    }
-    action = 'update';
-    nextFacts = facts.map((item, itemIndex) => (itemIndex === index ? fact : item));
-  } else {
-    const index = facts.indexOf(fact);
-    if (index < 0) return { ok: false, message: 'The fact was not found; no changes were made.' };
-    action = 'forget';
-    nextFacts = facts.filter((_, itemIndex) => itemIndex !== index);
-  }
-
-  const nextMemories = { ...memories, [scope]: nextFacts };
-  await getDatabase().collection('workspaces').updateOne(
-    { ownerId },
-    { $set: { memories: nextMemories, updatedAt: new Date() } },
-    { upsert: true }
-  );
-
-  return {
-    ok: true,
-    message: `Memory ${action} completed.`,
-    event: {
-      action,
-      scope,
-      fact,
-      ...(previousFact ? { previousFact } : {})
-    }
-  };
 }
 
 app.get('/api/auth/google/start', async (req, res, next) => {
@@ -452,7 +391,15 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       enableTools: true,
       onToken: (token) => send({ token }),
       onToolCall: async (name, args) => {
-        const result = await applyMemoryTool(req.user.googleSub, name, args);
+        const workspace = await ensureWorkspace(req.user.googleSub);
+        const result = applyMemoryTool(parseMemories(workspace.memories), name, args);
+        if (result.event) {
+          await getDatabase().collection('workspaces').updateOne(
+            { ownerId: req.user.googleSub },
+            { $set: { memories: result.memories, updatedAt: new Date() } },
+            { upsert: true }
+          );
+        }
         if (result.event) send({ memory: result.event });
         return { ok: result.ok, message: result.message };
       },
@@ -473,6 +420,32 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     if (!res.writableEnded) res.end();
   }
 });
+
+function waitForResponseDrain(response) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      response.removeListener('drain', onDrain);
+      response.removeListener('close', onClose);
+      response.removeListener('error', onError);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolve();
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('Client disconnected during speech playback'));
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+
+    response.once('drain', onDrain);
+    response.once('close', onClose);
+    response.once('error', onError);
+  });
+}
 
 app.get('/api/tts', requireAuth, async (req, res) => {
   const text = cleanString(req.query.text, MAX_TTS_CHARS);
@@ -511,7 +484,7 @@ app.get('/api/tts', requireAuth, async (req, res) => {
         chunks.push(buffer);
         bytes += buffer.byteLength;
         if (!res.write(buffer)) {
-          await new Promise((resolve) => res.once('drain', resolve));
+          await waitForResponseDrain(res);
         }
       }
 
@@ -536,6 +509,16 @@ app.get('/api/tts', requireAuth, async (req, res) => {
         console.warn('[tts] Edge stream failed before audio started; using fallback');
         const fallback = await synthesizeSpeech(text, language, speed, voice);
         res.send(fallback.buffer);
+        console.log(JSON.stringify({
+          at: new Date().toISOString(),
+          event: 'tts_ok',
+          source: fallback.source,
+          cached: fallback.cached,
+          language,
+          chars: text.length,
+          bytes: fallback.buffer.byteLength,
+          ms: Date.now() - started
+        }));
         return;
       }
       if (!res.destroyed) res.destroy(streamError);
