@@ -686,7 +686,7 @@ async function translateWithMyMemory(
       },
       signal: controller.signal
     });
-    if (!response.ok) return '';
+    if (!response.ok) throw new HttpError(502, `MyMemory returned HTTP ${response.status}`);
     const data = (await response.json()) as {
       responseData?: { translatedText?: string };
     };
@@ -694,8 +694,6 @@ async function translateWithMyMemory(
     if (!candidate || typeof candidate !== 'string') return '';
     if (candidate.toUpperCase().includes('MYMEMORY WARNING')) return '';
     return candidate.trim();
-  } catch {
-    return '';
   } finally {
     clearTimeout(timer);
   }
@@ -724,7 +722,7 @@ async function translateWithGoogle(
       },
       signal: controller.signal
     });
-    if (!response.ok) throw new Error(`Google Translate returned HTTP ${response.status}`);
+    if (!response.ok) throw new HttpError(502, `Google Translate returned HTTP ${response.status}`);
 
     const data = (await response.json()) as unknown;
     if (!Array.isArray(data) || !Array.isArray(data[0])) return '';
@@ -737,18 +735,123 @@ async function translateWithGoogle(
   }
 }
 
+async function translateWithGemini(
+  text: string,
+  sourceLang: string,
+  targetLang: string,
+  env: Env
+): Promise<{ translation: string; failures: string[] }> {
+  const keys = rotate(getKeys(env)).slice(0, 2);
+  if (keys.length === 0) {
+    return { translation: '', failures: ['GEMINI_API_KEYS is not configured on the Worker'] };
+  }
+
+  const models = getModels(env).slice(0, 2);
+  const languageNames: Record<string, string> = {
+    da: 'Danish',
+    en: 'English',
+    uk: 'Ukrainian'
+  };
+  const prompt = `Translate this ${languageNames[sourceLang] ?? sourceLang} text into ${languageNames[targetLang] ?? targetLang}. Preserve its meaning and punctuation. Return only the translation, with no explanation or quotes.\n\n${JSON.stringify(text)}`;
+  const failures: string[] = [];
+
+  for (const model of models) {
+    for (const key of keys) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5_000);
+      let response: Response;
+      try {
+        response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: { maxOutputTokens: 180, temperature: 0.1 }
+            })
+          }
+        );
+      } catch (error) {
+        const reason = error instanceof Error && error.name === 'AbortError'
+          ? 'request timed out'
+          : 'network request failed';
+        failures.push(`Gemini (${model}) ${reason}`);
+        logEvent('translation_provider_failed', { provider: 'Gemini', model, reason });
+        continue;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (!response.ok) {
+        failures.push(`Gemini (${model}) returned HTTP ${response.status}`);
+        logEvent('translation_provider_failed', {
+          provider: 'Gemini',
+          model,
+          status: response.status
+        });
+        continue;
+      }
+
+      try {
+        const data = await response.json() as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const translation = data.candidates?.[0]?.content?.parts
+          ?.map((part) => part.text ?? '')
+          .join('')
+          .trim();
+        if (translation) return { translation, failures };
+        failures.push(`Gemini (${model}) returned an empty translation`);
+      } catch {
+        failures.push(`Gemini (${model}) returned invalid JSON`);
+      }
+    }
+  }
+
+  return { translation: '', failures };
+}
+
 async function translateText(
   text: string,
   sourceLang: string,
-  targetLang: string
+  targetLang: string,
+  env: Env,
+  id: string
 ): Promise<string> {
+  const failures: string[] = [];
+
   try {
     const res = await translateWithMyMemory(text, sourceLang, targetLang);
     if (res && res.toLowerCase() !== text.toLowerCase()) return res;
-  } catch {
-    // fallback
+    failures.push('MyMemory returned no translation');
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown error';
+    failures.push(`MyMemory: ${reason}`);
+    logEvent('translation_provider_failed', { id, provider: 'MyMemory', reason });
   }
-  return translateWithGoogle(text, sourceLang, targetLang);
+
+  try {
+    const translation = await translateWithGoogle(text, sourceLang, targetLang);
+    if (translation && translation.toLowerCase() !== text.toLowerCase()) return translation;
+    failures.push('Google Translate returned no translation');
+  } catch (error) {
+    const reason = error instanceof Error && error.name === 'AbortError'
+      ? 'request timed out'
+      : error instanceof Error
+        ? error.message
+        : 'unknown error';
+    failures.push(`Google Translate: ${reason}`);
+    logEvent('translation_provider_failed', { id, provider: 'Google Translate', reason });
+  }
+
+  const gemini = await translateWithGemini(text, sourceLang, targetLang, env);
+  if (gemini.translation) return gemini.translation;
+  failures.push(...gemini.failures);
+
+  logEvent('translation_failed', { id, providers: failures });
+  throw new HttpError(502, `Translation failed: ${failures.join('; ')}`);
 }
 
 async function lookupGeminiIpa(text: string, language: 'da' | 'en', env: Env): Promise<string> {
@@ -1036,8 +1139,14 @@ async function handleTranscribe(request: Request, env: Env, id: string): Promise
 
   const started = Date.now();
   const [translation, ipa] = await Promise.all([
-    translateText(text, language, userLang),
-    resolveIpa(text, language, env)
+    translateText(text, language, userLang, env, id),
+    resolveIpa(text, language, env).catch((error: unknown) => {
+      logEvent('ipa_lookup_failed', {
+        id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return '';
+    })
   ]);
 
   if (!translation) throw new HttpError(502, 'Translation service returned an empty result');

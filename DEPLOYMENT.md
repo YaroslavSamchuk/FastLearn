@@ -29,6 +29,8 @@ npx wrangler secret put GOOGLE_CLIENT_SECRET
 
 If `/api/auth/google/start` returns `WORKER_CONFIG_MISSING`, its JSON response lists the missing runtime variables without exposing their values. Add them under the Worker’s **Settings → Variables and secrets** for **Production**, not under **Builds**, then deploy a new Worker version.
 
+If `/api/transcribe` returns `502`, the response identifies translation providers that failed. `GEMINI_API_KEYS` enables the final translation fallback; provider errors are also recorded in Worker logs.
+
 ## Deploy order
 
 Build and deploy the API Worker first, so it has its MongoDB Durable Object binding:
