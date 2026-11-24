@@ -64,6 +64,7 @@ const AppContent: React.FC = () => {
   const [streamingChatId, setStreamingChatId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [playingPhrase, setPlayingPhrase] = useState<string | undefined>();
+  const [playingPhraseWithPauses, setPlayingPhraseWithPauses] = useState(false);
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -330,10 +331,16 @@ const AppContent: React.FC = () => {
   };
 
   const handlePlayAudio = useCallback(
-    (text: string, speed = playbackSpeedRef.current, cacheForHistory = false) => {
+    (
+      text: string,
+      speed = playbackSpeedRef.current,
+      cacheForHistory = false,
+      addPhrasePauses = false
+    ) => {
       if (!text.trim()) return;
       setPlayingPhrase(text);
-      void play(text, speed, cacheForHistory);
+      setPlayingPhraseWithPauses(addPhrasePauses);
+      void play(text, speed, cacheForHistory, addPhrasePauses);
     },
     [play]
   );
@@ -341,20 +348,23 @@ const AppContent: React.FC = () => {
   const handleStopAudio = useCallback(() => {
     stop();
     setPlayingPhrase(undefined);
+    setPlayingPhraseWithPauses(false);
   }, [stop]);
 
   const handlePlaybackSpeedChange = useCallback(
     (speed: number) => {
       setPlaybackSpeed(speed);
-      if (isPlaying && playingPhrase) void play(playingPhrase, speed);
+      if (isPlaying && playingPhrase) {
+        void play(playingPhrase, speed, playingPhraseWithPauses, playingPhraseWithPauses);
+      }
     },
-    [isPlaying, play, playingPhrase]
+    [isPlaying, play, playingPhrase, playingPhraseWithPauses]
   );
 
   useEffect(() => {
     if (!selection) return;
-    handlePlayAudio(selection.text, 1, true);
-  }, [selection?.id, handlePlayAudio]);
+    handlePlayAudio(selection.text, 1, true, currentLanguage === 'da');
+  }, [selection?.id, handlePlayAudio, currentLanguage]);
 
   const handleSelectLanguage = (language: Language) => {
     if (language === currentLanguage) return;
@@ -802,7 +812,9 @@ const AppContent: React.FC = () => {
           language={currentLanguage}
           userId={user?.id ?? ''}
           onClose={clearSelection}
-          onPlayAudio={(speed) => handlePlayAudio(selection.text, speed, true)}
+          onPlayAudio={(speed) =>
+            handlePlayAudio(selection.text, speed, true, currentLanguage === 'da')
+          }
           onStopAudio={handleStopAudio}
           isPlaying={isPlaying}
           playingText={playingPhrase}

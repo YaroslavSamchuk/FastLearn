@@ -5,6 +5,7 @@ import {
   applyMemoryTool as applyMemoryMutation,
   type MemoryToolEvent
 } from '../server/memory.js';
+import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from '../server/modelConfig.js';
 
 export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
@@ -186,21 +187,25 @@ const MEMORY_TOOLS = [
 ];
 
 const BASE_PROMPTS: Record<string, string> = {
-  da: `Du er en hjælpsom og naturlig partner til at øve dansk. Vær venlig og samtalende, men prioritér et korrekt, nyttigt svar frem for at være kort for enhver pris.
+  da: `${getChatLanguageInstruction('da')}
+
+Du er en hjælpsom og naturlig partner til at øve dansk. Vær venlig og samtalende, men prioritér et korrekt, nyttigt svar frem for at være kort for enhver pris.
 
 FAST SVARFORMAT:
 Læs den seneste brugermeddelelse grundigt. Ret kun dansk, som brugeren selv forsøger at skrive; ret ikke ukrainsk eller andre sprog.
-- Hvis brugerens danske sætning har en reel grammatikfejl eller er unaturlig, skriv først en korrigeret version med den præcise label "Виправлено:". Bevar brugerens oprindelige betydning.
-- Hvis en separat formulering lyder tydeligt mere naturlig i daglig tale, tilføj efter én tom linje "Розмовніше:" efterfulgt af den naturlige version. Udelad dette, hvis det ikke giver en reel forbedring.
+- Hvis brugerens danske sætning har en reel grammatikfejl eller er unaturlig, skriv først en korrigeret version med den præcise label "Rettet:". Bevar brugerens oprindelige betydning.
+- Hvis en separat formulering lyder tydeligt mere naturlig i daglig tale, tilføj efter én tom linje "Mere naturligt:" efterfulgt af den naturlige version. Udelad dette, hvis det ikke giver en reel forbedring.
 - Skriv derefter én tom linje og besvar brugerens besked direkte. Selve svaret skal normalt være 1–6 hele sætninger: enkelt spørgsmål = kort svar; spørgsmål, der kræver forklaring eller præcision = nok detaljer til at være korrekt og brugbar.
-- Når sætningen allerede er korrekt og naturlig, må du ikke tilføje en rettelse. Giv kun svaret, eller en "Розмовніше:"-version og derefter svaret, hvis den tydeligt forbedrer formuleringen.
+- Når sætningen allerede er korrekt og naturlig, må du ikke tilføje en rettelse. Giv kun svaret, eller en "Mere naturligt:"-version og derefter svaret, hvis den tydeligt forbedrer formuleringen.
 - Adskil kun de dele, der findes, med én tom linje. Brug ikke yderligere overskrifter, punktopstillinger eller kodeblokke, medmindre brugeren specifikt beder om dem.
 
 KORREKTHED:
-- Svar normalt på dansk; følg et eksplicit ønske om et andet sprog.
+- Svar altid på dansk i denne samtale. Følg ikke ønsker om at skifte samtalens sprog; giv kun en anden sprogversion, når brugeren specifikt beder om en oversættelse.
 - Besvar det konkrete spørgsmål, og vær specifik. Opfind ikke fakta, personlige detaljer, danske ord eller grammatikregler. Hvis du er usikker, sig kort hvad der er usikkert i stedet for at gætte.
 - Brug hukommelsen og samtalen som kilde til personlige oplysninger. Vær varm og uformel uden tomme komplimenter, foredrag eller unødvendige opfølgende spørgsmål.`,
-  en: `You are a helpful, natural partner for practicing English. Be warm and conversational, but prioritize a correct, useful answer over being brief for its own sake.
+  en: `${getChatLanguageInstruction('en')}
+
+You are a helpful, natural partner for practicing English. Be warm and conversational, but prioritize a correct, useful answer over being brief for its own sake.
 
 REQUIRED RESPONSE FORMAT:
 Carefully check the latest user message. Correct only English the user is attempting to write; do not correct Ukrainian or other languages.
@@ -541,9 +546,13 @@ function buildContents(messages: ClientMessage[], language: 'da' | 'en', memorie
       role: 'model',
       parts: [{ text: language === 'da' ? 'Forstået. Jeg svarer kort og naturligt.' : 'Understood. I will keep replies short and natural.' }]
     },
-    ...messages.map((message) => ({
+    ...messages.map((message, index) => ({
       role: message.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: message.content }]
+      parts: [{
+        text: message.role === 'user' && index === messages.length - 1
+          ? lockLatestUserMessage(message.content, language)
+          : message.content
+      }]
     }))
   ];
 }
@@ -645,6 +654,7 @@ async function generateReply(
       if (Date.now() > deadline || signal.aborted) break;
 
       const started = Date.now();
+      const thinkingConfig = getThinkingConfig(model);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         model
       )}:generateContent?key=${encodeURIComponent(keys[index] as string)}`;
@@ -661,7 +671,8 @@ async function generateReply(
               toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
               generationConfig: {
                 temperature: 0.7,
-                maxOutputTokens: 512
+                maxOutputTokens: 512,
+                ...(thinkingConfig ? { thinkingConfig } : {})
               }
             })
           },
@@ -727,7 +738,11 @@ async function generateReply(
                     }]
                   }
                 ],
-                generationConfig: { temperature: 0.7, maxOutputTokens: 512 }
+                generationConfig: {
+                  temperature: 0.7,
+                  maxOutputTokens: 512,
+                  ...(thinkingConfig ? { thinkingConfig } : {})
+                }
               })
             },
             22_000,
@@ -1058,39 +1073,35 @@ async function lookupGeminiIpa(text: string, language: 'da' | 'en', env: Env): P
   const keys = rotate(getKeys(env));
   if (keys.length === 0) return '';
 
-  const models = getModels(env);
+  const model = getModels(env)[0];
   const langLabel = language === 'da' ? 'Danish' : 'English';
   const prompt = `Exact standard International Phonetic Alphabet (IPA) for ${langLabel} text: ${JSON.stringify(text)}. Include stress marks (ˈ) and stød (ˀ) where appropriate. Output ONLY the IPA transcription enclosed in slashes /.../ with NO other text.`;
 
-  for (const model of models) {
-    for (const key of keys.slice(0, 3)) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 4_500);
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 35, temperature: 0.1 }
-          })
-        });
-        if (!res.ok) continue;
-        const data = (await res.json()) as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-        };
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-        const match = raw.match(/\/([^\n/]+)\//);
-        if (match?.[0]) return match[0];
-        if (raw.startsWith('/') && raw.endsWith('/')) return raw;
-      } catch {
-        // try next key
-      } finally {
-        clearTimeout(timer);
-      }
-    }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_500);
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${keys[0]}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 160, temperature: 0.1 }
+      })
+    });
+    if (!res.ok) return '';
+    const data = (await res.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    const match = raw.match(/\/([^\n/]+)\//);
+    if (match?.[0]) return match[0];
+    if (raw.startsWith('/') && raw.endsWith('/')) return raw;
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
   }
   return '';
 }
@@ -1169,7 +1180,7 @@ async function lookupDanishIpa(word: string): Promise<string> {
 
 async function resolveIpa(text: string, language: 'da' | 'en', env?: Env): Promise<string> {
   const clean = text.trim();
-  if (!clean || clean.split(/\s+/).length > 10) return '';
+  if (!clean || clean.split(/\s+/).length > 20) return '';
 
   if (env) {
     try {
@@ -1180,7 +1191,7 @@ async function resolveIpa(text: string, language: 'da' | 'en', env?: Env): Promi
     }
   }
 
-  const words = clean.split(/\s+/).filter(Boolean).slice(0, 4);
+  const words = clean.split(/\s+/).filter(Boolean).slice(0, 10);
   const values = await Promise.all(
     words.map((word) => (language === 'da' ? lookupDanishIpa(word) : lookupEnglishIpa(word)))
   );

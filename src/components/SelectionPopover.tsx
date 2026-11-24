@@ -11,7 +11,7 @@ import {
   getPronunciation,
   translateSelection
 } from '../lib/api.ts';
-import { toSpeechText } from '../lib/speech.ts';
+import { PHRASE_PLAYBACK_SPEEDS, toSpeechText } from '../lib/speech.ts';
 import {
   getTranslationHistoryEntry,
   saveCachedSpeech,
@@ -123,11 +123,15 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         tasks.push(
           getPronunciation(selection.text, language, controller.signal)
             .then((ipa) => {
-              if (active) {
-                setData((previous) => ({ ...(previous ?? base), ipa }));
+              if (!active) return;
+              if (!ipa.trim()) {
+                setPronunciationError(true);
                 setLoadingPronunciation(false);
-                void saveHistory({ ipa });
+                return;
               }
+              setData((previous) => ({ ...(previous ?? base), ipa }));
+              setLoadingPronunciation(false);
+              void saveHistory({ ipa });
             })
             .catch((reason: unknown) => {
               if (reason instanceof DOMException && reason.name === 'AbortError') return;
@@ -321,16 +325,20 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               ) : pronunciationError ? (
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[12px] text-stone-500 dark:text-stone-500">
-                    Транскрипція недоступна
+                    {wordCount > 20
+                      ? 'Виберіть фразу до 20 слів'
+                      : 'Транскрипція недоступна'}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setAttempt((value) => value + 1)}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
-                  >
-                    <RotateCw className="h-3 w-3" strokeWidth={2} />
-                    Повторити
-                  </button>
+                  {wordCount <= 20 && (
+                    <button
+                      type="button"
+                      onClick={() => setAttempt((value) => value + 1)}
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
+                    >
+                      <RotateCw className="h-3 w-3" strokeWidth={2} />
+                      Повторити
+                    </button>
+                  )}
                 </div>
               ) : null}
             </section>
@@ -338,7 +346,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         </div>
 
         <div className="grid grid-cols-3 gap-2 border-t border-stone-100 px-4 pt-3 pb-4 dark:border-white/[0.07]">
-          {[1, 0.8, 0.6].map((speed) => {
+          {PHRASE_PLAYBACK_SPEEDS.map((speed) => {
             const active = isCurrentPlaying && currentSpeed === speed;
             return (
               <button

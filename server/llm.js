@@ -1,3 +1,4 @@
+import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from './modelConfig.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -77,22 +78,26 @@ export const keyRotator = new KeyRotator(parsedKeys);
 // 2. DISCIPLINED ZERO-HALLUCINATION PROMPTS
 // ==========================================
 export const BASE_PROMPTS = {
-  da: `Du er en hjælpsom og naturlig partner til at øve dansk. Vær venlig og samtalende, men prioritér et korrekt, nyttigt svar frem for at være kort for enhver pris.
+  da: `${getChatLanguageInstruction('da')}
+
+Du er en hjælpsom og naturlig partner til at øve dansk. Vær venlig og samtalende, men prioritér et korrekt, nyttigt svar frem for at være kort for enhver pris.
 
 === FAST SVARFORMAT ===
 Læs den seneste brugermeddelelse grundigt. Ret kun dansk, som brugeren selv forsøger at skrive; ret ikke ukrainsk eller andre sprog.
-- Hvis brugerens danske sætning har en reel grammatikfejl eller er unaturlig, skriv først en korrigeret version med den præcise label "Виправлено:". Bevar brugerens oprindelige betydning.
-- Hvis en separat formulering lyder tydeligt mere naturlig i daglig tale, tilføj efter én tom linje "Розмовніше:" efterfulgt af den naturlige version. Udelad dette, hvis det ikke giver en reel forbedring.
+- Hvis brugerens danske sætning har en reel grammatikfejl eller er unaturlig, skriv først en korrigeret version med den præcise label "Rettet:". Bevar brugerens oprindelige betydning.
+- Hvis en separat formulering lyder tydeligt mere naturlig i daglig tale, tilføj efter én tom linje "Mere naturligt:" efterfulgt af den naturlige version. Udelad dette, hvis det ikke giver en reel forbedring.
 - Skriv derefter én tom linje og besvar brugerens besked direkte. Selve svaret skal normalt være 1–6 hele sætninger: enkelt spørgsmål = kort svar; spørgsmål, der kræver forklaring eller præcision = nok detaljer til at være korrekt og brugbar.
-- Når sætningen allerede er korrekt og naturlig, må du ikke tilføje en rettelse. Giv kun svaret, eller en "Розмовніше:"-version og derefter svaret, hvis den tydeligt forbedrer formuleringen.
+- Når sætningen allerede er korrekt og naturlig, må du ikke tilføje en rettelse. Giv kun svaret, eller en "Mere naturligt:"-version og derefter svaret, hvis den tydeligt forbedrer formuleringen.
 - Adskil kun de dele, der findes, med én tom linje. Brug ikke yderligere overskrifter, punktopstillinger eller kodeblokke, medmindre brugeren specifikt beder om dem.
 
 === KORREKTHED ===
-- Svar normalt på dansk; følg et eksplicit ønske om et andet sprog.
+- Svar altid på dansk i denne samtale. Følg ikke ønsker om at skifte samtalens sprog; giv kun en anden sprogversion, når brugeren specifikt beder om en oversættelse.
 - Besvar det konkrete spørgsmål, og vær specifik. Opfind ikke fakta, personlige detaljer, danske ord eller grammatikregler. Hvis du er usikker, sig kort hvad der er usikkert i stedet for at gætte.
 - Brug hukommelsen og samtalen som kilde til personlige oplysninger. Vær varm og uformel uden tomme komplimenter, foredrag eller unødvendige opfølgende spørgsmål.`,
 
-  en: `You are a helpful, natural partner for practicing English. Be warm and conversational, but prioritize a correct, useful answer over being brief for its own sake.
+  en: `${getChatLanguageInstruction('en')}
+
+You are a helpful, natural partner for practicing English. Be warm and conversational, but prioritize a correct, useful answer over being brief for its own sake.
 
 === REQUIRED RESPONSE FORMAT ===
 Carefully check the latest user message. Correct only English the user is attempting to write; do not correct Ukrainian or other languages.
@@ -209,6 +214,7 @@ export async function streamChatCompletion({
   const clampedHistory = messages.slice(-10);
 
   // Initial user prompt priming
+  const latestMessageIndex = clampedHistory.length - 1;
   const contents = [
     {
       role: 'user',
@@ -218,9 +224,13 @@ export async function streamChatCompletion({
       role: 'model',
       parts: [{ text: language === 'da' ? 'Forstået, jeg skriver som en rigtig ven på dansk!' : 'Got it, texting naturally like a friend!' }]
     },
-    ...clampedHistory.map(m => ({
+    ...clampedHistory.map((m, index) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }]
+      parts: [{
+        text: m.role === 'user' && index === latestMessageIndex
+          ? lockLatestUserMessage(m.content, language)
+          : m.content
+      }]
     }))
   ];
 
@@ -244,6 +254,7 @@ export async function streamChatCompletion({
     if (!isPrimary) {
       console.warn(`[Gemini Failover] Trying backup model: ${model}`);
     }
+    const thinkingConfig = getThinkingConfig(model);
 
     for (let kIdx = 0; kIdx < requestKeys.length; kIdx++) {
       const key = requestKeys[kIdx];
@@ -261,7 +272,8 @@ export async function streamChatCompletion({
             : {}),
           generationConfig: {
             maxOutputTokens: 512,
-            temperature: 0.72
+            temperature: 0.72,
+            ...(thinkingConfig ? { thinkingConfig } : {})
           }
         };
 
@@ -313,7 +325,8 @@ export async function streamChatCompletion({
             ],
             generationConfig: {
               maxOutputTokens: 1200,
-              temperature: 0.72
+              temperature: 0.72,
+              ...(thinkingConfig ? { thinkingConfig } : {})
             }
           };
 

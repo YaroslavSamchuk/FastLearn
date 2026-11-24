@@ -105,33 +105,29 @@ async function lookupGeminiIpa(text, language) {
   const langLabel = language === 'da' ? 'Danish' : 'English';
   const prompt = `Exact standard International Phonetic Alphabet (IPA) for ${langLabel} text: ${JSON.stringify(text)}. Include stress marks (ˈ) and stød (ˀ) where appropriate. Output ONLY the IPA transcription enclosed in slashes /.../ with NO other text.`;
 
-  const models = ['gemini-flash-lite-latest', 'gemini-3-flash-preview'];
-  for (const model of models) {
-    for (const key of keys.slice(0, 3)) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4_500);
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 35, temperature: 0.1 }
-          })
-        });
-        clearTimeout(timer);
-        if (!res.ok) continue;
-        const data = await res.json();
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-        const match = raw.match(/\/([^\n/]+)\//);
-        if (match?.[0]) return match[0];
-        if (raw.startsWith('/') && raw.endsWith('/')) return raw;
-      } catch {
-        // try next key
-      }
-    }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_500);
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${keys[0]}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 160, temperature: 0.1 }
+      })
+    });
+    if (!res.ok) return '';
+    const data = await res.json();
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    const match = raw.match(/\/([^\n/]+)\//);
+    if (match?.[0]) return match[0];
+    if (raw.startsWith('/') && raw.endsWith('/')) return raw;
+  } catch {
+    return '';
+  } finally {
+    clearTimeout(timer);
   }
   return '';
 }
@@ -197,7 +193,7 @@ async function lookupDanishIpa(word) {
 
 async function resolveIpa(text, language) {
   const clean = text.trim();
-  if (!clean || clean.split(/\s+/).length > 10) return '';
+  if (!clean || clean.split(/\s+/).length > 20) return '';
 
   // 1. Primary: High-precision phonetic IPA via Gemini
   try {
@@ -208,7 +204,7 @@ async function resolveIpa(text, language) {
   }
 
   // 2. Secondary fallback: Dictionary / Wiktionary word-by-word lookup
-  const words = clean.split(/\s+/).filter(Boolean).slice(0, 4);
+  const words = clean.split(/\s+/).filter(Boolean).slice(0, 10);
   const values = await Promise.all(
     words.map((word) => (language === 'da' ? lookupDanishIpa(word) : lookupEnglishIpa(word)))
   );
@@ -242,11 +238,11 @@ export async function resolveTranscriptionAndTranslation(text, sourceLang = 'da'
   const cleanText = text.trim();
   const cacheKey = `${sourceLang}:${userLang}:${cleanText.toLowerCase()}`;
   const cached = readCache(cacheKey);
-  if (cached?.translation && typeof cached.ipa === 'string') return cached;
+  if (cached?.translation && cached.ipa) return cached;
 
   const [translation, ipa] = await Promise.all([
     cached?.translation ?? translateText(cleanText, sourceLang, userLang),
-    typeof cached?.ipa === 'string' ? cached.ipa : resolveIpa(cleanText, sourceLang)
+    cached?.ipa || resolveIpa(cleanText, sourceLang)
   ]);
 
   if (!translation) throw new Error('Translation service returned an empty result');
@@ -259,7 +255,7 @@ export async function resolveTranscriptionAndTranslation(text, sourceLang = 'da'
     userLang
   };
 
-  mergeCache(cacheKey, result);
+  mergeCache(cacheKey, { ...result, ...(ipa ? {} : { ipa: undefined }) });
   return result;
 }
 
@@ -284,14 +280,16 @@ export async function resolveIpaOnly(text, language = 'da') {
   const cleanText = text.trim();
   const cacheKey = `${language}:uk:${cleanText.toLowerCase()}`;
   const cached = readCache(cacheKey);
-  if (typeof cached?.ipa === 'string') return cached.ipa;
+  if (cached?.ipa) return cached.ipa;
 
   const ipa = await resolveIpa(cleanText, language);
-  mergeCache(cacheKey, {
-    original: cleanText,
-    ipa,
-    sourceLang: language,
-    userLang: 'uk'
-  });
+  if (ipa) {
+    mergeCache(cacheKey, {
+      original: cleanText,
+      ipa,
+      sourceLang: language,
+      userLang: 'uk'
+    });
+  }
   return ipa;
 }

@@ -1,13 +1,16 @@
 // language: TypeScript, file: src/hooks/useAudio.ts, target: Web / Mobile Browser
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchSpeechAudio, ttsUrl } from '../lib/api.ts';
-import { toSpeechText } from '../lib/speech.ts';
+import {
+  addDanishPhrasePauses,
+  clampPlaybackSpeed,
+  toSpeechText
+} from '../lib/speech.ts';
 import { log } from '../lib/logger.ts';
 import { getCachedSpeech, saveCachedSpeech } from '../lib/translationHistory.ts';
 
 const CACHE_LIMIT = 30;
 const audioCache = new Map<string, string>();
-const SPEEDS = [1, 0.8, 0.6];
 
 function rememberUrl(key: string, url: string) {
   audioCache.set(key, url);
@@ -18,15 +21,6 @@ function rememberUrl(key: string, url: string) {
     audioCache.delete(oldestKey);
     if (oldestUrl) URL.revokeObjectURL(oldestUrl);
   }
-}
-
-function clampSpeed(speed: number): number {
-  if (!Number.isFinite(speed)) return 1;
-  return SPEEDS.reduce(
-    (closest, candidate) =>
-      Math.abs(candidate - speed) < Math.abs(closest - speed) ? candidate : closest,
-    1
-  );
 }
 
 export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
@@ -109,13 +103,15 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
   );
 
   const play = useCallback(
-    async (text: string, speed = 1, cacheForHistory = false) => {
-      const spokenText = toSpeechText(text);
+    async (text: string, speed = 1, cacheForHistory = false, addPhrasePauses = false) => {
+      const speechInput =
+        addPhrasePauses && language === 'da' ? addDanishPhrasePauses(text) : text;
+      const spokenText = toSpeechText(speechInput);
       if (!spokenText) return;
 
       stop();
       const requestId = requestRef.current;
-      const safeSpeed = clampSpeed(speed);
+      const safeSpeed = clampPlaybackSpeed(speed, addPhrasePauses);
       const cacheKey = `${userId}:${language}:${spokenText}`;
 
       setIsPlaying(true);
@@ -133,7 +129,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
 
         if (!url) {
           let blob: Blob | null = null;
-          if (userId) {
+          if (userId && !addPhrasePauses) {
             try {
               blob = await getCachedSpeech(userId, language, text, 1);
             } catch (error) {
@@ -159,7 +155,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         };
         audioRef.current = audio;
         audio.onended = () => {
-          if (isRemoteStream && cacheForHistory && userId) {
+          if (isRemoteStream && cacheForHistory && userId && !addPhrasePauses) {
             const controller = new AbortController();
             fetchRef.current = controller;
             void fetchSpeechAudio(spokenText, language, 1, controller.signal)
