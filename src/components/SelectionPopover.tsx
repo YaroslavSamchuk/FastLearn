@@ -70,6 +70,18 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
     };
   }, [selection.text, language, attempt, onTranslate]);
 
+  useEffect(() => {
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      const node = popoverRef.current;
+      if (node && event.target instanceof Node && !node.contains(event.target)) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('pointerdown', handleOutsidePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+  }, [onClose]);
+
   useLayoutEffect(() => {
     const node = popoverRef.current;
     if (!node) return;
@@ -109,7 +121,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       style={style}
     >
       <div className="animate-popover rounded-2xl border border-stone-200/90 bg-white text-stone-900 shadow-lg shadow-stone-900/10 dark:border-white/[0.1] dark:bg-[#191817] dark:text-stone-100 dark:shadow-black/30">
-        <div className="flex items-start justify-between gap-2 border-b border-stone-100 pb-2.5 dark:border-white/[0.07]">
+        <div className="flex items-start justify-between gap-2 border-b border-stone-100 px-4 pt-4 pb-2.5 dark:border-white/[0.07]">
           <div className="min-w-0 flex-1">
             <p className="line-clamp-2 text-[14px] font-medium leading-snug text-stone-950 dark:text-stone-50">
               {selection.text}
@@ -137,7 +149,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
           </div>
         </div>
 
-        <div className="py-3">
+        <div className="px-4 py-3">
           {loading ? (
             <div className="flex items-center gap-2 py-1 text-[12px] text-stone-500 dark:text-stone-500">
               <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
@@ -161,7 +173,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               </button>
             </div>
           ) : data ? (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <p className="text-[14px] leading-snug text-stone-800 dark:text-stone-200">
                 {data.translation}
               </p>
@@ -176,7 +188,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-2 border-t border-stone-100 pt-2.5 dark:border-white/[0.07]">
+        <div className="flex items-center justify-between gap-2 border-t border-stone-100 px-4 pt-2.5 pb-4 dark:border-white/[0.07]">
           <button
             type="button"
             onClick={handlePlay}
