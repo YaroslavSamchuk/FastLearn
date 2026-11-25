@@ -364,8 +364,16 @@ export async function resolveWordListPronunciation(
     );
   }
 
-  return normalizedTokens
+  const parts = normalizedTokens
     .map((word) => resolved.get(word) || '')
-    .filter(Boolean)
-    .join(' ');
+    .filter(Boolean);
+  if (parts.length === 0) return '';
+
+  if (language === 'da') {
+    const inner = parts.map((item) => item.replace(/^\[|\]$/g, '').trim()).filter(Boolean);
+    return inner.length > 0 ? `[${inner.join(' ')}]` : '';
+  }
+
+  const inner = parts.map((item) => item.replace(/^\/|\/$/g, '').trim()).filter(Boolean);
+  return inner.length > 0 ? `/${inner.join(' ')}/` : '';
 }

@@ -128,10 +128,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       if (!active) return;
 
       const audioEntry = speechCached ?? cached;
+      const hasFreshIpa = Boolean(cached?.ipa) && !(language === 'da' && cached!.ipa!.startsWith('/'));
       const base: TranscribeResult = {
         original: selection.text,
         translation: cached?.translation ?? '',
-        ipa: cached?.ipa ?? '',
+        ipa: hasFreshIpa ? cached?.ipa ?? '' : '',
         sourceLang: language,
         userLang: 'uk'
       };
@@ -141,8 +142,8 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
 
       setData(base);
       setLoadingTranslation(!cached?.translation);
-      setLoadingPronunciation(!cached?.ipa && !exceedsWordLimit);
-      if (exceedsWordLimit && !cached?.ipa) {
+      setLoadingPronunciation(!hasFreshIpa && !exceedsWordLimit);
+      if (exceedsWordLimit && !hasFreshIpa) {
         setPronunciationError(true);
       }
 
@@ -168,7 +169,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         );
       }
 
-      if (!cached?.ipa && !exceedsWordLimit) {
+      if (!hasFreshIpa && !exceedsWordLimit) {
         tasks.push(
           getPronunciation(selection.text, language, controller.signal)
             .then((ipa) => {

@@ -81,6 +81,89 @@ function writeLanguageShards(language, entriesMap) {
   };
 }
 
+// Modern Copenhagen DDO forms (verified against udtaleordbog.dk DDO) for core high-frequency
+// Danish words whose 2003 NST entries retain older vowel symbols or formal citation endings.
+const MODERN_DANISH_DDO_OVERRIDES = {
+  hej: '[ˈhɑj]',
+  hvordan: '[vʌˈdan]',
+  'går': '[ˈgɒˀ]',
+  det: '[ˈde]',
+  i: '[ˈiˀ]',
+  dag: '[ˈdæˀ]',
+  morgen: '[ˈmɒːɒn]',
+  aften: '[ˈɑfdn̩]',
+  nat: '[ˈnad]',
+  hvad: '[ˈva]',
+  hvor: '[ˈvɒˀ]',
+  hvorfor: '[vʌˈfʌ]',
+  hvem: '[ˈvɛmˀ]',
+  'hvornår': '[vʌˈnɒˀ]',
+  hvilken: '[ˈvelgŋ̩]',
+  jeg: '[ˈjɑj]',
+  du: '[ˈdu]',
+  han: '[ˈhan]',
+  hun: '[ˈhun]',
+  den: '[dn̩]',
+  vi: '[ˈviˀ]',
+  jer: '[ˈjæɐ̯]',
+  de: '[ˈdi]',
+  mig: '[ˈmɑj]',
+  dig: '[ˈdɑj]',
+  sig: '[ˈsɑj]',
+  os: '[ˈoˀs]',
+  dem: '[ˈdɛm]',
+  er: '[a]',
+  var: '[ˈvɑˀ]',
+  'være': '[ˈvɛːɐ]',
+  har: '[ˈhɒˀ]',
+  havde: '[ˈhæːð̩]',
+  have: '[ˈhæːʊ]',
+  kan: '[ˈka]',
+  kunne: '[ˈku]',
+  skal: '[ˈsgalˀ]',
+  skulle: '[ˈsgu]',
+  vil: '[ve]',
+  ville: '[ˈvill̩]',
+  'må': '[ˈmɔˀ]',
+  'måtte': '[ˈmʌɾə]',
+  'gør': '[ˈgøɐ̯ˀ]',
+  gjorde: '[ˈgjoɐ̯ɾə]',
+  siger: '[ˈsiɐ̯]',
+  sagde: '[ˈsæːæ]',
+  ved: '[ˈveð]',
+  vidste: '[ˈvesdə]',
+  vide: '[ˈviːð̩]',
+  bliver: '[bliɐ̯]',
+  blev: '[ˈblewˀ]',
+  blive: '[ˈbliːi]',
+  med: '[ˈmɛð]',
+  til: '[ˈte]',
+  'på': '[pɔ]',
+  af: '[a]',
+  fra: '[fʁɑ]',
+  for: '[ˈfoɐ̯ˀ]',
+  om: '[ˈʌmˀ]',
+  over: '[ˈɒwɐ]',
+  under: '[ˈɔnɐ]',
+  ikke: '[ˈeg]',
+  'også': '[ˈʌs]',
+  godt: '[ˈgʌd]',
+  god: '[ˈgoˀ]',
+  meget: '[ˈmɑːð̩]',
+  mange: '[ˈmɑŋŋ̩]',
+  noget: '[ˈnɔːð̩]',
+  nogen: '[ˈnoːon]',
+  her: '[ˈheɐ̯ˀ]',
+  der: '[dɐ]',
+  nu: '[ˈnu]',
+  ja: '[ˈja]',
+  nej: '[ˈnɑjˀ]',
+  tak: '[ˈtɑg]',
+  undskyld: '[ˈɔnsgylˀ]',
+  'tøj': '[ˈtʌj]',
+  op: '[ˈʌb]'
+};
+
 function buildDanishMap(nstLexiconPath) {
   const raw = fs.readFileSync(nstLexiconPath, 'latin1');
   const best = new Map();
@@ -106,6 +189,9 @@ function buildDanishMap(nstLexiconPath) {
 
   const out = new Map();
   for (const [word, entry] of best.entries()) out.set(word, entry.ddo);
+  for (const [word, ddo] of Object.entries(MODERN_DANISH_DDO_OVERRIDES)) {
+    out.set(word, ddo);
+  }
   return out;
 }
 

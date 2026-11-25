@@ -33,7 +33,7 @@ test('resolves Danish inflections and English words directly from built TSV shar
   };
 
   const danish = await resolveWordListPronunciation(
-    'Hej! Hvordan går det? Jeg spiste brød og kaffe i København.',
+    'Hej! Hvordan går det i dag? Jeg spiste brød og kaffe i København.',
     'da',
     {
       readShard,
@@ -44,10 +44,9 @@ test('resolves Danish inflections and English words directly from built TSV shar
     }
   );
   assert.equal(fallbackCalls, 0);
-  assert.match(danish, /\[ˈhɑj\]/);
-  assert.match(danish, /\[vɒˈdan\]/);
-  assert.match(danish, /\[ˈsbiːsdə\]/);
-  assert.match(danish, /\[ˈbʁøðˀ\]/);
+  assert.match(danish, /^\[ˈhɑj vʌˈdan ˈgɒˀ ˈde ˈiˀ ˈdæˀ/);
+  assert.match(danish, /ˈsbiːsdə/);
+  assert.match(danish, /ˈbʁøðˀ/);
 
   const english = await resolveWordListPronunciation('Hello coffee world', 'en', {
     readShard,
@@ -57,7 +56,7 @@ test('resolves Danish inflections and English words directly from built TSV shar
     }
   });
   assert.equal(fallbackCalls, 0);
-  assert.match(english, /^\/\S+\/\s+\/\S+\/\s+\/\S+\/$/);
+  assert.match(english, /^\/[^/]+\s+[^/]+\s+[^/]+\/$/);
 });
 
 test('rejects phrases longer than 20 words and caps fallback lookups for missing words', async () => {
