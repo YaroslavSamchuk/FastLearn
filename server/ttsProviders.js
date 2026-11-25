@@ -240,6 +240,12 @@ export function formatSsmlRate(speed) {
   return `${pct >= 0 ? '+' : ''}${pct}%`;
 }
 
+export function formatEdgeWsRate(speed) {
+  const parsed = Number.parseFloat(speed);
+  const clamped = Number.isFinite(parsed) ? Math.max(0.4, Math.min(1.4, parsed)) : 1;
+  return String(Number(clamped.toFixed(2)));
+}
+
 export function buildSpeechConfigMessage(outputFormat = EDGE_OUTPUT_FORMAT) {
   const ts = new Date().toISOString();
   const payload = JSON.stringify({
@@ -262,8 +268,8 @@ export function buildEdgeSsmlMessage(requestId, text, voice, speed) {
   const ts = new Date().toISOString();
   const locale = /^[a-z]{2,}-[A-Z]{2}/.exec(voice)?.[0] ?? 'en-US';
   const safeText = escapeSsmlText(text);
-  const rate = formatSsmlRate(speed);
-  const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${locale}'><voice name='${voice}'><prosody pitch='+0Hz' rate='${rate}' volume='+0%'>${safeText}</prosody></voice></speak>`;
+  const rate = formatEdgeWsRate(speed);
+  const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="${locale}"><voice name="${voice}"><prosody pitch="+0Hz" rate="${rate}" volume="100">${safeText}</prosody></voice></speak>`;
   return `X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${ts}\r\nPath:ssml\r\n\r\n${ssml}`;
 }
 

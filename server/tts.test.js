@@ -4,6 +4,7 @@ import { mapSpeedToRate } from './tts.js';
 import { DEFAULT_VOICES, isValidVoice, normalizeVoices, resolveVoice } from './ttsConfig.js';
 import {
   EDGE_AGENT_PROFILES,
+  formatEdgeWsRate,
   formatSsmlRate,
   hashSecMsGecV2,
   isAgentInCooldown,
@@ -32,11 +33,14 @@ test('validates and normalizes TTS voices per language', () => {
   });
 });
 
-test('formats Edge TTS SSML percentage rates cleanly', () => {
+test('formats Edge TTS SSML rates cleanly', () => {
   assert.equal(formatSsmlRate(1), '+0%');
   assert.equal(formatSsmlRate(0.7), '-30%');
   assert.equal(formatSsmlRate(0.5), '-50%');
   assert.equal(formatSsmlRate(0.2), '-60%');
+  assert.equal(formatEdgeWsRate(1), '1');
+  assert.equal(formatEdgeWsRate(0.7), '0.7');
+  assert.equal(formatEdgeWsRate(0.5), '0.5');
 });
 
 test('generates Sec-MS-GEC v2 CS64-SHA256 tokens and parses binary audio frames', async () => {

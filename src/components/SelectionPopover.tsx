@@ -10,6 +10,7 @@ import {
   createSpeechBatchLoader,
   fetchSpeechAudio,
   getPronunciation,
+  isCacheableSpeechAudio,
   translateSelection
 } from '../lib/api.ts';
 import {
@@ -230,7 +231,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                       previous.includes(speed) ? previous : [...previous, speed]
                     );
                   }
-                  if (userId) {
+                  if (userId && isCacheableSpeechAudio(audio)) {
                     void saveCachedSpeech(
                       userId,
                       language,

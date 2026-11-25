@@ -27,7 +27,7 @@ type TranslationHistoryUpdate = Partial<
 
 const DATABASE_NAME = 'fastlearn_translation_history';
 const STORE_NAME = 'entries';
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 let databasePromise: Promise<IDBDatabase> | null = null;
 
 function makeKey(userId: string, language: 'da' | 'en', text: string): string {
@@ -48,7 +48,7 @@ function openDatabase(): Promise<IDBDatabase> {
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         const store = database.createObjectStore(STORE_NAME, { keyPath: 'key' });
         store.createIndex('lastUsedAt', 'lastUsedAt');
-      } else if (event.oldVersion < 2) {
+      } else if (event.oldVersion < 3) {
         const store = request.transaction?.objectStore(STORE_NAME);
         if (!store) {
           reject(new Error('Could not access translation history during its upgrade'));
@@ -66,6 +66,9 @@ function openDatabase(): Promise<IDBDatabase> {
           };
           delete entry.slowAudio;
           delete entry.slowAudio06;
+          delete entry.normalAudio;
+          delete entry.slowAudio07;
+          delete entry.slowAudio05;
           entry.sizeBytes = entrySize(entry);
           cursor.update(entry);
           cursor.continue();

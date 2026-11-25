@@ -1,6 +1,6 @@
 // language: TypeScript, file: src/hooks/useAudio.ts, target: Web / Mobile Browser
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchSpeechAudio } from '../lib/api.ts';
+import { fetchSpeechAudio, isCacheableSpeechAudio } from '../lib/api.ts';
 import {
   addDanishPhrasePauses,
   clampPlaybackSpeed,
@@ -171,7 +171,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
           url = URL.createObjectURL(downloaded);
           rememberUrl(cacheKey, url);
 
-          if (cacheForHistory && userId) {
+          if (cacheForHistory && userId && isCacheableSpeechAudio(downloaded)) {
             void saveCachedSpeech(
               userId,
               language,

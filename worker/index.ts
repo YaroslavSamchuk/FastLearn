@@ -145,7 +145,7 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Expose-Headers': 'x-fastlearn-model'
+  'Access-Control-Expose-Headers': 'x-fastlearn-model, x-fastlearn-tts-source'
 };
 
 const MEMORY_TOOLS = [
@@ -1288,25 +1288,26 @@ async function synthesizeSpeech(
   speed: number,
   id: string,
   voice: string
-): Promise<Uint8Array> {
+): Promise<{ audio: Uint8Array; source: string; cacheable: boolean }> {
   const clipped = text.length > MAX_TTS_CHARS ? text.slice(0, MAX_TTS_CHARS) : text;
   if (clipped.length !== text.length) {
     logEvent('tts_truncated', { id, original: text.length, used: clipped.length });
   }
 
   const chunks = splitTtsText(clipped, TTS_CHUNK_CHARS);
-  const buffers = await Promise.all(chunks.map(async (chunk, index) => {
+  const results = await Promise.all(chunks.map(async (chunk, index) => {
     const started = Date.now();
     try {
-      const buffer = await synthesizeEdgeSpeech(chunk, language, speed, voice);
+      const result = await synthesizeEdgeSpeech(chunk, language, speed, voice);
       logEvent('tts_chunk_ok', {
         id,
         chunk: index + 1,
         of: chunks.length,
         chars: chunk.length,
+        source: result.source,
         ms: Date.now() - started
       });
-      return buffer;
+      return result;
     } catch (error) {
       logEvent('tts_chunk_error', {
         id,
@@ -1319,16 +1320,21 @@ async function synthesizeSpeech(
     }
   }));
 
-  const total = buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
+  const total = results.reduce((sum, result) => sum + result.audio.byteLength, 0);
   const merged = new Uint8Array(total);
   let offset = 0;
-  for (const buffer of buffers) {
-    merged.set(buffer, offset);
-    offset += buffer.byteLength;
+  let allCacheable = true;
+  for (const result of results) {
+    merged.set(result.audio, offset);
+    offset += result.audio.byteLength;
+    if (result.source === 'bing-http') allCacheable = false;
   }
 
-  logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice });
-  return merged;
+  const source = results.every((result) => result.source === results[0]?.source)
+    ? (results[0]?.source ?? 'edge')
+    : (allCacheable ? 'edge' : 'bing-http');
+  logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice, source });
+  return { audio: merged, source, cacheable: allCacheable };
 }
 
 async function handleChat(request: Request, env: Env, id: string, user: StoredUser): Promise<Response> {
@@ -1448,7 +1454,7 @@ function buildTtsCacheRequest(
   text: string
 ): Request {
   return new Request(
-    `https://fastlearn-cache.internal/tts?lang=${language}&voice=${encodeURIComponent(voice)}&speed=${speed}&text=${encodeURIComponent(text)}`,
+    `https://fastlearn-cache.internal/tts?v=3&lang=${language}&voice=${encodeURIComponent(voice)}&speed=${speed}&text=${encodeURIComponent(text)}`,
     { method: 'GET' }
   );
 }
@@ -1466,21 +1472,22 @@ async function readCachedTts(cacheKey: Request, id: string, language: 'da' | 'en
   return null;
 }
 
-function buildAudioResponse(audio: Uint8Array): Response {
+function buildAudioResponse(audio: Uint8Array, source = 'edge', cacheable = true): Response {
   return new Response(audio, {
     headers: {
       ...CORS_HEADERS,
       'Content-Type': 'audio/mpeg',
       'Content-Length': String(audio.byteLength),
-      'Cache-Control': 'public, max-age=86400'
+      'Cache-Control': cacheable ? 'public, max-age=86400' : 'no-store',
+      'x-fastlearn-tts-source': source
     }
   });
 }
 
-function writeCachedTts(cacheKey: Request, audio: Uint8Array, ctx?: ExecutionContext): void {
+function writeCachedTts(cacheKey: Request, audio: Uint8Array, source: string, ctx?: ExecutionContext): void {
   const promise = (async () => {
     try {
-      await caches.default.put(cacheKey, buildAudioResponse(audio));
+      await caches.default.put(cacheKey, buildAudioResponse(audio, source, true));
     } catch {
       // Ignore cache write failures.
     }
@@ -1513,9 +1520,9 @@ async function handleTts(url: URL, id: string, ctx?: ExecutionContext): Promise<
   const cached = await readCachedTts(cacheKey, id, language, voice, text.length);
   if (cached) return cached;
 
-  const audio = await synthesizeSpeech(text, language, speed, id, voice);
-  const response = buildAudioResponse(audio);
-  writeCachedTts(cacheKey, audio, ctx);
+  const { audio, source, cacheable } = await synthesizeSpeech(text, language, speed, id, voice);
+  const response = buildAudioResponse(audio, source, cacheable);
+  if (cacheable) writeCachedTts(cacheKey, audio, source, ctx);
   return response;
 }
 
@@ -1592,11 +1599,14 @@ async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionConte
                   audioBase64: encodeBase64(variant.audio),
                   source: variant.source
                 });
-                writeCachedTts(
-                  buildTtsCacheRequest(language, voice, variant.speed, clipped),
-                  variant.audio,
-                  ctx
-                );
+                if (variant.source !== 'bing-http') {
+                  writeCachedTts(
+                    buildTtsCacheRequest(language, voice, variant.speed, clipped),
+                    variant.audio,
+                    variant.source,
+                    ctx
+                  );
+                }
                 logEvent('tts_ok', {
                   id,
                   chunks: 1,
@@ -1615,6 +1625,9 @@ async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionConte
             const buffersBySpeed = new Map<number, Uint8Array[]>(
               missingSpeeds.map((speed) => [speed, new Array<Uint8Array>(chunks.length)])
             );
+            const sourcesBySpeed = new Map<number, string[]>(
+              missingSpeeds.map((speed) => [speed, new Array<string>(chunks.length)])
+            );
             const failedSpeeds = new Set<number>();
 
             await Promise.all(
@@ -1627,6 +1640,8 @@ async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionConte
                   (variant) => {
                     const arr = buffersBySpeed.get(variant.speed);
                     if (arr) arr[chunkIndex] = variant.audio;
+                    const srcArr = sourcesBySpeed.get(variant.speed);
+                    if (srcArr) srcArr[chunkIndex] = variant.source;
                   }
                 );
                 for (const speed of chunkMissing) failedSpeeds.add(speed);
@@ -1650,9 +1665,13 @@ async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionConte
                 merged.set(part, offset);
                 offset += part.byteLength;
               }
-              sendLine({ speed, audioBase64: encodeBase64(merged), source: 'edge' });
-              writeCachedTts(buildTtsCacheRequest(language, voice, speed, clipped), merged, ctx);
-              logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice });
+              const speedSources = sourcesBySpeed.get(speed) ?? [];
+              const source = speedSources.includes('bing-http') ? 'bing-http' : (speedSources[0] || 'edge');
+              sendLine({ speed, audioBase64: encodeBase64(merged), source });
+              if (source !== 'bing-http') {
+                writeCachedTts(buildTtsCacheRequest(language, voice, speed, clipped), merged, source, ctx);
+              }
+              logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice, source });
             }
           }
         }

@@ -23,6 +23,12 @@ interface PendingTurn {
   reject: (error: Error) => void;
 }
 
+export interface SynthSpeechResult {
+  audio: Uint8Array;
+  source: string;
+  voice: string;
+}
+
 export interface BatchSynthVariant {
   speed: number;
   audio: Uint8Array;
@@ -46,9 +52,10 @@ function isChristelVoice(voice: string): boolean {
 
 async function openEdgeWebSocket(endpoint: EdgeEndpoint, timeoutMs = 4_500): Promise<WebSocket> {
   const triedAgents = new Set<string>();
+  const maxAttempts = endpoint === 'apim' ? 4 : 3;
   let lastError: unknown;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const { agent, url, headers } = await buildEdgeWsConnection(endpoint, clockOffsetMs, triedAgents);
     triedAgents.add(agent.id);
 
@@ -172,7 +179,7 @@ async function synthesizeViaWebSocket(
       const timer = setTimeout(() => {
         pending.delete(requestId);
         reject(new Error(`Edge TTS (${endpoint}) timed out waiting for audio`));
-      }, 5_500);
+      }, 9_000);
 
       pending.set(requestId, {
         speed,
@@ -223,7 +230,7 @@ export async function synthesizeEdgeSpeech(
   language: 'da' | 'en',
   speed: number,
   voiceName?: string | null
-): Promise<Uint8Array> {
+): Promise<SynthSpeechResult> {
   const voice = resolveVoice(language, voiceName);
   const errors: string[] = [];
 
@@ -232,15 +239,26 @@ export async function synthesizeEdgeSpeech(
       try {
         const res = await synthesizeViaWebSocket('apim', text, voice, [speed], 'sequential');
         const audio = res.get(speed);
-        if (audio) return audio;
+        if (audio) return { audio, source: 'apim', voice };
       } catch (error) {
         errors.push(`apim:${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
+    if (speed <= 0.7) {
+      try {
+        const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
+        const audio = res.get(speed);
+        if (audio) return { audio, source: 'edge', voice };
+      } catch (error) {
+        errors.push(`bing-slow:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     if (hasHealthyAgent('bing-http')) {
       try {
-        return await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
+        const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
+        return { audio, source: 'bing-http', voice };
       } catch (error) {
         errors.push(`bing-http:${error instanceof Error ? error.message : String(error)}`);
       }
@@ -250,7 +268,7 @@ export async function synthesizeEdgeSpeech(
       try {
         const res = await synthesizeViaWebSocket('bing', text, 'da-DK-JeppeNeural', [speed], 'sequential');
         const audio = res.get(speed);
-        if (audio) return audio;
+        if (audio) return { audio, source: 'edge-fallback', voice: 'da-DK-JeppeNeural' };
       } catch (error) {
         errors.push(`jeppe-${attempt}:${error instanceof Error ? error.message : String(error)}`);
       }
@@ -259,28 +277,33 @@ export async function synthesizeEdgeSpeech(
     throw new Error(errors.join(' | ') || 'Edge TTS unavailable');
   }
 
-  try {
-    const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
-    const audio = res.get(speed);
-    if (audio) return audio;
-  } catch (error) {
-    errors.push(`bing-1:${error instanceof Error ? error.message : String(error)}`);
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
+      const audio = res.get(speed);
+      if (audio) return { audio, source: attempt === 1 ? 'edge' : 'edge-retry', voice };
+    } catch (error) {
+      errors.push(`bing-${attempt}:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (hasHealthyAgent('apim')) {
+    try {
+      const res = await synthesizeViaWebSocket('apim', text, voice, [speed], 'sequential');
+      const audio = res.get(speed);
+      if (audio) return { audio, source: 'apim', voice };
+    } catch (error) {
+      errors.push(`apim:${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   if (hasHealthyAgent('bing-http')) {
     try {
-      return await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
+      const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
+      return { audio, source: 'bing-http', voice };
     } catch (error) {
       errors.push(`bing-http:${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-
-  try {
-    const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
-    const audio = res.get(speed);
-    if (audio) return audio;
-  } catch (error) {
-    errors.push(`bing-2:${error instanceof Error ? error.message : String(error)}`);
   }
 
   throw new Error(errors.join(' | ') || 'Edge TTS unavailable');
@@ -308,7 +331,18 @@ export async function synthesizeEdgeSpeechBatch(
           await emitDone(speed, audio, 'apim', voice);
         });
       } catch {
-        // Remaining speeds fall through to another agent/provider immediately.
+        // Remaining speeds fall through immediately.
+      }
+    }
+
+    const slowMissing = [...missing].filter((speed) => speed <= 0.7);
+    if (slowMissing.length > 0) {
+      try {
+        await synthesizeViaWebSocket('bing', text, voice, slowMissing, 'concurrent', async (speed, audio) => {
+          await emitDone(speed, audio, 'edge', voice);
+        });
+      } catch {
+        // Remaining speeds fall through immediately.
       }
     }
 
@@ -349,6 +383,26 @@ export async function synthesizeEdgeSpeechBatch(
     // Remaining speeds fall through immediately.
   }
 
+  if (missing.size > 0) {
+    try {
+      await synthesizeViaWebSocket('bing', text, voice, [...missing], 'sequential', async (speed, audio) => {
+        await emitDone(speed, audio, 'edge-retry', voice);
+      });
+    } catch {
+      // Remaining speeds fall through to APIM/HTTP.
+    }
+  }
+
+  if (missing.size > 0 && hasHealthyAgent('apim')) {
+    try {
+      await synthesizeViaWebSocket('apim', text, voice, [...missing], 'sequential', async (speed, audio) => {
+        await emitDone(speed, audio, 'apim', voice);
+      });
+    } catch {
+      // Remaining speeds fall through to Bing HTTP.
+    }
+  }
+
   if (missing.size > 0 && hasHealthyAgent('bing-http')) {
     await Promise.allSettled(
       [...missing].map(async (speed) => {
@@ -356,16 +410,6 @@ export async function synthesizeEdgeSpeechBatch(
         await emitDone(speed, audio, 'bing-http', voice);
       })
     );
-  }
-
-  if (missing.size > 0) {
-    try {
-      await synthesizeViaWebSocket('bing', text, voice, [...missing], 'sequential', async (speed, audio) => {
-        await emitDone(speed, audio, 'edge-retry', voice);
-      });
-    } catch {
-      // Any remaining speeds reported back to caller.
-    }
   }
 
   return [...missing];

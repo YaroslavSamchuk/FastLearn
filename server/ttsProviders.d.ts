@@ -32,6 +32,7 @@ export function buildEdgeWsConnection(
 ): Promise<{ agent: EdgeAgentProfile; url: string; headers: Record<string, string> }>;
 export function escapeSsmlText(text: string): string;
 export function formatSsmlRate(speed: number): string;
+export function formatEdgeWsRate(speed: number): string;
 export function buildSpeechConfigMessage(outputFormat?: string): string;
 export function buildEdgeSsmlMessage(requestId: string, text: string, voice: string, speed: number): string;
 export function parseEdgeBinaryAudioFrame(data: unknown): { requestId: string; audio: Uint8Array } | null;

@@ -502,8 +502,10 @@ app.get('/api/tts', requireAuth, async (req, res) => {
   try {
     const started = Date.now();
     const synthesis = await synthesizeSpeechStream(text, language, speed, voice);
+    const cacheable = synthesis.source !== 'bing-http' && synthesis.source !== 'google';
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', cacheable ? 'public, max-age=86400' : 'no-store');
+    res.setHeader('x-fastlearn-tts-source', synthesis.source);
     const chunks = [];
     let bytes = 0;
     const onClose = () => {

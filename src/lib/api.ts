@@ -363,6 +363,12 @@ export async function getPronunciation(
   return typeof data.ipa === 'string' ? data.ipa : '';
 }
 
+const transientSpeechBlobs = new WeakSet<Blob>();
+
+export function isCacheableSpeechAudio(audio: Blob): boolean {
+  return !transientSpeechBlobs.has(audio);
+}
+
 export async function fetchSpeechAudio(
   text: string,
   language: Language,
@@ -381,6 +387,9 @@ export async function fetchSpeechAudio(
 
   const audio = await response.blob();
   if (audio.size === 0) throw new ApiError('TTS returned an empty audio file', response.status);
+  if (response.headers.get('x-fastlearn-tts-source') === 'bing-http') {
+    transientSpeechBlobs.add(audio);
+  }
   return audio;
 }
 
@@ -458,9 +467,9 @@ export function createSpeechBatchLoader(
       const handleLine = (rawLine: string) => {
         const line = rawLine.trim();
         if (!line) return;
-        let parsed: { speed?: unknown; audioBase64?: unknown; error?: unknown };
+        let parsed: { speed?: unknown; audioBase64?: unknown; source?: unknown; error?: unknown };
         try {
-          parsed = JSON.parse(line) as { speed?: unknown; audioBase64?: unknown; error?: unknown };
+          parsed = JSON.parse(line) as { speed?: unknown; audioBase64?: unknown; source?: unknown; error?: unknown };
         } catch {
           return;
         }
@@ -471,6 +480,9 @@ export function createSpeechBatchLoader(
         if (typeof parsed.audioBase64 === 'string' && parsed.audioBase64) {
           const blob = decodeBase64Audio(parsed.audioBase64);
           if (blob.size > 0) {
+            if (parsed.source === 'bing-http') {
+              transientSpeechBlobs.add(blob);
+            }
             entry.settled = true;
             entry.resolve(blob);
             return;
