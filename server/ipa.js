@@ -324,9 +324,105 @@ async function resolveMissingWordsInShards(words, language, readShard, shardCach
   return found;
 }
 
+const MIN_COMPOUND_WORD_LENGTH = 6;
+const MIN_COMPOUND_PART_LENGTH = 3;
+
+function stripIpaDelimiters(value) {
+  return value.replace(/^[[\]/]+|[[\]/]+$/g, '').trim();
+}
+
+function buildCompoundCandidates(word, language) {
+  if (word.length < MIN_COMPOUND_WORD_LENGTH || /[-']/.test(word)) return [];
+  const candidates = [];
+
+  for (let i = MIN_COMPOUND_PART_LENGTH; i <= word.length - MIN_COMPOUND_PART_LENGTH; i++) {
+    const directLeft = word.slice(0, i);
+    const directRight = word.slice(i);
+    candidates.push({
+      left: directLeft,
+      linker: '',
+      right: directRight,
+      score: Math.min(directLeft.length, directRight.length) * 100 + 20
+    });
+
+    if (language === 'da' && i <= word.length - MIN_COMPOUND_PART_LENGTH - 1) {
+      const sep = word[i];
+      if (sep === 's' || sep === 'e') {
+        const linkedLeft = word.slice(0, i);
+        const linkedRight = word.slice(i + 1);
+        candidates.push({
+          left: linkedLeft,
+          linker: sep === 's' ? 's' : 'ə',
+          right: linkedRight,
+          score: Math.min(linkedLeft.length, linkedRight.length) * 100 + (sep === 's' ? 10 : 0)
+        });
+      }
+    }
+  }
+
+  return candidates.sort((a, b) => b.score - a.score);
+}
+
+function joinCompoundPronunciation(leftValue, linker, rightValue, language) {
+  const leftInner = stripIpaDelimiters(leftValue);
+  const rightInner = stripIpaDelimiters(rightValue);
+  if (!leftInner || !rightInner) return '';
+
+  const rightDemoted = /[ˈ']/.test(rightInner)
+    ? rightInner.replace(/[ˈ']/, 'ˌ')
+    : rightInner.startsWith('ˌ')
+      ? rightInner
+      : `ˌ${rightInner}`;
+
+  const combined = `${leftInner}${linker}${rightDemoted}`;
+  return language === 'da' ? `[${combined}]` : `/${combined}/`;
+}
+
+async function resolveClosedCompoundsInShards(words, language, readShard, shardCache, resolved) {
+  const perWordCandidates = new Map();
+  const neededParts = new Set();
+
+  for (const word of words) {
+    if (resolved.has(word)) continue;
+    const candidates = buildCompoundCandidates(word, language);
+    if (candidates.length === 0) continue;
+    perWordCandidates.set(word, candidates);
+    for (const candidate of candidates) {
+      if (!resolved.has(candidate.left)) neededParts.add(candidate.left);
+      if (!resolved.has(candidate.right)) neededParts.add(candidate.right);
+    }
+  }
+
+  if (neededParts.size === 0) return;
+
+  const foundParts = await resolveMissingWordsInShards(
+    Array.from(neededParts),
+    language,
+    readShard,
+    shardCache
+  );
+  for (const [part, ipa] of foundParts) {
+    resolved.set(part, ipa);
+  }
+
+  for (const [word, candidates] of perWordCandidates) {
+    for (const candidate of candidates) {
+      const leftIpa = resolved.get(candidate.left);
+      const rightIpa = resolved.get(candidate.right);
+      if (!leftIpa || !rightIpa) continue;
+      const joined = joinCompoundPronunciation(leftIpa, candidate.linker, rightIpa, language);
+      if (joined) {
+        resolved.set(word, joined);
+        break;
+      }
+    }
+  }
+}
+
 /**
- * Resolves pronunciation for up to MAX_IPA_WORDS tokens using local TSV shards first,
- * then up to MAX_IPA_FALLBACK_WORDS external dictionary lookups for out-of-vocabulary tokens.
+ * Resolves pronunciation for up to MAX_IPA_WORDS tokens using local TSV shards first
+ * (including hyphenated and closed compound words),
+ * then up to MAX_IPA_FALLBACK_WORDS external dictionary lookups for remaining tokens.
  */
 export async function resolveWordListPronunciation(
   text,
@@ -357,6 +453,7 @@ export async function resolveWordListPronunciation(
     if (subParts.length > 0) {
       const subResolved = await resolveMissingWordsInShards(subParts, language, readShard, shardCache);
       for (const [k, v] of subResolved) resolved.set(k, v);
+      await resolveClosedCompoundsInShards(subParts, language, readShard, shardCache, resolved);
     }
 
     for (const word of unresolvedHyphens) {
@@ -366,6 +463,12 @@ export async function resolveWordListPronunciation(
         resolved.set(word, partValues.join('-'));
       }
     }
+  }
+
+  // Decompose unhyphenated closed compounds (e.g. dansktræning = dansk + træning) from local shards.
+  const unresolvedClosed = uniqueWords.filter((word) => !resolved.has(word));
+  if (unresolvedClosed.length > 0) {
+    await resolveClosedCompoundsInShards(unresolvedClosed, language, readShard, shardCache, resolved);
   }
 
   const stillMissing = uniqueWords

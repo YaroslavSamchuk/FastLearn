@@ -100,3 +100,46 @@ test('extracts DDO and IPA formats cleanly from real dictionary markup', () => {
   );
   assert.equal(ipaShardHash('hej').length, 2);
 });
+
+test('resolves Danish and English closed compound words (direct and with -s- linker) from local TSV shards without external calls', async () => {
+  let fallbackCalls = 0;
+  const readShard = async (lang, hash) => {
+    const file = path.join(PUBLIC_IPA_DIR, lang, `${hash}.txt`);
+    return fs.readFile(file, 'utf8');
+  };
+
+  const phraseIpa = await resolveWordListPronunciation(
+    'Jeg er klar til at hjælpe dig med din dansktræning',
+    'da',
+    {
+      readShard,
+      fetchFallbackWord: async () => {
+        fallbackCalls++;
+        return '';
+      }
+    }
+  );
+  assert.equal(fallbackCalls, 0);
+  assert.match(phraseIpa, /ˈdanˀsɡˌtʁeːneŋ\]$/);
+
+  const sLinker = await resolveWordListPronunciation('forårsvejr kanelsnegl', 'da', {
+    readShard,
+    fetchFallbackWord: async () => {
+      fallbackCalls++;
+      return '';
+    }
+  });
+  assert.equal(fallbackCalls, 0);
+  assert.match(sLinker, /ˈfɒːɒːsˌvɛɐˀ/);
+  assert.match(sLinker, /kaˈneːˀlˌsnɑjˀl/);
+
+  const englishCompound = await resolveWordListPronunciation('coffeetime', 'en', {
+    readShard,
+    fetchFallbackWord: async () => {
+      fallbackCalls++;
+      return '';
+    }
+  });
+  assert.equal(fallbackCalls, 0);
+  assert.match(englishCompound, /^\/[^/]+ˌ[^/]+\/$/);
+});
