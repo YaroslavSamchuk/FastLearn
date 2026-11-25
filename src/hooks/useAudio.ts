@@ -7,7 +7,11 @@ import {
   toSpeechText
 } from '../lib/speech.ts';
 import { log } from '../lib/logger.ts';
-import { getCachedSpeech, saveCachedSpeech } from '../lib/translationHistory.ts';
+import {
+  getCachedSpeech,
+  HistoryEntryKind,
+  saveCachedSpeech
+} from '../lib/translationHistory.ts';
 import { getPrefetchedSpeechAudio, loadSpeechAudio } from '../lib/speechAudioCache.ts';
 
 const CACHE_LIMIT = 30;
@@ -72,7 +76,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
   }, []);
 
   const playWithWebSpeech = useCallback(
-    (text: string, speed: number, requestId: number) => {
+    (text: string, speed: number, requestId: number, activeLanguage: 'da' | 'en') => {
       if (requestRef.current !== requestId) return;
 
       if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
@@ -83,11 +87,11 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
 
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = language === 'da' ? 'da-DK' : 'en-US';
+      utterance.lang = activeLanguage === 'da' ? 'da-DK' : 'en-US';
       utterance.rate = Math.max(0.4, Math.min(2, speed));
       utterance.pitch = 1;
 
-      const targetPrefix = language === 'da' ? 'da' : 'en';
+      const targetPrefix = activeLanguage === 'da' ? 'da' : 'en';
       const matchingVoice = window.speechSynthesis
         .getVoices()
         .find((item) => item.lang.toLowerCase().startsWith(targetPrefix));
@@ -104,12 +108,12 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
       setCurrentSpeed(speed);
       window.speechSynthesis.speak(utterance);
       log.info('audio', 'Fallback playback started', {
-        language,
+        language: activeLanguage,
         chars: text.length,
         voice: matchingVoice?.name ?? 'browser default'
       });
     },
-    [finish, language]
+    [finish]
   );
 
   const play = useCallback(
@@ -118,25 +122,29 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
       speed = 1,
       cacheForHistory = false,
       addPhrasePauses = false,
-      overrideVoice?: string
+      overrideVoice?: string,
+      cacheTextOverride?: string,
+      overrideLanguage?: 'da' | 'en',
+      cacheKind?: HistoryEntryKind
     ) => {
+      const activeLanguage = overrideLanguage ?? language;
       const speechInput =
-        addPhrasePauses && language === 'da' ? addDanishPhrasePauses(text) : text;
-      const spokenText = toSpeechText(speechInput);
+        addPhrasePauses && activeLanguage === 'da' ? addDanishPhrasePauses(text) : text;
+      const spokenText = toSpeechText(speechInput, activeLanguage);
       if (!spokenText) return;
 
       stop();
       const requestId = requestRef.current;
       const safeSpeed = normalizeCustomPlaybackSpeed(speed);
       const activeVoice = overrideVoice ?? voice;
-      const cacheKey = `${userId}:${language}:${activeVoice}:${safeSpeed}:${spokenText}`;
-      const historyKeyText = addPhrasePauses ? spokenText : text;
+      const cacheKey = `${userId}:${activeLanguage}:${activeVoice}:${safeSpeed}:${spokenText}`;
+      const historyKeyText = cacheTextOverride ?? (addPhrasePauses ? spokenText : text);
 
       setIsPlaying(true);
       setCurrentSpeed(safeSpeed);
 
       log.info('audio', 'Playback requested', {
-        language,
+        language: activeLanguage,
         voice: activeVoice || undefined,
         chars: spokenText.length,
         speed: safeSpeed,
@@ -147,7 +155,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
         let url = audioCache.get(cacheKey);
 
         if (!url) {
-          const prefetched = getPrefetchedSpeechAudio(language, spokenText, safeSpeed, activeVoice);
+          const prefetched = getPrefetchedSpeechAudio(activeLanguage, spokenText, safeSpeed, activeVoice);
           if (prefetched) {
             url = URL.createObjectURL(prefetched);
             rememberUrl(cacheKey, url);
@@ -157,7 +165,17 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
         if (!url && userId) {
           let blob: Blob | null = null;
           try {
-            blob = await getCachedSpeech(userId, language, historyKeyText, safeSpeed, activeVoice);
+            blob = await getCachedSpeech(
+              userId,
+              activeLanguage,
+              historyKeyText,
+              safeSpeed,
+              activeVoice,
+              { touch: Boolean(cacheTextOverride || addPhrasePauses) }
+            );
+            if (!blob && addPhrasePauses && historyKeyText !== spokenText) {
+              blob = await getCachedSpeech(userId, activeLanguage, spokenText, safeSpeed, activeVoice);
+            }
           } catch (error) {
             log.warn('audio', 'Could not read persistent speech cache', {
               error: error instanceof Error ? error.message : String(error)
@@ -173,10 +191,17 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
           const controller = new AbortController();
           fetchRef.current = controller;
           const downloaded = await loadSpeechAudio(
-            language,
+            activeLanguage,
             spokenText,
             safeSpeed,
-            () => fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal, activeVoice || undefined),
+            () =>
+              fetchSpeechAudio(
+                spokenText,
+                activeLanguage,
+                safeSpeed,
+                controller.signal,
+                activeVoice || undefined
+              ),
             activeVoice
           );
           if (requestRef.current !== requestId) return;
@@ -186,11 +211,12 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
           if (cacheForHistory && userId && isCacheableSpeechAudio(downloaded)) {
             void saveCachedSpeech(
               userId,
-              language,
+              activeLanguage,
               historyKeyText,
               safeSpeed,
               downloaded,
-              activeVoice
+              activeVoice,
+              cacheKind ? { kind: cacheKind } : undefined
             ).catch((error: unknown) => {
               log.warn('audio', 'Could not save persistent speech cache', {
                 error: error instanceof Error ? error.message : String(error)
@@ -213,7 +239,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
           if (requestRef.current !== requestId) return;
           log.warn('audio', 'Audio element could not play the TTS file, falling back');
           audioRef.current = null;
-          playWithWebSpeech(spokenText, safeSpeed, requestId);
+          playWithWebSpeech(spokenText, safeSpeed, requestId, activeLanguage);
         };
 
         await audio.play();
@@ -229,7 +255,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
         log.warn('audio', 'TTS proxy unavailable, using Web Speech', {
           error: error instanceof Error ? error.message : String(error)
         });
-        playWithWebSpeech(spokenText, safeSpeed, requestId);
+        playWithWebSpeech(spokenText, safeSpeed, requestId, activeLanguage);
       } finally {
         if (fetchRef.current && requestRef.current === requestId) fetchRef.current = null;
       }

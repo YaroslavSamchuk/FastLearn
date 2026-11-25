@@ -153,7 +153,7 @@ const MAX_BODY_CHARS = 64_000;
 const MAX_MEMORY_ITEMS = 40;
 const MAX_MEMORY_CHARS = 220;
 const MAX_TTS_CHARS = 1_200;
-const TTS_CHUNK_CHARS = 180;
+const TTS_CHUNK_CHARS = 750;
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',

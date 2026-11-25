@@ -32,6 +32,15 @@ export function getPrefetchedSpeechAudio(
   return audio;
 }
 
+export function hasPendingSpeechAudio(
+  language: SpeechLanguage,
+  text: string,
+  speed: number,
+  voice = ''
+): boolean {
+  return pendingAudio.has(makeKey(language, text, speed, voice));
+}
+
 export function seedPrefetchedSpeechAudio(
   language: SpeechLanguage,
   text: string,

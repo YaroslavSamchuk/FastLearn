@@ -1,8 +1,19 @@
 // language: JavaScript, file: server/tts.js, target: Node.js / Local dev proxy
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { Readable } from 'node:stream';
+import WebSocket from 'ws';
 import { DEFAULT_VOICES, resolveVoice } from './ttsConfig.js';
-import { synthesizeBingTranslatorTts } from './ttsProviders.js';
+import {
+  buildEdgeSsmlMessage,
+  buildEdgeWsConnection,
+  buildSpeechConfigMessage,
+  concatUint8Arrays,
+  generateRequestId,
+  hasHealthyAgent,
+  markAgentCooldown,
+  parseEdgeBinaryAudioFrame,
+  synthesizeBingTranslatorTts
+} from './ttsProviders.js';
 
 export const VOICES = {
   da: {
@@ -71,6 +82,133 @@ function escapeSsmlText(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+async function synthesizeViaApimBatch(text, voice, speeds, onSpeedReady) {
+  if (!hasHealthyAgent('apim')) {
+    throw new Error('APIM agents are in cooldown');
+  }
+
+  const triedAgents = new Set();
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { agent, url, headers } = await buildEdgeWsConnection('apim', 0, triedAgents);
+    triedAgents.add(agent.id);
+
+    try {
+      const results = await new Promise((resolve, reject) => {
+        const ws = new WebSocket(url, { headers, handshakeTimeout: 5_000 });
+        ws.binaryType = 'arraybuffer';
+
+        const pending = new Map();
+        const completed = new Map();
+        let settled = false;
+
+        const failAll = (error) => {
+          for (const [, turn] of pending.entries()) {
+            clearTimeout(turn.timer);
+            turn.reject(error);
+          }
+          pending.clear();
+          if (!settled) {
+            settled = true;
+            reject(error);
+          }
+        };
+
+        ws.once('unexpected-response', (_req, res) => {
+          if (res.statusCode === 403 || res.statusCode === 429) {
+            markAgentCooldown('apim', agent.id);
+          }
+          failAll(new Error(`Edge APIM (${agent.id}) returned HTTP ${res.statusCode}`));
+        });
+
+        ws.on('error', (error) => {
+          failAll(error instanceof Error ? error : new Error(String(error)));
+        });
+
+        ws.on('close', () => {
+          if (pending.size > 0) {
+            failAll(new Error('Edge APIM socket closed before synthesis finished'));
+          }
+        });
+
+        ws.on('message', (data, isBinary) => {
+          if (!isBinary) {
+            const textPayload = typeof data === 'string' ? data : data.toString('utf8');
+            const reqId = /X-RequestId:([^\r\n]+)/.exec(textPayload)?.[1]?.trim();
+            if (!reqId) return;
+            const turn = pending.get(reqId);
+            if (!turn) return;
+            if (textPayload.includes('Path:turn.end')) {
+              clearTimeout(turn.timer);
+              pending.delete(reqId);
+              const merged = concatUint8Arrays(turn.chunks);
+              if (merged.byteLength === 0) {
+                turn.reject(new Error('Empty Edge APIM audio stream'));
+                return;
+              }
+              const buffer = Buffer.from(merged);
+              completed.set(turn.speed, buffer);
+              turn.resolve(buffer);
+            }
+            return;
+          }
+
+          const frame = parseEdgeBinaryAudioFrame(data);
+          if (!frame) return;
+          const turn = pending.get(frame.requestId);
+          if (turn) turn.chunks.push(frame.audio);
+        });
+
+        ws.on('open', async () => {
+          try {
+            ws.send(buildSpeechConfigMessage());
+            for (const speed of speeds) {
+              const buffer = await new Promise((resSpeed, rejSpeed) => {
+                const requestId = generateRequestId();
+                const timer = setTimeout(() => {
+                  pending.delete(requestId);
+                  rejSpeed(new Error('Edge APIM synthesis timed out'));
+                }, 9_000);
+                pending.set(requestId, {
+                  speed,
+                  chunks: [],
+                  timer,
+                  resolve: resSpeed,
+                  reject: rejSpeed
+                });
+                ws.send(buildEdgeSsmlMessage(requestId, text, voice, speed));
+              });
+              await onSpeedReady?.(speed, buffer);
+            }
+            settled = true;
+            try {
+              ws.close(1000, 'done');
+            } catch {
+              // ignore
+            }
+            resolve(completed);
+          } catch (error) {
+            try {
+              ws.close();
+            } catch {
+              // ignore
+            }
+            failAll(error instanceof Error ? error : new Error(String(error)));
+          }
+        });
+      });
+
+      markEdgeSuccess();
+      return results;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Edge APIM synthesis failed');
+}
+
 async function synthesizeEdgeSingleSocket(text, voice, speed) {
   const tts = new MsEdgeTTS({ connectionTimeoutMs: 5_000, synthesisTimeoutMs: 9_000 });
   try {
@@ -92,6 +230,16 @@ async function synthesizeEdge(text, language, speed, voiceName) {
   const primaryVoice = voiceName || VOICES[language]?.default || VOICES.en.default;
 
   if (primaryVoice === 'da-DK-ChristelNeural') {
+    if (hasHealthyAgent('apim')) {
+      try {
+        const res = await synthesizeViaApimBatch(text, primaryVoice, [speed]);
+        const buffer = res.get(speed);
+        if (buffer) return { buffer, source: 'apim', voice: primaryVoice };
+      } catch (error) {
+        console.warn('[tts] Edge APIM Christel failed:', error.message);
+      }
+    }
+
     if (speed <= 0.7 && Date.now() >= edgeCooldownUntil) {
       try {
         const buffer = await synthesizeEdgeSingleSocket(text, primaryVoice, speed);
@@ -112,7 +260,7 @@ async function synthesizeEdge(text, language, speed, voiceName) {
     if (Date.now() < edgeCooldownUntil) return null;
     try {
       const buffer = await synthesizeEdgeSingleSocket(text, 'da-DK-JeppeNeural', speed);
-      return { buffer, source: 'edge', voice: 'da-DK-JeppeNeural' };
+      return { buffer, source: 'edge-fallback', voice: 'da-DK-JeppeNeural' };
     } catch (error) {
       console.warn('[tts] Edge fallback Jeppe failed:', error.message);
       markEdgeFailure();
@@ -127,6 +275,16 @@ async function synthesizeEdge(text, language, speed, voiceName) {
       return { buffer, source: attempt === 1 ? 'edge' : 'edge-retry', voice: primaryVoice };
     } catch (error) {
       console.warn(`[tts] Edge voice ${primaryVoice} attempt ${attempt} failed:`, error.message);
+    }
+  }
+
+  if (hasHealthyAgent('apim')) {
+    try {
+      const res = await synthesizeViaApimBatch(text, primaryVoice, [speed]);
+      const buffer = res.get(speed);
+      if (buffer) return { buffer, source: 'apim', voice: primaryVoice };
+    } catch (error) {
+      console.warn(`[tts] Edge APIM voice ${primaryVoice} failed:`, error.message);
     }
   }
 
@@ -352,7 +510,17 @@ export async function synthesizeSpeechBatch(text, language = 'da', speeds = [1, 
     await onVariant({ speed, buffer, source });
   };
 
-  if (Date.now() >= edgeCooldownUntil) {
+  if (voice === 'da-DK-ChristelNeural' && hasHealthyAgent('apim')) {
+    try {
+      await synthesizeViaApimBatch(cleanText, voice, [...pending], async (speed, buffer) => {
+        await emit(speed, buffer, 'apim');
+      });
+    } catch {
+      // Missing speeds fall through immediately.
+    }
+  }
+
+  if (pending.size > 0 && Date.now() >= edgeCooldownUntil) {
     const edgeSpeeds =
       voice === 'da-DK-ChristelNeural' ? [...pending].filter((speed) => speed <= 0.7) : [...pending];
     if (edgeSpeeds.length > 0) {

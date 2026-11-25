@@ -12,7 +12,7 @@ export interface LogEntry {
 
 const MAX_BUFFER = 250;
 const buffer: LogEntry[] = [];
-const isDev = Boolean(import.meta.env.DEV);
+const isDev = Boolean(import.meta.env?.DEV);
 
 function write(level: LogLevel, scope: string, message: string, data?: unknown) {
   if (level === 'debug' && !isDev) return;

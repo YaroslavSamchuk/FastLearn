@@ -76,7 +76,7 @@ function preloadAssistantAudio(
   voice: string,
   speeds: readonly number[] = SPEECH_PLAYBACK_SPEEDS
 ): void {
-  const spokenText = toSpeechText(text);
+  const spokenText = toSpeechText(text, language);
   if (!spokenText) return;
 
   const uniqueSpeeds = Array.from(new Set(speeds.length > 0 ? speeds : SPEECH_PLAYBACK_SPEEDS));
@@ -99,7 +99,7 @@ function preloadAssistantAudio(
       voice
     );
     if (isCacheableSpeechAudio(audio)) {
-      await saveCachedSpeech(userId, language, text, speed, audio, voice);
+      await saveCachedSpeech(userId, language, text, speed, audio, voice, { kind: 'message' });
     }
   };
 
@@ -449,14 +449,27 @@ const AppContent: React.FC = () => {
       text: string,
       speed = playbackSpeedRef.current,
       cacheForHistory = false,
-      addPhrasePauses = false
+      addPhrasePauses = false,
+      cacheTextOverride?: string,
+      overrideLanguage?: Language
     ) => {
       if (!text.trim()) return;
+      const targetLanguage = overrideLanguage ?? currentLanguage;
+      const targetVoice = overrideLanguage ? data.voices[overrideLanguage] : undefined;
       setPlayingPhrase(text);
       setPlayingPhraseWithPauses(addPhrasePauses);
-      void play(text, speed, cacheForHistory, addPhrasePauses);
+      void play(
+        text,
+        speed,
+        cacheForHistory,
+        addPhrasePauses,
+        targetVoice,
+        cacheTextOverride,
+        targetLanguage,
+        cacheTextOverride ? 'selection' : 'message'
+      );
     },
-    [play]
+    [play, currentLanguage, data.voices]
   );
 
   const handleStopAudio = useCallback(() => {
@@ -492,7 +505,7 @@ const AppContent: React.FC = () => {
     if (!selection?.id || !selectionTextRef.current) return;
     const { handlePlayAudio: playAudio, currentLanguage: lang, currentSpeeds: speeds } =
       selectionAutoplayRef.current;
-    playAudio(selectionTextRef.current, speeds[0] ?? 1, true, lang === 'da');
+    playAudio(selectionTextRef.current, speeds[0] ?? 1, true, lang === 'da', selectionTextRef.current);
   }, [selection?.id]);
 
   const handleSelectLanguage = (language: Language) => {
@@ -972,6 +985,13 @@ const AppContent: React.FC = () => {
           isPlaying &&
           (playingPhrase === VOICE_PREVIEW_TEXT.da || playingPhrase === VOICE_PREVIEW_TEXT.en)
         }
+        onPlayHistoryAudio={(phrase, lang, speed) =>
+          handlePlayAudio(phrase, speed, true, lang === 'da', phrase, lang)
+        }
+        onStopAudio={handleStopAudio}
+        isPlaying={isPlaying}
+        playingText={playingPhrase}
+        playingSpeed={currentSpeed}
         onLogout={handleLogout}
         memories={visibleMemories}
         onMemoryUpdate={handleMemoryUpdate}
@@ -1003,7 +1023,7 @@ const AppContent: React.FC = () => {
           userId={user?.id ?? ''}
           onClose={clearSelection}
           onPlayAudio={(speed) =>
-            handlePlayAudio(selection.text, speed, true, currentLanguage === 'da')
+            handlePlayAudio(selection.text, speed, true, currentLanguage === 'da', selection.text)
           }
           onStopAudio={handleStopAudio}
           isPlaying={isPlaying}

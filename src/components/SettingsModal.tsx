@@ -1,7 +1,19 @@
 // language: TypeScript (React), file: src/components/SettingsModal.tsx, target: Web / Mobile Browser
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { User, Language, UserMemories, VoiceMap, PlaybackSpeedMap, PlaybackSpeedsTuple } from '../types.ts';
-import { X, LogOut, Globe, Brain, Plus, Trash2, Check, Volume2, Minus, RotateCcw } from 'lucide-react';
+import {
+  X,
+  LogOut,
+  Globe,
+  Brain,
+  History,
+  Plus,
+  Trash2,
+  Check,
+  Volume2,
+  Minus,
+  RotateCcw
+} from 'lucide-react';
 import {
   DEFAULT_PLAYBACK_SPEEDS,
   MAX_PLAYBACK_SPEED,
@@ -11,6 +23,15 @@ import {
   normalizeSpeedValue,
   resolveVoice
 } from '../../server/ttsConfig.js';
+import {
+  clearSelectionHistory,
+  deleteTranslationHistoryEntryByKey,
+  getHistoryStorageStats,
+  HistoryStorageStats,
+  listSelectionHistory,
+  TRANSLATION_CACHE_LIMIT_BYTES,
+  TranslationHistoryEntry
+} from '../lib/translationHistory.ts';
 import { haptic } from '../utils/haptics.ts';
 import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
@@ -29,6 +50,11 @@ interface SettingsModalProps {
   onUpdatePlaybackSpeeds: (lang: Language, speeds: PlaybackSpeedsTuple) => void;
   onPreviewVoice?: (lang: Language, voice: string) => void;
   isPreviewPlaying?: boolean;
+  onPlayHistoryAudio?: (text: string, language: Language, speed: number) => void;
+  onStopAudio?: () => void;
+  isPlaying?: boolean;
+  playingText?: string;
+  playingSpeed?: number | null;
   onLogout: () => void;
   memories: UserMemories;
   onMemoryUpdate: (
@@ -38,7 +64,13 @@ interface SettingsModalProps {
   ) => void;
 }
 
-type SettingsTab = 'general' | 'memory';
+type SettingsTab = 'general' | 'memory' | 'history';
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -54,6 +86,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdatePlaybackSpeeds,
   onPreviewVoice,
   isPreviewPlaying = false,
+  onPlayHistoryAudio,
+  onStopAudio,
+  isPlaying = false,
+  playingText,
+  playingSpeed = null,
   onLogout,
   memories,
   onMemoryUpdate
@@ -65,10 +102,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [newFact, setNewFact] = useState('');
   const [confirmDeleteIndex, setConfirmDeleteIndex] = useState<number | null>(null);
 
+  const [historyEntries, setHistoryEntries] = useState<TranslationHistoryEntry[]>([]);
+  const [historyStats, setHistoryStats] = useState<HistoryStorageStats>({
+    totalBytes: 0,
+    selectionBytes: 0,
+    selectionCount: 0,
+    limitBytes: TRANSLATION_CACHE_LIMIT_BYTES
+  });
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+
+  const refreshHistory = useCallback(async () => {
+    if (!user?.id) return;
+    setLoadingHistory(true);
+    try {
+      const [entries, stats] = await Promise.all([
+        listSelectionHistory(user.id),
+        getHistoryStorageStats(user.id)
+      ]);
+      setHistoryEntries(entries);
+      setHistoryStats(stats);
+    } catch {
+      setHistoryEntries([]);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [user?.id]);
+
   useEffect(() => {
     if (isOpen) {
       setShouldRender(true);
       setConfirmDeleteIndex(null);
+      setConfirmDeleteKey(null);
+      setConfirmClearAll(false);
       const frameId = requestAnimationFrame(() => {
         requestAnimationFrame(() => setIsVisible(true));
       });
@@ -77,17 +145,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     setIsVisible(false);
     setConfirmDeleteIndex(null);
+    setConfirmDeleteKey(null);
+    setConfirmClearAll(false);
     const timer = window.setTimeout(() => setShouldRender(false), 200);
     return () => window.clearTimeout(timer);
   }, [isOpen]);
 
   useEffect(() => {
-    if (!isLoggedIn && activeTab === 'memory') setActiveTab('general');
+    if (!isLoggedIn && activeTab !== 'general') setActiveTab('general');
   }, [isLoggedIn, activeTab]);
 
   useEffect(() => {
     setConfirmDeleteIndex(null);
+    setConfirmDeleteKey(null);
+    setConfirmClearAll(false);
   }, [memoryScope, activeTab]);
+
+  useEffect(() => {
+    if (isOpen && isLoggedIn && activeTab === 'history') {
+      void refreshHistory();
+    }
+  }, [isOpen, isLoggedIn, activeTab, refreshHistory]);
 
   if (!shouldRender) return null;
 
@@ -97,6 +175,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const defaultSpeeds = DEFAULT_PLAYBACK_SPEEDS[currentLanguage];
   const activeSpeeds: PlaybackSpeedsTuple = playbackSpeeds[currentLanguage] ?? defaultSpeeds;
   const hasCustomSpeeds = activeSpeeds.some((speed, index) => speed !== defaultSpeeds[index]);
+
+  const normalizedQuery = historyQuery.trim().toLowerCase();
+  const filteredHistory = normalizedQuery
+    ? historyEntries.filter(
+        (entry) =>
+          entry.text.toLowerCase().includes(normalizedQuery) ||
+          (entry.translation ?? '').toLowerCase().includes(normalizedQuery) ||
+          (entry.ipa ?? '').toLowerCase().includes(normalizedQuery)
+      )
+    : historyEntries;
+
+  const storageRatio = Math.max(
+    0,
+    Math.min(1, historyStats.totalBytes / Math.max(1, historyStats.limitBytes))
+  );
 
   const handleSpeedSlotChange = (index: 0 | 1 | 2, nextRaw: number) => {
     const nextValue = normalizeSpeedValue(nextRaw, activeSpeeds[index]);
@@ -119,6 +212,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     haptic.impact();
     onMemoryUpdate(memoryScope, 'add', fact);
     setNewFact('');
+  };
+
+  const handlePlayHistoryEntry = (entry: TranslationHistoryEntry, speed: number) => {
+    haptic.tap();
+    const activeHere = isPlaying && playingText === entry.text && playingSpeed === speed;
+    if (activeHere) {
+      onStopAudio?.();
+      return;
+    }
+    onPlayHistoryAudio?.(entry.text, entry.language, speed);
+    // Promote played item immediately to the front in the visible list
+    setHistoryEntries((prev) => {
+      const target = prev.find((item) => item.key === entry.key);
+      if (!target) return prev;
+      return [{ ...target, lastUsedAt: Date.now() }, ...prev.filter((item) => item.key !== entry.key)];
+    });
+  };
+
+  const handleDeleteHistoryEntry = async (key: string) => {
+    haptic.warning();
+    setConfirmDeleteKey(null);
+    await deleteTranslationHistoryEntryByKey(key).catch(() => {});
+    await refreshHistory();
+  };
+
+  const handleClearAllHistory = async () => {
+    if (!user?.id) return;
+    haptic.warning();
+    setConfirmClearAll(false);
+    await clearSelectionHistory(user.id).catch(() => {});
+    await refreshHistory();
   };
 
   return (
@@ -176,22 +300,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
 
           {isLoggedIn && (
-            <button
-              type="button"
-              onClick={() => {
-                haptic.tap();
-                setActiveTab('memory');
-              }}
-              className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
-                activeTab === 'memory'
-                  ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
-                  : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
-              }`}
-              aria-pressed={activeTab === 'memory'}
-            >
-              <Brain className="h-4 w-4" strokeWidth={1.5} />
-              Пам’ять
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  haptic.tap();
+                  setActiveTab('memory');
+                }}
+                className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
+                  activeTab === 'memory'
+                    ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
+                    : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
+                }`}
+                aria-pressed={activeTab === 'memory'}
+              >
+                <Brain className="h-4 w-4" strokeWidth={1.5} />
+                Пам’ять
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  haptic.tap();
+                  setActiveTab('history');
+                }}
+                className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
+                  activeTab === 'history'
+                    ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
+                    : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
+                }`}
+                aria-pressed={activeTab === 'history'}
+              >
+                <History className="h-4 w-4" strokeWidth={1.5} />
+                Історія
+              </button>
+            </>
           )}
         </div>
 
@@ -455,7 +598,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Діалоги, налаштування та пам’ять синхронізуються з вашим акаунтом
               </p>
             </div>
-          ) : (
+          ) : activeTab === 'memory' ? (
             <div className="space-y-3">
               <div className="grid grid-cols-3 gap-1 rounded-xl border border-black/[0.08] bg-[#eceae4] p-1 dark:border-white/[0.08] dark:bg-[#1c1a18]">
                 {(['global', 'da', 'en'] as const).map((scope) => (
@@ -554,6 +697,187 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             <Trash2 className="h-4 w-4" strokeWidth={1.5} />
                           </button>
                         )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-black/[0.08] bg-white p-3.5 dark:border-white/[0.08] dark:bg-[#1c1a18]">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[13px] font-medium text-[#1c1917] dark:text-[#efede8]">
+                      Локальне сховище виділень
+                    </p>
+                    <p className="mt-0.5 font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c]">
+                      {historyStats.selectionCount} слів · {formatBytes(historyStats.totalBytes)} / 500 МБ
+                    </p>
+                  </div>
+
+                  {historyEntries.length > 0 && (
+                    confirmClearAll ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void handleClearAllHistory()}
+                          className="inline-flex h-8 items-center gap-1 rounded-md bg-red-600/15 px-2.5 text-[12px] font-medium text-[#dc2626] transition-colors duration-150 ease-unslop hover:bg-red-600/25 dark:bg-red-500/20 dark:text-[#e5484d]"
+                        >
+                          <Check className="h-4 w-4" strokeWidth={1.5} />
+                          Очистити
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmClearAll(false)}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[#736d65] hover:bg-black/[0.05] dark:text-[#8a847c] dark:hover:bg-white/[0.06]"
+                          aria-label="Скасувати очищення"
+                        >
+                          <X className="h-4 w-4" strokeWidth={1.5} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          haptic.tap();
+                          setConfirmClearAll(true);
+                        }}
+                        className="inline-flex h-8 items-center rounded-lg border border-black/[0.08] px-2.5 text-[12px] font-medium text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-red-500/10 hover:text-[#dc2626] dark:border-white/[0.08] dark:text-[#8a847c] dark:hover:bg-red-500/15 dark:hover:text-[#e5484d]"
+                      >
+                        Очистити
+                      </button>
+                    )
+                  )}
+                </div>
+
+                <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/[0.1]">
+                  <div
+                    className="h-full w-full origin-left bg-amber-500 transition-transform duration-200 ease-unslop"
+                    style={{ transform: `scaleX(${storageRatio})` }}
+                  />
+                </div>
+              </div>
+
+              {historyEntries.length > 0 && (
+                <input
+                  type="search"
+                  value={historyQuery}
+                  onChange={(event) => setHistoryQuery(event.target.value)}
+                  placeholder="Пошук в історії"
+                  aria-label="Пошук в історії виділень"
+                  className="h-10 w-full rounded-lg border border-black/[0.1] bg-white px-3 text-[16px] text-[#1c1917] placeholder-[#736d65] focus:border-amber-500 focus:outline-none dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:placeholder-[#8a847c] sm:text-[14px]"
+                />
+              )}
+
+              {loadingHistory ? (
+                <p className="py-8 text-center text-[13px] text-[#736d65] dark:text-[#8a847c]">
+                  Завантаження історії…
+                </p>
+              ) : filteredHistory.length === 0 ? (
+                <p className="py-8 text-center text-[13px] text-[#736d65] dark:text-[#8a847c]">
+                  {historyEntries.length === 0
+                    ? 'Виділяйте слова чи фрази в чаті — переклад, транскрипція та 3 швидкості озвучки збережуться тут'
+                    : 'Нічого не знайдено'}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {filteredHistory.map((entry) => {
+                    const entrySpeeds = Array.from(
+                      new Set(playbackSpeeds[entry.language] ?? DEFAULT_PLAYBACK_SPEEDS[entry.language])
+                    );
+                    const isConfirming = confirmDeleteKey === entry.key;
+
+                    return (
+                      <div
+                        key={entry.key}
+                        className="rounded-xl border border-black/[0.08] bg-white p-3.5 dark:border-white/[0.08] dark:bg-[#1c1a18]"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="rounded px-1.5 py-0.5 font-mono text-[12px] font-medium text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-400 dark:ring-amber-400/25">
+                                {entry.language === 'da' ? 'DA' : 'EN'}
+                              </span>
+                              <p className="truncate text-[14px] font-medium text-[#1c1917] dark:text-[#efede8]">
+                                {entry.text}
+                              </p>
+                            </div>
+                            {entry.translation && (
+                              <p className="mt-1.5 text-[13px] leading-snug text-[#57534e] dark:text-[#a8a29a]">
+                                {entry.translation}
+                              </p>
+                            )}
+                            {entry.ipa && (
+                              <p className="mt-1 font-mono text-[12px] leading-snug text-amber-700 dark:text-amber-400">
+                                {entry.ipa}
+                              </p>
+                            )}
+                          </div>
+
+                          {isConfirming ? (
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteHistoryEntry(entry.key)}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-600/15 text-[#dc2626] dark:bg-red-500/20 dark:text-[#e5484d]"
+                                aria-label="Підтвердити видалення запису"
+                              >
+                                <Check className="h-4 w-4" strokeWidth={1.5} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteKey(null)}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[#736d65] hover:bg-black/[0.05] dark:text-[#8a847c] dark:hover:bg-white/[0.06]"
+                                aria-label="Скасувати"
+                              >
+                                <X className="h-4 w-4" strokeWidth={1.5} />
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                haptic.tap();
+                                setConfirmDeleteKey(entry.key);
+                              }}
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-red-500/10 hover:text-[#dc2626] dark:text-[#8a847c] dark:hover:bg-red-500/15 dark:hover:text-[#e5484d]"
+                              aria-label={`Видалити ${entry.text} з історії`}
+                            >
+                              <Trash2 className="h-4 w-4" strokeWidth={1.5} />
+                            </button>
+                          )}
+                        </div>
+
+                        <div
+                          className="mt-3 grid gap-2"
+                          style={{ gridTemplateColumns: `repeat(${entrySpeeds.length}, minmax(0, 1fr))` }}
+                        >
+                          {entrySpeeds.map((speed) => {
+                            const active =
+                              isPlaying && playingText === entry.text && playingSpeed === speed;
+                            return (
+                              <button
+                                key={speed}
+                                type="button"
+                                onClick={() => handlePlayHistoryEntry(entry, speed)}
+                                className={`flex h-9 items-center justify-center gap-1.5 rounded-lg border px-2 font-mono text-[12px] font-medium tabular-nums transition-colors duration-150 ease-unslop ${
+                                  active
+                                    ? 'border-amber-500 bg-amber-500 text-[#1c1917]'
+                                    : 'border-black/[0.08] bg-[#f6f5f1] text-[#57534e] hover:border-black/20 hover:text-[#1c1917] dark:border-white/[0.08] dark:bg-[#161513] dark:text-[#a8a29a] dark:hover:border-white/20 dark:hover:text-[#efede8]'
+                                }`}
+                                aria-label={`Прослухати ${entry.text} зі швидкістю ${speed}×`}
+                              >
+                                {active ? (
+                                  <AudioVisualizer isPlaying barColor="bg-[#1c1917]" />
+                                ) : (
+                                  <Volume2 className="h-4 w-4 shrink-0" strokeWidth={1.5} />
+                                )}
+                                <span>{speed}×</span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })}

@@ -21,10 +21,12 @@ import {
 } from '../lib/speech.ts';
 import {
   getPrefetchedSpeechAudio,
+  hasPendingSpeechAudio,
   loadSpeechAudioVariants,
   seedPrefetchedSpeechAudio
 } from '../lib/speechAudioCache.ts';
 import {
+  deleteTranslationHistoryEntryByKey,
   getEntryAudioForSpeed,
   getTranslationHistoryEntry,
   matchesEntryVoice,
@@ -92,18 +94,20 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
 
     const saveHistory = (
       update: Parameters<typeof updateTranslationHistoryEntry>[3]
-    ) => updateTranslationHistoryEntry(userId, language, selection.text, update).catch((reason: unknown) => {
-      log.warn('translation-history', 'Could not save translation cache entry', {
-        error: reason instanceof Error ? reason.message : String(reason)
+    ) =>
+      updateTranslationHistoryEntry(userId, language, selection.text, {
+        kind: 'selection',
+        ...update
+      }).catch((reason: unknown) => {
+        log.warn('translation-history', 'Could not save translation cache entry', {
+          error: reason instanceof Error ? reason.message : String(reason)
+        });
       });
-    });
 
     const loadSelection = async () => {
-      const speechInput = language === 'da'
-        ? addDanishPhrasePauses(selection.text)
-        : selection.text;
-      const speechText = toSpeechText(speechInput);
-      const historyAudioText = language === 'da' && speechText ? speechText : selection.text;
+      const speechInput =
+        language === 'da' ? addDanishPhrasePauses(selection.text) : selection.text;
+      const speechText = toSpeechText(speechInput, language);
 
       const memoryReadySpeeds = speechText
         ? phraseSpeeds.filter((speed) =>
@@ -120,24 +124,25 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
           new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 450))
         ]);
 
-      const [cached, speechCached] = await Promise.all([
+      const [cached, legacySpeechCached] = await Promise.all([
         readCacheWithTimeout(
-          getTranslationHistoryEntry(userId, language, selection.text).catch((reason: unknown) => {
-            log.warn('translation-history', 'Could not read translation cache', {
-              error: reason instanceof Error ? reason.message : String(reason)
-            });
-            return null;
-          })
+          getTranslationHistoryEntry(userId, language, selection.text, { touch: true }).catch(
+            (reason: unknown) => {
+              log.warn('translation-history', 'Could not read translation cache', {
+                error: reason instanceof Error ? reason.message : String(reason)
+              });
+              return null;
+            }
+          )
         ),
-        speechText && historyAudioText !== selection.text
+        speechText && speechText !== selection.text
           ? readCacheWithTimeout(
-              getTranslationHistoryEntry(userId, language, historyAudioText).catch(() => null)
+              getTranslationHistoryEntry(userId, language, speechText).catch(() => null)
             )
           : Promise.resolve(null)
       ]);
       if (!active) return;
 
-      const audioEntry = speechCached ?? cached;
       const hasFreshIpa =
         Boolean(cached?.ipa) &&
         cached?.ipaVersion === 2 &&
@@ -212,8 +217,12 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       }
 
       if (speechText) {
-        const validAudioEntry = matchesEntryVoice(audioEntry, language, voice) ? audioEntry : null;
+        const primaryAudioEntry = matchesEntryVoice(cached, language, voice) ? cached : null;
+        const legacyAudioEntry = matchesEntryVoice(legacySpeechCached, language, voice)
+          ? legacySpeechCached
+          : null;
         const missingSpeeds: number[] = [];
+        let migratedFromLegacy = false;
 
         for (const speed of phraseSpeeds) {
           if (getPrefetchedSpeechAudio(language, speechText, speed, voice)) {
@@ -222,22 +231,44 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
             );
             continue;
           }
-          const storedAudio = getEntryAudioForSpeed(validAudioEntry, speed);
+
+          const storedAudio =
+            getEntryAudioForSpeed(primaryAudioEntry, speed) ??
+            getEntryAudioForSpeed(legacyAudioEntry, speed);
+
           if (storedAudio) {
             seedPrefetchedSpeechAudio(language, speechText, speed, storedAudio, voice);
             setReadyPhraseSpeeds((previous) =>
               previous.includes(speed) ? previous : [...previous, speed]
             );
+            // Migrate legacy separated Danish audio into the unified selection entry
+            if (!getEntryAudioForSpeed(primaryAudioEntry, speed) && userId) {
+              migratedFromLegacy = true;
+              void saveCachedSpeech(userId, language, selection.text, speed, storedAudio, voice, {
+                kind: 'selection'
+              }).catch(() => {});
+            }
             continue;
           }
           missingSpeeds.push(speed);
         }
 
+        if (migratedFromLegacy && legacySpeechCached?.key && !legacySpeechCached.translation && !legacySpeechCached.ipa) {
+          void deleteTranslationHistoryEntryByKey(legacySpeechCached.key).catch(() => {});
+        }
+
         if (missingSpeeds.length > 0) {
-          const loadVariant =
-            missingSpeeds.length > 1
-              ? createSpeechBatchLoader(speechText, language, missingSpeeds, voice || undefined)
-              : (speed: number) => fetchSpeechAudio(speechText, language, speed, undefined, voice || undefined);
+          const unrequestedSpeeds = missingSpeeds.filter(
+            (speed) => !hasPendingSpeechAudio(language, speechText, speed, voice)
+          );
+          const batchFetch =
+            unrequestedSpeeds.length > 1
+              ? createSpeechBatchLoader(speechText, language, unrequestedSpeeds, voice || undefined)
+              : null;
+          const loadVariant = (speed: number) =>
+            batchFetch && unrequestedSpeeds.includes(speed)
+              ? batchFetch(speed)
+              : fetchSpeechAudio(speechText, language, speed, undefined, voice || undefined);
 
           tasks.push(
             loadSpeechAudioVariants(
@@ -256,10 +287,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                     void saveCachedSpeech(
                       userId,
                       language,
-                      historyAudioText,
+                      selection.text,
                       speed,
                       audio,
-                      voice
+                      voice,
+                      { kind: 'selection' }
                     ).catch(() => {});
                   }
                 },
