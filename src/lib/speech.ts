@@ -1,4 +1,5 @@
 // language: TypeScript, file: src/lib/speech.ts, target: Web
+import { normalizeSpeedValue } from '../../server/ttsConfig.js';
 
 const CODE_FENCE = /```[\s\S]*?```/g;
 const MARKUP = /[*_`#~]+/g;
@@ -32,4 +33,8 @@ export function clampPlaybackSpeed(speed: number): number {
       Math.abs(candidate - speed) + 1e-9 < Math.abs(closest - speed) ? candidate : closest,
     1
   );
+}
+
+export function normalizeCustomPlaybackSpeed(speed: number): number {
+  return normalizeSpeedValue(speed, 1);
 }

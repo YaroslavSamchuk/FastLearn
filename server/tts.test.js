@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mapSpeedToRate } from './tts.js';
-import { DEFAULT_VOICES, isValidVoice, normalizeVoices, resolveVoice } from './ttsConfig.js';
+import {
+  DEFAULT_PLAYBACK_SPEEDS,
+  DEFAULT_VOICES,
+  isValidVoice,
+  normalizePlaybackSpeeds,
+  normalizeSpeedValue,
+  normalizeVoices,
+  resolveVoice
+} from './ttsConfig.js';
 import {
   EDGE_AGENT_PROFILES,
   formatEdgeWsRate,
@@ -17,9 +25,25 @@ test('maps the three playback choices to matching Edge TTS rates', () => {
   assert.equal(mapSpeedToRate(1), 1);
   assert.equal(mapSpeedToRate(0.7), 0.7);
   assert.equal(mapSpeedToRate(0.5), 0.5);
+  assert.equal(mapSpeedToRate(1.5), 1.5);
+  assert.equal(mapSpeedToRate(1.8), 1.5);
   assert.equal(mapSpeedToRate(0.4), 0.4);
   assert.equal(mapSpeedToRate(0.3), 0.4);
   assert.equal(mapSpeedToRate(Number.NaN), 1);
+});
+
+test('normalizes per-language 3-speed preferences between 0.5 and 1.5', () => {
+  assert.equal(normalizeSpeedValue(1.5), 1.5);
+  assert.equal(normalizeSpeedValue(2), 1.5);
+  assert.equal(normalizeSpeedValue(0.2), 0.5);
+  assert.equal(normalizeSpeedValue(0.73), 0.75);
+  assert.deepEqual(
+    normalizePlaybackSpeeds({ da: [1.5, 0.85, 0.5], en: ['1.2', 'invalid', 0.3] }),
+    {
+      da: [1.5, 0.85, 0.5],
+      en: [1.2, DEFAULT_PLAYBACK_SPEEDS.en[1], 0.5]
+    }
+  );
 });
 
 test('validates and normalizes TTS voices per language', () => {

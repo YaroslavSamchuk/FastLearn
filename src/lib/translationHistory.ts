@@ -14,6 +14,7 @@ export interface TranslationHistoryEntry {
   normalAudio?: Blob;
   slowAudio07?: Blob;
   slowAudio05?: Blob;
+  audioBySpeed?: Record<string, Blob>;
   sizeBytes: number;
   lastUsedAt: number;
 }
@@ -21,9 +22,14 @@ export interface TranslationHistoryEntry {
 type TranslationHistoryUpdate = Partial<
   Pick<
     TranslationHistoryEntry,
-    'translation' | 'ipa' | 'audioVoice' | 'normalAudio' | 'slowAudio07' | 'slowAudio05'
+    'translation' | 'ipa' | 'audioVoice' | 'normalAudio' | 'slowAudio07' | 'slowAudio05' | 'audioBySpeed'
   >
 >;
+
+function formatSpeedKey(speed: number): string {
+  const numeric = Number.isFinite(speed) ? Math.max(0.4, Math.min(1.5, speed)) : 1;
+  return String(Number(numeric.toFixed(2)));
+}
 
 const DATABASE_NAME = 'fastlearn_translation_history';
 const STORE_NAME = 'entries';
@@ -120,10 +126,15 @@ function entrySize(entry: Omit<TranslationHistoryEntry, 'sizeBytes'>): number {
   const textBytes = new TextEncoder().encode(
     `${entry.userId}\u0000${entry.language}\u0000${entry.text}\u0000${entry.translation ?? ''}\u0000${entry.ipa ?? ''}`
   ).byteLength;
+  const dynamicBytes = Object.values(entry.audioBySpeed ?? {}).reduce(
+    (sum, blob) => sum + (blob?.size ?? 0),
+    0
+  );
   return textBytes
     + (entry.normalAudio?.size ?? 0)
     + (entry.slowAudio07?.size ?? 0)
-    + (entry.slowAudio05?.size ?? 0);
+    + (entry.slowAudio05?.size ?? 0)
+    + dynamicBytes;
 }
 
 export async function getTranslationHistoryEntry(
@@ -169,6 +180,10 @@ export async function updateTranslationHistoryEntry(
     normalAudio: update.normalAudio ?? (voiceChanged ? undefined : existing?.normalAudio),
     slowAudio07: update.slowAudio07 ?? (voiceChanged ? undefined : existing?.slowAudio07),
     slowAudio05: update.slowAudio05 ?? (voiceChanged ? undefined : existing?.slowAudio05),
+    audioBySpeed: {
+      ...(voiceChanged ? {} : existing?.audioBySpeed),
+      ...(update.audioBySpeed ?? {})
+    },
     lastUsedAt: Date.now()
   };
   const next: TranslationHistoryEntry = {
@@ -214,6 +229,19 @@ export function matchesEntryVoice(
   return stored === expected;
 }
 
+export function getEntryAudioForSpeed(
+  entry: TranslationHistoryEntry | null | undefined,
+  speed: number
+): Blob | null {
+  if (!entry) return null;
+  const fromMap = entry.audioBySpeed?.[formatSpeedKey(speed)];
+  if (fromMap) return fromMap;
+  if (speed === 1) return entry.normalAudio ?? null;
+  if (speed === 0.7) return entry.slowAudio07 ?? null;
+  if (speed === 0.5) return entry.slowAudio05 ?? null;
+  return null;
+}
+
 export function getCachedSpeech(
   userId: string,
   language: 'da' | 'en',
@@ -223,10 +251,7 @@ export function getCachedSpeech(
 ): Promise<Blob | null> {
   return getTranslationHistoryEntry(userId, language, text).then((entry) => {
     if (!matchesEntryVoice(entry, language, voice)) return null;
-    if (speed === 1) return entry?.normalAudio ?? null;
-    if (speed === 0.7) return entry?.slowAudio07 ?? null;
-    if (speed === 0.5) return entry?.slowAudio05 ?? null;
-    return null;
+    return getEntryAudioForSpeed(entry, speed);
   });
 }
 
@@ -238,16 +263,16 @@ export function saveCachedSpeech(
   audio: Blob,
   voice?: string
 ): Promise<void> {
+  if (!Number.isFinite(speed) || speed < 0.4 || speed > 1.5) {
+    return Promise.reject(new RangeError(`Unsupported speech speed: ${speed}`));
+  }
+
   const audioVoice = voice || DEFAULT_VOICES[language];
-  const update =
-    speed === 1
-      ? { audioVoice, normalAudio: audio }
-      : speed === 0.7
-        ? { audioVoice, slowAudio07: audio }
-        : speed === 0.5
-          ? { audioVoice, slowAudio05: audio }
-          : null;
-  if (!update) return Promise.reject(new RangeError(`Unsupported speech speed: ${speed}`));
+  const key = formatSpeedKey(speed);
+  const update: TranslationHistoryUpdate = {
+    audioVoice,
+    audioBySpeed: { [key]: audio }
+  };
 
   return updateTranslationHistoryEntry(
     userId,

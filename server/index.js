@@ -12,7 +12,12 @@ import {
   synthesizeSpeechStream,
   VOICES
 } from './tts.js';
-import { DEFAULT_VOICES, isValidVoice } from './ttsConfig.js';
+import {
+  DEFAULT_PLAYBACK_SPEEDS,
+  DEFAULT_VOICES,
+  isValidVoice,
+  normalizePlaybackSpeeds
+} from './ttsConfig.js';
 import {
   resolveIpaOnly,
   resolveTranslation,
@@ -193,6 +198,10 @@ async function ensureWorkspace(ownerId) {
     theme: 'dark',
     currentLanguage: 'da',
     voices: { ...DEFAULT_VOICES },
+    playbackSpeeds: {
+      da: [...DEFAULT_PLAYBACK_SPEEDS.da],
+      en: [...DEFAULT_PLAYBACK_SPEEDS.en]
+    },
     chats: [],
     messages: {},
     memories: {
@@ -353,10 +362,22 @@ app.get('/api/workspace', requireAuth, async (req, res, next) => {
 
 app.put('/api/workspace', requireAuth, async (req, res, next) => {
   try {
-    const allowed = ['theme', 'currentLanguage', 'voices', 'chats', 'messages', 'memories', 'quota', 'activeChatId'];
+    const allowed = [
+      'theme',
+      'currentLanguage',
+      'voices',
+      'playbackSpeeds',
+      'chats',
+      'messages',
+      'memories',
+      'quota',
+      'activeChatId'
+    ];
     const update = {};
     for (const key of allowed) {
-      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) update[key] = req.body[key];
+      if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) {
+        update[key] = key === 'playbackSpeeds' ? normalizePlaybackSpeeds(req.body[key]) : req.body[key];
+      }
     }
     update.updatedAt = new Date();
     await getDatabase().collection('workspaces').updateOne(
@@ -491,7 +512,7 @@ app.get('/api/tts', requireAuth, async (req, res) => {
 
   const language = req.query.lang === 'en' ? 'en' : 'da';
   const rawSpeed = Number.parseFloat(req.query.speed ?? '1');
-  const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1.4, rawSpeed)) : 1;
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1.5, rawSpeed)) : 1;
   const voice = typeof req.query.voice === 'string' ? req.query.voice : null;
 
   if (voice && !isValidVoice(language, voice)) {

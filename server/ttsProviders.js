@@ -235,14 +235,14 @@ export function escapeSsmlText(text) {
 
 export function formatSsmlRate(speed) {
   const parsed = Number.parseFloat(speed);
-  const clamped = Number.isFinite(parsed) ? Math.max(0.4, Math.min(1.4, parsed)) : 1;
+  const clamped = Number.isFinite(parsed) ? Math.max(0.4, Math.min(1.5, parsed)) : 1;
   const pct = Math.round((clamped - 1) * 100);
   return `${pct >= 0 ? '+' : ''}${pct}%`;
 }
 
 export function formatEdgeWsRate(speed) {
   const parsed = Number.parseFloat(speed);
-  const clamped = Number.isFinite(parsed) ? Math.max(0.4, Math.min(1.4, parsed)) : 1;
+  const clamped = Number.isFinite(parsed) ? Math.max(0.4, Math.min(1.5, parsed)) : 1;
   return String(Number(clamped.toFixed(2)));
 }
 

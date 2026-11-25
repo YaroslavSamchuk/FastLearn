@@ -1,8 +1,16 @@
 // language: TypeScript (React), file: src/components/SettingsModal.tsx, target: Web / Mobile Browser
 import React, { useEffect, useState } from 'react';
-import { User, Language, UserMemories, VoiceMap } from '../types.ts';
-import { X, LogOut, Globe, Brain, Plus, Trash2, Check, Volume2 } from 'lucide-react';
-import { TTS_VOICES, resolveVoice } from '../../server/ttsConfig.js';
+import { User, Language, UserMemories, VoiceMap, PlaybackSpeedMap, PlaybackSpeedsTuple } from '../types.ts';
+import { X, LogOut, Globe, Brain, Plus, Trash2, Check, Volume2, Minus, RotateCcw } from 'lucide-react';
+import {
+  DEFAULT_PLAYBACK_SPEEDS,
+  MAX_PLAYBACK_SPEED,
+  MIN_PLAYBACK_SPEED,
+  PLAYBACK_SPEED_STEP,
+  TTS_VOICES,
+  normalizeSpeedValue,
+  resolveVoice
+} from '../../server/ttsConfig.js';
 import { haptic } from '../utils/haptics.ts';
 import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
@@ -17,6 +25,8 @@ interface SettingsModalProps {
   onUpdateLanguage: (lang: Language) => void;
   voices: VoiceMap;
   onUpdateVoice: (lang: Language, voice: string) => void;
+  playbackSpeeds: PlaybackSpeedMap;
+  onUpdatePlaybackSpeeds: (lang: Language, speeds: PlaybackSpeedsTuple) => void;
   onPreviewVoice?: (lang: Language, voice: string) => void;
   isPreviewPlaying?: boolean;
   onLogout: () => void;
@@ -40,6 +50,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateLanguage,
   voices,
   onUpdateVoice,
+  playbackSpeeds,
+  onUpdatePlaybackSpeeds,
   onPreviewVoice,
   isPreviewPlaying = false,
   onLogout,
@@ -75,6 +87,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const currentFactList = memories[memoryScope] ?? [];
   const voiceOptions = TTS_VOICES[currentLanguage];
   const activeVoice = resolveVoice(currentLanguage, voices[currentLanguage]);
+  const defaultSpeeds = DEFAULT_PLAYBACK_SPEEDS[currentLanguage];
+  const activeSpeeds: PlaybackSpeedsTuple = playbackSpeeds[currentLanguage] ?? defaultSpeeds;
+  const hasCustomSpeeds = activeSpeeds.some((speed, index) => speed !== defaultSpeeds[index]);
+
+  const handleSpeedSlotChange = (index: 0 | 1 | 2, nextRaw: number) => {
+    const nextValue = normalizeSpeedValue(nextRaw, activeSpeeds[index]);
+    if (nextValue === activeSpeeds[index]) return;
+    const updated: PlaybackSpeedsTuple = [...activeSpeeds] as PlaybackSpeedsTuple;
+    updated[index] = nextValue;
+    onUpdatePlaybackSpeeds(currentLanguage, updated);
+  };
+
+  const handleResetSpeeds = () => {
+    if (!hasCustomSpeeds) return;
+    haptic.tap();
+    onUpdatePlaybackSpeeds(currentLanguage, [...defaultSpeeds] as PlaybackSpeedsTuple);
+  };
 
   const handleAddFact = (event: React.FormEvent) => {
     event.preventDefault();
@@ -270,6 +299,100 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             />
                           )}
                         </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-4 border-t border-stone-200/70 pt-3.5 dark:border-white/[0.07]">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h4 className="text-[12px] font-medium text-stone-900 dark:text-stone-100">
+                        Швидкості озвучки · {currentLanguage === 'da' ? 'Dansk' : 'English'}
+                      </h4>
+                      <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-500">
+                        Від {MAX_PLAYBACK_SPEED}× до {MIN_PLAYBACK_SPEED}× · перша вмикається одразу
+                      </p>
+                    </div>
+                    {hasCustomSpeeds && (
+                      <button
+                        type="button"
+                        onClick={handleResetSpeeds}
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/[0.06] dark:hover:text-stone-100"
+                        aria-label="Скинути швидкості до стандартних"
+                      >
+                        <RotateCcw className="h-3 w-3" strokeWidth={1.75} />
+                        <span>Скинути</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mt-2.5 space-y-2">
+                    {([0, 1, 2] as const).map((slotIndex) => {
+                      const speed = activeSpeeds[slotIndex];
+                      const slotLabel = slotIndex === 0 ? 'Швидкість 1' : slotIndex === 1 ? 'Швидкість 2' : 'Швидкість 3';
+                      const canDecrease = speed > MIN_PLAYBACK_SPEED + 1e-6;
+                      const canIncrease = speed < MAX_PLAYBACK_SPEED - 1e-6;
+                      return (
+                        <div
+                          key={slotIndex}
+                          className="rounded-lg border border-stone-200 px-3 py-2 dark:border-white/[0.08]"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 text-[12px] font-medium text-stone-800 dark:text-stone-200">
+                              <span>{slotLabel}</span>
+                              {slotIndex === 0 && (
+                                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300">
+                                  Авто
+                                </span>
+                              )}
+                            </span>
+                            <span className="font-mono text-[12px] font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                              {speed}×
+                            </span>
+                          </div>
+
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={!canDecrease}
+                              onClick={() => {
+                                haptic.tap();
+                                handleSpeedSlotChange(slotIndex, speed - PLAYBACK_SPEED_STEP);
+                              }}
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-stone-200 text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-35 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.06]"
+                              aria-label={`Зменшити ${slotLabel}`}
+                            >
+                              <Minus className="h-3.5 w-3.5" strokeWidth={2} />
+                            </button>
+
+                            <input
+                              type="range"
+                              min={MIN_PLAYBACK_SPEED}
+                              max={MAX_PLAYBACK_SPEED}
+                              step={PLAYBACK_SPEED_STEP}
+                              value={speed}
+                              onChange={(event) =>
+                                handleSpeedSlotChange(slotIndex, Number.parseFloat(event.target.value))
+                              }
+                              className="h-1.5 w-full cursor-pointer accent-amber-600 dark:accent-amber-400"
+                              aria-label={slotLabel}
+                            />
+
+                            <button
+                              type="button"
+                              disabled={!canIncrease}
+                              onClick={() => {
+                                haptic.tap();
+                                handleSpeedSlotChange(slotIndex, speed + PLAYBACK_SPEED_STEP);
+                              }}
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-stone-200 text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-35 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.06]"
+                              aria-label={`Збільшити ${slotLabel}`}
+                            >
+                              <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                            </button>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>

@@ -1,7 +1,12 @@
 // language: TypeScript, file: src/lib/data.ts, target: Web
 
 import { AppData, Chat, Language, Message, Quota, UserMemories, WordVaultItem } from '../types.ts';
-import { DEFAULT_VOICES, normalizeVoices } from '../../server/ttsConfig.js';
+import {
+  DEFAULT_PLAYBACK_SPEEDS,
+  DEFAULT_VOICES,
+  normalizePlaybackSpeeds,
+  normalizeVoices
+} from '../../server/ttsConfig.js';
 import { log } from './logger';
 import { readJson, storageKeys, writeJson } from './storage';
 
@@ -111,7 +116,11 @@ export function createDefaultData(ownerId: string | null = null): AppData {
     },
     quota: normalizeQuota(),
     activeChatId: { da: da._id, en: en._id },
-    voices: { ...DEFAULT_VOICES }
+    voices: { ...DEFAULT_VOICES },
+    playbackSpeeds: {
+      da: [...DEFAULT_PLAYBACK_SPEEDS.da],
+      en: [...DEFAULT_PLAYBACK_SPEEDS.en]
+    }
   };
 }
 
@@ -242,7 +251,8 @@ function normalizeData(raw: Partial<AppData>): AppData {
     memories,
     quota: normalizeQuota(raw.quota),
     activeChatId,
-    voices: normalizeVoices(raw.voices)
+    voices: normalizeVoices(raw.voices),
+    playbackSpeeds: normalizePlaybackSpeeds(raw.playbackSpeeds)
   };
 }
 

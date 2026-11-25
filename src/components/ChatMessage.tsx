@@ -8,6 +8,7 @@ interface ChatMessageProps {
   message: Message;
   onPlayFull: (text: string, speed?: number) => void;
   playbackSpeed?: number;
+  playbackSpeeds?: readonly number[];
   onPlaybackSpeedChange?: (speed: number) => void;
   onStopAudio?: () => void;
   isStreaming?: boolean;
@@ -20,6 +21,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
   onPlayFull,
   playbackSpeed = 1,
+  playbackSpeeds,
   onPlaybackSpeedChange = () => {},
   onStopAudio,
   isStreaming = false,
@@ -72,6 +74,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               isUser={isUser}
               isPlaying={isCurrentPlaying}
               speed={playbackSpeed}
+              speeds={playbackSpeeds}
               onPlay={(speed) => onPlayFull(message.content, speed)}
               onStop={onStopAudio}
               onSpeedChange={onPlaybackSpeedChange}

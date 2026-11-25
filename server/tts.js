@@ -40,7 +40,7 @@ function markEdgeFailure() {
 export function mapSpeedToRate(speed) {
   const value = Number.parseFloat(speed);
   if (!Number.isFinite(value)) return 1;
-  return Math.max(0.4, Math.min(1.4, value));
+  return Math.max(0.4, Math.min(1.5, value));
 }
 
 function collectStream(stream, timeoutMs) {
@@ -244,7 +244,7 @@ function writeCache(key, value) {
 export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceName = null) {
   const cleanText = text.trim();
   const parsedSpeed = Number.parseFloat(speed);
-  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.4, parsedSpeed)) : 1;
+  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.5, parsedSpeed)) : 1;
   const voice = resolveVoice(language, voiceName);
   const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
   const cached = readCache(cacheKey);
@@ -270,7 +270,7 @@ export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceNa
 export async function synthesizeSpeechStream(text, language = 'da', speed = 1, voiceName = null) {
   const cleanText = text.trim();
   const parsedSpeed = Number.parseFloat(speed);
-  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.4, parsedSpeed)) : 1;
+  const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.5, parsedSpeed)) : 1;
   const voice = resolveVoice(language, voiceName);
   const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
   const cached = readCache(cacheKey);
@@ -324,7 +324,7 @@ export async function synthesizeSpeechBatch(text, language = 'da', speeds = [1, 
       (Array.isArray(speeds) ? speeds : [1, 0.7, 0.5])
         .map((item) => {
           const val = Number.parseFloat(item);
-          return Number.isFinite(val) ? Math.max(0.4, Math.min(1.4, val)) : 1;
+          return Number.isFinite(val) ? Math.max(0.4, Math.min(1.5, val)) : 1;
         })
         .slice(0, 3)
     )

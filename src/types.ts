@@ -1,5 +1,7 @@
 export type Language = 'da' | 'en';
 export type VoiceMap = Record<Language, string>;
+export type PlaybackSpeedsTuple = [number, number, number];
+export type PlaybackSpeedMap = Record<Language, PlaybackSpeedsTuple>;
 
 export interface UserMemories {
   global: string[];
@@ -64,6 +66,7 @@ export interface AppData {
   quota: Quota;
   activeChatId: Record<Language, string | null>;
   voices: VoiceMap;
+  playbackSpeeds: PlaybackSpeedMap;
 }
 
 export interface SelectionData {

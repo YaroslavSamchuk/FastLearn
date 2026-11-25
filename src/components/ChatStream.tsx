@@ -10,6 +10,7 @@ interface ChatStreamProps {
   language: Language;
   onPlayFull: (text: string, speed?: number) => void;
   playbackSpeed: number;
+  playbackSpeeds?: readonly number[];
   onPlaybackSpeedChange: (speed: number) => void;
   onStopAudio: () => void;
   streamingContent?: string;
@@ -69,6 +70,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   language,
   onPlayFull,
   playbackSpeed,
+  playbackSpeeds,
   onPlaybackSpeedChange,
   onStopAudio,
   streamingContent,
@@ -176,6 +178,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 message={message}
                 onPlayFull={onPlayFull}
                 playbackSpeed={playbackSpeed}
+                playbackSpeeds={playbackSpeeds}
                 onPlaybackSpeedChange={onPlaybackSpeedChange}
                 onStopAudio={onStopAudio}
                 isPlaying={isPlaying}
@@ -195,6 +198,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 }}
                 onPlayFull={onPlayFull}
                 playbackSpeed={playbackSpeed}
+                playbackSpeeds={playbackSpeeds}
                 onPlaybackSpeedChange={onPlaybackSpeedChange}
                 isPlaying={false}
                 isStreaming

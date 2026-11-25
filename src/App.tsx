@@ -1,6 +1,15 @@
 // language: TypeScript (React), file: src/App.tsx, target: Web / Mobile Browser
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Chat, Language, MemoryToolEvent, Message, Quota, User, UserMemories } from './types.ts';
+import {
+  Chat,
+  Language,
+  MemoryToolEvent,
+  Message,
+  PlaybackSpeedsTuple,
+  Quota,
+  User,
+  UserMemories
+} from './types.ts';
 import { Header } from './components/Header.tsx';
 import { BurgerDrawer } from './components/BurgerDrawer.tsx';
 import { SettingsModal } from './components/SettingsModal.tsx';
@@ -19,6 +28,7 @@ import {
   generateChatTitle,
   getSessionUser,
   getWorkspace,
+  isCacheableSpeechAudio,
   logoutSession,
   saveWorkspace,
   streamChat
@@ -37,7 +47,11 @@ import { readString, storageKeys, writeString } from './lib/storage.ts';
 import { loadSpeechAudio } from './lib/speechAudioCache.ts';
 import { SPEECH_PLAYBACK_SPEEDS, toSpeechText } from './lib/speech.ts';
 import { getCachedSpeech, saveCachedSpeech } from './lib/translationHistory.ts';
-import { normalizeVoices } from '../server/ttsConfig.js';
+import {
+  DEFAULT_PLAYBACK_SPEEDS,
+  normalizePlaybackSpeeds,
+  normalizeVoices
+} from '../server/ttsConfig.js';
 
 const VOICE_PREVIEW_TEXT: Record<Language, string> = {
   da: 'Hej, hvordan går det i dag?',
@@ -54,9 +68,17 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
-function preloadAssistantAudio(text: string, userId: string, language: Language, voice: string): void {
+function preloadAssistantAudio(
+  text: string,
+  userId: string,
+  language: Language,
+  voice: string,
+  speeds: readonly number[] = SPEECH_PLAYBACK_SPEEDS
+): void {
   const spokenText = toSpeechText(text);
   if (!spokenText) return;
+
+  const uniqueSpeeds = Array.from(new Set(speeds.length > 0 ? speeds : SPEECH_PLAYBACK_SPEEDS));
 
   const preloadSpeed = async (speed: number) => {
     const cachedAudio = await getCachedSpeech(userId, language, text, speed, voice).catch((error: unknown) => {
@@ -75,10 +97,12 @@ function preloadAssistantAudio(text: string, userId: string, language: Language,
       () => fetchSpeechAudio(spokenText, language, speed, undefined, voice || undefined),
       voice
     );
-    await saveCachedSpeech(userId, language, text, speed, audio, voice);
+    if (isCacheableSpeechAudio(audio)) {
+      await saveCachedSpeech(userId, language, text, speed, audio, voice);
+    }
   };
 
-  const [primarySpeed, ...secondarySpeeds] = SPEECH_PLAYBACK_SPEEDS;
+  const [primarySpeed, ...secondarySpeeds] = uniqueSpeeds;
   void preloadSpeed(primarySpeed)
     .then(() => Promise.all(secondarySpeeds.map(preloadSpeed)))
     .then(() => {
@@ -130,8 +154,15 @@ const AppContent: React.FC = () => {
   const { toasts, showToast, dismissToast } = useToast();
 
   const currentVoice = data.voices[currentLanguage];
+  const currentSpeeds = data.playbackSpeeds[currentLanguage] ?? DEFAULT_PLAYBACK_SPEEDS[currentLanguage];
   const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage, user?.id ?? '', currentVoice);
   const { selection, clearSelection } = useWordSelection();
+
+  useEffect(() => {
+    if (!currentSpeeds.includes(playbackSpeed)) {
+      setPlaybackSpeed(currentSpeeds[0] ?? 1);
+    }
+  }, [currentLanguage, currentSpeeds, playbackSpeed]);
 
   const currentChats = useMemo(
     () =>
@@ -162,6 +193,7 @@ const AppContent: React.FC = () => {
         theme,
         currentLanguage,
         voices: data.voices,
+        playbackSpeeds: data.playbackSpeeds,
         chats: data.chats,
         messages: data.messages,
         memories: data.memories,
@@ -254,7 +286,8 @@ const AppContent: React.FC = () => {
           memories,
           quota,
           activeChatId: activeChatIdValue,
-          voices: normalizeVoices(workspace.voices)
+          voices: normalizeVoices(workspace.voices),
+          playbackSpeeds: normalizePlaybackSpeeds(workspace.playbackSpeeds)
         });
         setCurrentLanguage(workspace.currentLanguage === 'en' ? 'en' : 'da');
         setUser({
@@ -418,8 +451,8 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     if (!selection) return;
-    handlePlayAudio(selection.text, 1, true, currentLanguage === 'da');
-  }, [selection?.id, handlePlayAudio, currentLanguage]);
+    handlePlayAudio(selection.text, currentSpeeds[0] ?? 1, true, currentLanguage === 'da');
+  }, [selection?.id, handlePlayAudio, currentLanguage, currentSpeeds]);
 
   const handleSelectLanguage = (language: Language) => {
     if (language === currentLanguage) return;
@@ -441,6 +474,14 @@ const AppContent: React.FC = () => {
       voices: { ...previous.voices, [language]: voice }
     }));
     log.info('audio', 'Practice voice changed', { language, voice });
+  };
+
+  const handleUpdatePlaybackSpeeds = (language: Language, speeds: PlaybackSpeedsTuple) => {
+    setData((previous) => ({
+      ...previous,
+      playbackSpeeds: { ...previous.playbackSpeeds, [language]: speeds }
+    }));
+    log.info('audio', 'Practice playback speeds changed', { language, speeds });
   };
 
   const handlePreviewVoice = (language: Language, voice: string) => {
@@ -699,7 +740,7 @@ const AppContent: React.FC = () => {
       });
 
       const assistantMessage = createAssistantMessage(chatId, result.text);
-      preloadAssistantAudio(result.text, user.id, currentLanguage, currentVoice);
+      preloadAssistantAudio(result.text, user.id, currentLanguage, currentVoice, currentSpeeds);
       setData((previous) => ({
         ...previous,
         messages: {
@@ -870,6 +911,8 @@ const AppContent: React.FC = () => {
         onUpdateLanguage={handleSelectLanguage}
         voices={data.voices}
         onUpdateVoice={handleUpdateVoice}
+        playbackSpeeds={data.playbackSpeeds}
+        onUpdatePlaybackSpeeds={handleUpdatePlaybackSpeeds}
         onPreviewVoice={handlePreviewVoice}
         isPreviewPlaying={
           isPlaying &&
@@ -886,6 +929,7 @@ const AppContent: React.FC = () => {
         language={currentLanguage}
         onPlayFull={handlePlayAudio}
         playbackSpeed={playbackSpeed}
+        playbackSpeeds={currentSpeeds}
         onPlaybackSpeedChange={handlePlaybackSpeedChange}
         onStopAudio={handleStopAudio}
         streamingContent={activeChatId === streamingChatId ? streamingContent : ''}
@@ -901,6 +945,7 @@ const AppContent: React.FC = () => {
           selection={selection}
           language={currentLanguage}
           voice={currentVoice}
+          speeds={currentSpeeds}
           userId={user?.id ?? ''}
           onClose={clearSelection}
           onPlayAudio={(speed) =>

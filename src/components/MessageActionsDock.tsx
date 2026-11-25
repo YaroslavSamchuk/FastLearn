@@ -11,6 +11,7 @@ interface MessageActionsDockProps {
   isUser: boolean;
   isPlaying?: boolean;
   speed: number;
+  speeds?: readonly number[];
   onPlay: (speed?: number) => void;
   onStop?: () => void;
   onSpeedChange: (speed: number) => void;
@@ -22,6 +23,7 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
   isUser,
   isPlaying = false,
   speed,
+  speeds = SPEECH_PLAYBACK_SPEEDS,
   onPlay,
   onStop,
   onSpeedChange,
@@ -46,8 +48,9 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
 
   const handleToggleSpeed = () => {
     haptic.tap();
-    const currentIndex = SPEECH_PLAYBACK_SPEEDS.findIndex((candidate) => candidate === speed);
-    const nextSpeed = SPEECH_PLAYBACK_SPEEDS[(currentIndex + 1) % SPEECH_PLAYBACK_SPEEDS.length] ?? 1;
+    const cycle = Array.from(new Set(speeds.length > 0 ? speeds : SPEECH_PLAYBACK_SPEEDS));
+    const currentIndex = cycle.findIndex((candidate) => candidate === speed);
+    const nextSpeed = cycle[(currentIndex + 1) % cycle.length] ?? cycle[0] ?? 1;
     onSpeedChange(nextSpeed);
     log.debug('audio', 'Playback speed changed', { speed: nextSpeed });
   };

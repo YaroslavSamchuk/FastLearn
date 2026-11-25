@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchSpeechAudio, isCacheableSpeechAudio } from '../lib/api.ts';
 import {
   addDanishPhrasePauses,
-  clampPlaybackSpeed,
+  normalizeCustomPlaybackSpeed,
   toSpeechText
 } from '../lib/speech.ts';
 import { log } from '../lib/logger.ts';
@@ -118,7 +118,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
 
       stop();
       const requestId = requestRef.current;
-      const safeSpeed = clampPlaybackSpeed(speed);
+      const safeSpeed = normalizeCustomPlaybackSpeed(speed);
       const activeVoice = overrideVoice ?? voice;
       const cacheKey = `${userId}:${language}:${activeVoice}:${safeSpeed}:${spokenText}`;
       const historyKeyText = addPhrasePauses ? spokenText : text;

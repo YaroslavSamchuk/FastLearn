@@ -6,7 +6,14 @@ import {
   type MemoryToolEvent
 } from '../server/memory.js';
 import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from '../server/modelConfig.js';
-import { DEFAULT_VOICES, isValidVoice, normalizeVoices, resolveVoice } from '../server/ttsConfig.js';
+import {
+  DEFAULT_PLAYBACK_SPEEDS,
+  DEFAULT_VOICES,
+  isValidVoice,
+  normalizePlaybackSpeeds,
+  normalizeVoices,
+  resolveVoice
+} from '../server/ttsConfig.js';
 import { synthesizeEdgeSpeech, synthesizeEdgeSpeechBatch } from './edgeTts';
 
 export interface Env {
@@ -352,6 +359,7 @@ interface Workspace {
   theme: 'dark' | 'light';
   currentLanguage: 'da' | 'en';
   voices?: Record<'da' | 'en', string>;
+  playbackSpeeds?: Record<'da' | 'en', [number, number, number]>;
   chats: unknown[];
   messages: Record<string, unknown[]>;
   memories: UserMemories;
@@ -436,6 +444,10 @@ function emptyWorkspace(ownerId: string): Workspace {
     theme: 'dark',
     currentLanguage: 'da',
     voices: { ...DEFAULT_VOICES },
+    playbackSpeeds: {
+      da: [...DEFAULT_PLAYBACK_SPEEDS.da],
+      en: [...DEFAULT_PLAYBACK_SPEEDS.en]
+    },
     chats: [],
     messages: {},
     memories: {
@@ -1509,7 +1521,7 @@ async function handleTts(url: URL, id: string, ctx?: ExecutionContext): Promise<
 
   const language = url.searchParams.get('lang') === 'en' ? 'en' : 'da';
   const rawSpeed = Number.parseFloat(url.searchParams.get('speed') ?? '1');
-  const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1, rawSpeed)) : 1;
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1.5, rawSpeed)) : 1;
   const requestedVoice = url.searchParams.get('voice');
   if (requestedVoice && !isValidVoice(language, requestedVoice)) {
     throw new HttpError(400, 'Unknown voice for this language');
@@ -1550,7 +1562,7 @@ async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionConte
       rawSpeeds
         .map((item) => {
           const parsedSpeed = Number(item);
-          return Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1, parsedSpeed)) : 1;
+          return Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.5, parsedSpeed)) : 1;
         })
         .slice(0, 3)
     )
@@ -1948,6 +1960,9 @@ async function handleWorkspace(request: Request, env: Env, user: StoredUser): Pr
   }
   if (body.voices && typeof body.voices === 'object') {
     update.voices = normalizeVoices(body.voices);
+  }
+  if (body.playbackSpeeds && typeof body.playbackSpeeds === 'object') {
+    update.playbackSpeeds = normalizePlaybackSpeeds(body.playbackSpeeds);
   }
   if (Array.isArray(body.chats)) {
     update.chats = body.chats.slice(0, 60).flatMap((chat) => {

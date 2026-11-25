@@ -24,6 +24,7 @@ import {
   seedPrefetchedSpeechAudio
 } from '../lib/speechAudioCache.ts';
 import {
+  getEntryAudioForSpeed,
   getTranslationHistoryEntry,
   matchesEntryVoice,
   saveCachedSpeech,
@@ -34,6 +35,7 @@ interface SelectionPopoverProps {
   selection: SelectionData;
   language: Language;
   voice: string;
+  speeds?: readonly number[];
   userId: string;
   onClose: () => void;
   onPlayAudio: (speed: number) => void;
@@ -48,6 +50,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
   selection,
   language,
   voice,
+  speeds = PHRASE_PLAYBACK_SPEEDS,
   userId,
   onClose,
   onPlayAudio,
@@ -57,6 +60,8 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
   currentSpeed
 }) => {
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const phraseSpeeds = Array.from(new Set(speeds.length > 0 ? speeds : PHRASE_PLAYBACK_SPEEDS));
+  const phraseSpeedsKey = phraseSpeeds.join(',');
   const [data, setData] = useState<TranscribeResult | null>(null);
   const [loadingTranslation, setLoadingTranslation] = useState(true);
   const [loadingPronunciation, setLoadingPronunciation] = useState(true);
@@ -100,7 +105,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       const historyAudioText = language === 'da' && speechText ? speechText : selection.text;
 
       const memoryReadySpeeds = speechText
-        ? PHRASE_PLAYBACK_SPEEDS.filter((speed) =>
+        ? phraseSpeeds.filter((speed) =>
             Boolean(getPrefetchedSpeechAudio(language, speechText, speed, voice))
           )
         : [];
@@ -187,21 +192,16 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
 
       if (speechText) {
         const validAudioEntry = matchesEntryVoice(audioEntry, language, voice) ? audioEntry : null;
-        const storedSpeedMap: Record<number, Blob | undefined> = {
-          1: validAudioEntry?.normalAudio,
-          0.7: validAudioEntry?.slowAudio07,
-          0.5: validAudioEntry?.slowAudio05
-        };
         const missingSpeeds: number[] = [];
 
-        for (const speed of PHRASE_PLAYBACK_SPEEDS) {
+        for (const speed of phraseSpeeds) {
           if (getPrefetchedSpeechAudio(language, speechText, speed, voice)) {
             setReadyPhraseSpeeds((previous) =>
               previous.includes(speed) ? previous : [...previous, speed]
             );
             continue;
           }
-          const storedAudio = storedSpeedMap[speed];
+          const storedAudio = getEntryAudioForSpeed(validAudioEntry, speed);
           if (storedAudio) {
             seedPrefetchedSpeechAudio(language, speechText, speed, storedAudio, voice);
             setReadyPhraseSpeeds((previous) =>
@@ -270,7 +270,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       active = false;
       controller.abort();
     };
-  }, [selection.text, language, voice, userId, attempt]);
+  }, [selection.text, language, voice, phraseSpeedsKey, userId, attempt]);
 
   useEffect(() => {
     const handleOutsidePointerDown = (event: PointerEvent) => {
@@ -435,8 +435,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 border-t border-stone-100 px-4 pt-3 pb-4 dark:border-white/[0.07]">
-          {PHRASE_PLAYBACK_SPEEDS.map((speed) => {
+        <div
+          className="grid gap-2 border-t border-stone-100 px-4 pt-3 pb-4 dark:border-white/[0.07]"
+          style={{ gridTemplateColumns: `repeat(${phraseSpeeds.length}, minmax(0, 1fr))` }}
+        >
+          {phraseSpeeds.map((speed) => {
             const active = isCurrentPlaying && currentSpeed === speed;
             return (
               <button
