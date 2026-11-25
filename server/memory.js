@@ -1,6 +1,6 @@
+import { MAX_FACT_CHARS, MAX_FACTS_PER_SCOPE } from './modelConfig.js';
+
 const SCOPES = new Set(['global', 'da', 'en']);
-const MAX_FACT_CHARS = 200;
-const MAX_FACTS_PER_SCOPE = 40;
 
 function cleanString(value, maxChars) {
   return typeof value === 'string' ? value.trim().slice(0, maxChars) : '';

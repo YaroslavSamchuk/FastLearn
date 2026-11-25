@@ -7,6 +7,7 @@ import {
   normalizePlaybackSpeeds,
   normalizeVoices
 } from '../../server/ttsConfig.js';
+import { MAX_FACTS_PER_SCOPE } from '../../server/modelConfig.js';
 import { log } from './logger';
 import { readJson, storageKeys, writeJson } from './storage';
 
@@ -130,7 +131,7 @@ function stringList(value: unknown): string[] {
     .filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim())
     .filter(Boolean)
-    .slice(0, 40);
+    .slice(0, MAX_FACTS_PER_SCOPE);
 }
 
 function normalizeChat(value: unknown): Chat | null {

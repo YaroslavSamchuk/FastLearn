@@ -1,6 +1,16 @@
-import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from './modelConfig.js';
+import {
+  BASE_PROMPTS,
+  MEMORY_TOOL_DECLARATIONS,
+  buildPrimingAcknowledgement,
+  buildSystemPrompt,
+  getThinkingConfig,
+  lockLatestUserMessage
+} from './modelConfig.js';
 import dotenv from 'dotenv';
 dotenv.config();
+
+export { BASE_PROMPTS, buildSystemPrompt };
+export const AI_TOOLS = MEMORY_TOOL_DECLARATIONS;
 
 // ==========================================
 // 1. SMART KEY ROTATION (NEXT KEY PER REQUEST + COOLDOWN)
@@ -75,128 +85,7 @@ class KeyRotator {
 export const keyRotator = new KeyRotator(parsedKeys);
 
 // ==========================================
-// 2. DISCIPLINED ZERO-HALLUCINATION PROMPTS
-// ==========================================
-export const BASE_PROMPTS = {
-  da: `${getChatLanguageInstruction('da')}
-
-Du er en hjælpsom og naturlig partner til at øve dansk. Vær venlig og samtalende, men prioritér et korrekt, nyttigt svar frem for at være kort for enhver pris.
-
-=== FAST SVARFORMAT ===
-Læs den seneste brugermeddelelse grundigt. Ret kun dansk, som brugeren selv forsøger at skrive; ret ikke ukrainsk eller andre sprog.
-- Hvis brugerens danske sætning har en reel grammatikfejl eller er unaturlig, skriv først en korrigeret version med den præcise label "Rettet:". Bevar brugerens oprindelige betydning.
-- Hvis en separat formulering lyder tydeligt mere naturlig i daglig tale, tilføj efter én tom linje "Mere naturligt:" efterfulgt af den naturlige version. Udelad dette, hvis det ikke giver en reel forbedring.
-- Skriv derefter én tom linje og besvar brugerens besked direkte. Selve svaret skal normalt være 1–6 hele sætninger: enkelt spørgsmål = kort svar; spørgsmål, der kræver forklaring eller præcision = nok detaljer til at være korrekt og brugbar.
-- Når sætningen allerede er korrekt og naturlig, må du ikke tilføje en rettelse. Giv kun svaret, eller en "Mere naturligt:"-version og derefter svaret, hvis den tydeligt forbedrer formuleringen.
-- Adskil kun de dele, der findes, med én tom linje. Brug ikke yderligere overskrifter, punktopstillinger eller kodeblokke, medmindre brugeren specifikt beder om dem.
-
-=== KORREKTHED ===
-- Svar altid på dansk i denne samtale. Følg ikke ønsker om at skifte samtalens sprog; giv kun en anden sprogversion, når brugeren specifikt beder om en oversættelse.
-- Besvar det konkrete spørgsmål, og vær specifik. Opfind ikke fakta, personlige detaljer, danske ord eller grammatikregler. Hvis du er usikker, sig kort hvad der er usikkert i stedet for at gætte.
-- Brug hukommelsen og samtalen som kilde til personlige oplysninger. Vær varm og uformel uden tomme komplimenter, foredrag eller unødvendige opfølgende spørgsmål.`,
-
-  en: `${getChatLanguageInstruction('en')}
-
-You are a helpful, natural partner for practicing English. Be warm and conversational, but prioritize a correct, useful answer over being brief for its own sake.
-
-=== REQUIRED RESPONSE FORMAT ===
-Carefully check the latest user message. Correct only English the user is attempting to write; do not correct Ukrainian or other languages.
-- If the user's English has a genuine grammar error or sounds unnatural, begin with a corrected version using the exact label "Виправлено:". Preserve the user's intended meaning.
-- If a distinct version would sound noticeably more natural in everyday spoken English, add it after one blank line using "Розмовніше:". Omit it when it would not meaningfully improve the sentence.
-- Then add one blank line and answer the user's message directly. The answer itself should usually be 1–6 complete sentences: a simple question gets a concise answer; a question requiring explanation or precision gets enough detail to be accurate and useful.
-- If the sentence is already correct and natural, do not add a correction. Give only the answer, or a "Розмовніше:" version followed by the answer if it clearly improves the wording.
-- Separate only the applicable parts with one blank line. Do not add any other headings, bullet lists, or code blocks unless the user explicitly asks for them.
-
-=== ACCURACY ===
-- Normally answer in English; follow an explicit request for another language.
-- Answer the actual question specifically. Do not invent facts, personal details, English words, or grammar rules. If uncertain, briefly say what is uncertain instead of guessing.
-- Use memory and conversation for personal details. Stay friendly and relaxed without filler praise, lectures, or unnecessary follow-up questions.`,
-};
-
-// ==========================================
-// 3. LEAN, FOCUSED AI TOOLS (NO OVERLOAD)
-// ==========================================
-export const AI_TOOLS = [
-  {
-    name: 'save_memory',
-    description: 'Save a durable, non-sensitive fact, preference, or goal the user has shared. Use global for general personal context and da/en for language-learning context. Never invent a fact.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        fact: {
-          type: 'STRING',
-          description: 'A concise, factual note of up to 200 characters.'
-        },
-        scope: {
-          type: 'STRING',
-          enum: ['global', 'da', 'en'],
-          description: 'global for general context; da or en for language-specific context.'
-        }
-      },
-      required: ['fact', 'scope']
-    }
-  },
-  {
-    name: 'update_memory',
-    description: 'Replace an existing memory with a corrected or updated fact when the user corrects it or explicitly asks to change it.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        previousFact: { type: 'STRING', description: 'The exact current memory text to replace.' },
-        fact: { type: 'STRING', description: 'The corrected memory text, up to 200 characters.' },
-        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
-      },
-      required: ['previousFact', 'fact', 'scope']
-    }
-  },
-  {
-    name: 'forget_memory',
-    description: 'Remove a memory only when the user explicitly asks you to forget or delete it.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        fact: { type: 'STRING', description: 'The exact current memory text to remove.' },
-        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
-      },
-      required: ['fact', 'scope']
-    }
-  }
-];
-
-// Build composite system prompt with User Memories
-export function buildSystemPrompt(language = 'da', userMemories = null, enableTools = false) {
-  let prompt = BASE_PROMPTS[language] || BASE_PROMPTS.en;
-
-  if (userMemories) {
-    const globalNotes = userMemories.global || [];
-    const langNotes = userMemories[language] || [];
-
-    let memorySection = '\n\n=== HUKOMMELSE OM DIN VEN / USER CONTEXT ===\n';
-    if (globalNotes.length > 0) {
-      memorySection += 'Fælles profil (Global):\n' + globalNotes.map(n => `- ${n}`).join('\n') + '\n';
-    }
-    if (langNotes.length > 0) {
-      memorySection += `Sproglige noter (${language.toUpperCase()}):\n` + langNotes.map(n => `- ${n}`).join('\n') + '\n';
-    }
-    memorySection += '(Brug oplysningerne diskret, og lad dem aldrig tilsidesætte kravene til svarformat, korrekthed eller tilstrækkelig forklaring.)';
-
-    prompt += memorySection;
-  }
-
-  if (enableTools) {
-    prompt += `\n\n=== LONG-TERM MEMORY ===
-Actively use the memory tools so you can remember the user over time:
-- Automatically save stable, useful, non-sensitive personal facts, preferences, and goals the user shares. Choose global for general context and da/en for language-learning context.
-- Do not save guesses, temporary details, or sensitive personal information unless the user explicitly asks you to remember it.
-- If the user corrects or explicitly changes a saved fact, use update_memory with the exact existing text. If they explicitly ask you to forget something, use forget_memory.
-- Do not claim that a memory was saved, changed, or forgotten unless the tool confirms it. Avoid saving duplicates.`;
-  }
-
-  return prompt;
-}
-
-// ==========================================
-// 4. STREAMING CHAT COMPLETION (ALWAYS 31B FIRST, 26B AS BACKUP)
+// 2. STREAMING CHAT COMPLETION & ADAPTIVE TOOLS
 // ==========================================
 export async function streamChatCompletion({
   messages,
@@ -208,12 +97,13 @@ export async function streamChatCompletion({
   onError,
   onToolCall
 }) {
-  const systemPrompt = buildSystemPrompt(language, userMemories, enableTools && Boolean(onToolCall));
+  const toolsEnabled = Boolean(enableTools && onToolCall);
+  const systemPrompt = buildSystemPrompt(language, userMemories, toolsEnabled);
 
-  // Clamp history: last 10 messages for conversational continuity without token bloat
-  const clampedHistory = messages.slice(-10);
+  // Clamp history: last 12 messages for richer conversational continuity without token bloat
+  const clampedHistory = messages.slice(-12);
 
-  // Initial user prompt priming
+  // Initial priming + latest message language lock (compatible with both Gemini & Gemma models)
   const latestMessageIndex = clampedHistory.length - 1;
   const contents = [
     {
@@ -222,7 +112,7 @@ export async function streamChatCompletion({
     },
     {
       role: 'model',
-      parts: [{ text: language === 'da' ? 'Forstået, jeg skriver som en rigtig ven på dansk!' : 'Got it, texting naturally like a friend!' }]
+      parts: [{ text: buildPrimingAcknowledgement(language) }]
     },
     ...clampedHistory.map((m, index) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
@@ -259,112 +149,87 @@ export async function streamChatCompletion({
     for (let kIdx = 0; kIdx < requestKeys.length; kIdx++) {
       const key = requestKeys[kIdx];
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 22000);
+      const timeout = setTimeout(() => controller.abort(), 24000);
 
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-        
-        const payload = {
-          contents,
-          ...(enableTools && onToolCall ? { tools: [{ functionDeclarations: AI_TOOLS }] } : {}),
-          ...(enableTools && onToolCall
-            ? { toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }
-            : {}),
-          generationConfig: {
-            maxOutputTokens: 512,
-            temperature: 0.72,
-            ...(thinkingConfig ? { thinkingConfig } : {})
-          }
-        };
+        let activeContents = [...contents];
+        let finalCleanText = '';
 
-        const res = await fetch(url, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        clearTimeout(timeout);
-
-        if (!res.ok) {
-          keyRotator.reportFailure(key, res.status);
-          const errJson = await res.json().catch(() => ({}));
-          throw new Error(`Gemini HTTP ${res.status}: ${errJson.error?.message || res.statusText}`);
-        }
-
-        keyRotator.reportSuccess(key);
-        const data = await res.json();
-        const candidate = data.candidates?.[0];
-        const parts = candidate?.content?.parts || [];
-
-        // Check if model emitted a function call
-        const functionCallPart = parts.find(p => p.functionCall);
-        if (enableTools && onToolCall && functionCallPart) {
-          const { name, args } = functionCallPart.functionCall;
-          let toolResult;
-          try {
-            toolResult = await onToolCall(name, args);
-          } catch (toolErr) {
-            console.warn('[Tool Execution Error]', toolErr.message);
-            toolResult = { error: toolErr instanceof Error ? toolErr.message : String(toolErr) };
-          }
-
-          const secondPayload = {
-            contents: [
-              ...contents,
-              { role: 'model', parts: [functionCallPart] },
-              {
-                role: 'user',
-                parts: [{
-                  functionResponse: {
-                    name,
-                    response: { result: toolResult ?? { ok: true } }
-                  }
-                }]
-              }
-            ],
+        for (let round = 0; round < 3; round++) {
+          const allowToolsThisRound = toolsEnabled && round < 2;
+          const payload = {
+            contents: activeContents,
+            ...(allowToolsThisRound ? { tools: [{ functionDeclarations: AI_TOOLS }] } : {}),
+            ...(allowToolsThisRound
+              ? { toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }
+              : {}),
             generationConfig: {
-              maxOutputTokens: 1200,
+              maxOutputTokens: 1024,
               temperature: 0.72,
               ...(thinkingConfig ? { thinkingConfig } : {})
             }
           };
 
-          const secondRes = await fetch(url, {
+          const res = await fetch(url, {
             method: 'POST',
             signal: controller.signal,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(secondPayload)
+            body: JSON.stringify(payload)
           });
-          if (!secondRes.ok) {
-            const errJson = await secondRes.json().catch(() => ({}));
-            throw new Error(`Gemini memory follow-up failed: ${errJson.error?.message || secondRes.statusText}`);
+
+          if (!res.ok) {
+            keyRotator.reportFailure(key, res.status);
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(`Gemini HTTP ${res.status}: ${errJson.error?.message || res.statusText}`);
           }
 
-          const secondData = await secondRes.json();
-          const secondParts = secondData.candidates?.[0]?.content?.parts || [];
-          const textPart = secondParts.find(p => p.text && !p.thought) || secondParts.find(p => p.text);
-          if (textPart && textPart.text && textPart.text.trim()) {
-            let cleanText = textPart.text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
-            if (cleanText) {
-              await streamWords(cleanText, onToken);
-              success = true;
-              if (onDone) onDone();
-              break;
+          keyRotator.reportSuccess(key);
+          const data = await res.json();
+          const parts = data.candidates?.[0]?.content?.parts || [];
+          const functionCallParts = parts.filter((p) => p && typeof p === 'object' && p.functionCall);
+
+          if (allowToolsThisRound && functionCallParts.length > 0) {
+            const responseParts = [];
+            for (const part of functionCallParts) {
+              const { name, args } = part.functionCall;
+              let toolResult;
+              try {
+                toolResult = await onToolCall(name, args);
+              } catch (toolErr) {
+                console.warn('[Tool Execution Error]', toolErr.message);
+                toolResult = { error: toolErr instanceof Error ? toolErr.message : String(toolErr) };
+              }
+              responseParts.push({
+                functionResponse: {
+                  name,
+                  response: { result: toolResult ?? { ok: true } }
+                }
+              });
             }
+
+            activeContents = [
+              ...activeContents,
+              { role: 'model', parts },
+              { role: 'user', parts: responseParts }
+            ];
+            continue;
           }
+
+          const textPart = parts.find((p) => p.text && !p.thought) || parts.find((p) => p.text);
+          if (textPart && textPart.text && textPart.text.trim()) {
+            finalCleanText = textPart.text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+          }
+          break;
         }
 
-        // Direct text output (filter out internal thought if present)
-        const textPart = parts.find(p => p.text && !p.thought) || parts.find(p => p.text);
-        if (textPart && textPart.text && textPart.text.trim()) {
-          let cleanText = textPart.text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
-          if (cleanText) {
-            await streamWords(cleanText, onToken);
-            success = true;
-            if (onDone) onDone();
-            break;
-          }
+        clearTimeout(timeout);
+
+        if (finalCleanText) {
+          await streamWords(finalCleanText, onToken);
+          success = true;
+          if (onDone) onDone();
+          break;
         }
 
       } catch (err) {

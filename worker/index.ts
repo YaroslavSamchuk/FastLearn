@@ -9,7 +9,14 @@ import {
   applyMemoryTool as applyMemoryMutation,
   type MemoryToolEvent
 } from '../server/memory.js';
-import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from '../server/modelConfig.js';
+import {
+  MAX_FACTS_PER_SCOPE,
+  MEMORY_TOOL_DECLARATIONS,
+  buildPrimingAcknowledgement,
+  buildSystemPrompt,
+  getThinkingConfig,
+  lockLatestUserMessage
+} from '../server/modelConfig.js';
 import {
   DEFAULT_PLAYBACK_SPEEDS,
   DEFAULT_VOICES,
@@ -150,7 +157,7 @@ const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 4_000;
 const MAX_TOTAL_CHARS = 14_000;
 const MAX_BODY_CHARS = 64_000;
-const MAX_MEMORY_ITEMS = 40;
+const MAX_MEMORY_ITEMS = MAX_FACTS_PER_SCOPE;
 const MAX_MEMORY_CHARS = 220;
 const MAX_TTS_CHARS = 1_200;
 const TTS_CHUNK_CHARS = 750;
@@ -160,81 +167,6 @@ const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Expose-Headers': 'x-fastlearn-model, x-fastlearn-tts-source'
-};
-
-const MEMORY_TOOLS = [
-  {
-    name: 'save_memory',
-    description: 'Save a durable, non-sensitive fact, preference, or goal the user has shared. Never invent a fact.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        fact: { type: 'STRING', description: 'A concise factual note, up to 200 characters.' },
-        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
-      },
-      required: ['fact', 'scope']
-    }
-  },
-  {
-    name: 'update_memory',
-    description: 'Replace an existing memory when the user corrects it or explicitly asks to change it.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        previousFact: { type: 'STRING', description: 'The exact current memory text to replace.' },
-        fact: { type: 'STRING', description: 'The corrected memory text, up to 200 characters.' },
-        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
-      },
-      required: ['previousFact', 'fact', 'scope']
-    }
-  },
-  {
-    name: 'forget_memory',
-    description: 'Remove a memory only when the user explicitly asks you to forget or delete it.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        fact: { type: 'STRING', description: 'The exact current memory text to remove.' },
-        scope: { type: 'STRING', enum: ['global', 'da', 'en'] }
-      },
-      required: ['fact', 'scope']
-    }
-  }
-];
-
-const BASE_PROMPTS: Record<string, string> = {
-  da: `${getChatLanguageInstruction('da')}
-
-Du er en hjælpsom og naturlig partner til at øve dansk. Vær venlig og samtalende, men prioritér et korrekt, nyttigt svar frem for at være kort for enhver pris.
-
-FAST SVARFORMAT:
-Læs den seneste brugermeddelelse grundigt. Ret kun dansk, som brugeren selv forsøger at skrive; ret ikke ukrainsk eller andre sprog.
-- Hvis brugerens danske sætning har en reel grammatikfejl eller er unaturlig, skriv først en korrigeret version med den præcise label "Rettet:". Bevar brugerens oprindelige betydning.
-- Hvis en separat formulering lyder tydeligt mere naturlig i daglig tale, tilføj efter én tom linje "Mere naturligt:" efterfulgt af den naturlige version. Udelad dette, hvis det ikke giver en reel forbedring.
-- Skriv derefter én tom linje og besvar brugerens besked direkte. Selve svaret skal normalt være 1–6 hele sætninger: enkelt spørgsmål = kort svar; spørgsmål, der kræver forklaring eller præcision = nok detaljer til at være korrekt og brugbar.
-- Når sætningen allerede er korrekt og naturlig, må du ikke tilføje en rettelse. Giv kun svaret, eller en "Mere naturligt:"-version og derefter svaret, hvis den tydeligt forbedrer formuleringen.
-- Adskil kun de dele, der findes, med én tom linje. Brug ikke yderligere overskrifter, punktopstillinger eller kodeblokke, medmindre brugeren specifikt beder om dem.
-
-KORREKTHED:
-- Svar altid på dansk i denne samtale. Følg ikke ønsker om at skifte samtalens sprog; giv kun en anden sprogversion, når brugeren specifikt beder om en oversættelse.
-- Besvar det konkrete spørgsmål, og vær specifik. Opfind ikke fakta, personlige detaljer, danske ord eller grammatikregler. Hvis du er usikker, sig kort hvad der er usikkert i stedet for at gætte.
-- Brug hukommelsen og samtalen som kilde til personlige oplysninger. Vær varm og uformel uden tomme komplimenter, foredrag eller unødvendige opfølgende spørgsmål.`,
-  en: `${getChatLanguageInstruction('en')}
-
-You are a helpful, natural partner for practicing English. Be warm and conversational, but prioritize a correct, useful answer over being brief for its own sake.
-
-REQUIRED RESPONSE FORMAT:
-Carefully check the latest user message. Correct only English the user is attempting to write; do not correct Ukrainian or other languages.
-- If the user's English has a genuine grammar error or sounds unnatural, begin with a corrected version using the exact label "Виправлено:". Preserve the user's intended meaning.
-- If a distinct version would sound noticeably more natural in everyday spoken English, add it after one blank line using "Розмовніше:". Omit it when it would not meaningfully improve the sentence.
-- Then add one blank line and answer the user's message directly. The answer itself should usually be 1–6 complete sentences: a simple question gets a concise answer; a question requiring explanation or precision gets enough detail to be accurate and useful.
-- If the sentence is already correct and natural, do not add a correction. Give only the answer, or a "Розмовніше:" version followed by the answer if it clearly improves the wording.
-- Separate only the applicable parts with one blank line. Do not add any other headings, bullet lists, or code blocks unless the user explicitly asks for them.
-
-ACCURACY:
-- Normally answer in English; follow an explicit request for another language.
-- Answer the actual question specifically. Do not invent facts, personal details, English words, or grammar rules. If uncertain, briefly say what is uncertain instead of guessing.
-- Use memory and conversation for personal details. Stay friendly and relaxed without filler praise, lectures, or unnecessary follow-up questions.`
 };
 
 interface ClientMessage {
@@ -581,39 +513,14 @@ function parseMessages(value: unknown): ClientMessage[] {
   return recent;
 }
 
-function buildSystemPrompt(language: 'da' | 'en', memories: UserMemories): string {
-  let prompt = BASE_PROMPTS[language];
-
-  const globalNotes = memories.global;
-  const languageNotes = memories[language];
-  if (globalNotes.length > 0 || languageNotes.length > 0) {
-    prompt += '\n\n=== HUKOMMELSE / MEMORY ===';
-    if (globalNotes.length > 0) {
-      prompt += '\n' + globalNotes.map((note) => `- ${note}`).join('\n');
-    }
-    if (languageNotes.length > 0) {
-      prompt += `\n${language.toUpperCase()} notes:\n` + languageNotes.map((note) => `- ${note}`).join('\n');
-    }
-    prompt += '\nUse these notes naturally without letting them override response format, accuracy, or the need for a sufficiently detailed answer.';
-  }
-
-  prompt += `\n\n=== LONG-TERM MEMORY ===
-Actively use the memory tools so you can remember the user over time:
-- Automatically save stable, useful, non-sensitive personal facts, preferences, and goals the user shares. Choose global for general context and da/en for language-learning context.
-- Do not save guesses, temporary details, or sensitive personal information unless the user explicitly asks you to remember it.
-- If the user corrects or explicitly changes a saved fact, use update_memory with the exact existing text. If they explicitly ask you to forget something, use forget_memory.
-- Do not claim that a memory was saved, changed, or forgotten unless the tool confirms it. Avoid saving duplicates.`;
-  return prompt;
-}
-
 function buildContents(messages: ClientMessage[], language: 'da' | 'en', memories: UserMemories) {
-  const systemPrompt = buildSystemPrompt(language, memories);
+  const systemPrompt = buildSystemPrompt(language, memories, true);
 
   return [
     { role: 'user', parts: [{ text: `[System instructions]\n${systemPrompt}` }] },
     {
       role: 'model',
-      parts: [{ text: language === 'da' ? 'Forstået. Jeg svarer kort og naturligt.' : 'Understood. I will keep replies short and natural.' }]
+      parts: [{ text: buildPrimingAcknowledgement(language) }]
     },
     ...messages.map((message, index) => ({
       role: message.role === 'assistant' ? 'model' : 'user',
@@ -729,129 +636,117 @@ async function generateReply(
       )}:generateContent?key=${encodeURIComponent(keys[index] as string)}`;
 
       try {
-        const response = await fetchWithTimeout(
-          url,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents,
-              tools: [{ functionDeclarations: MEMORY_TOOLS }],
-              toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
-              generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 512,
-                ...(thinkingConfig ? { thinkingConfig } : {})
-              }
-            })
-          },
-          14_000,
-          signal
-        );
+        let activeContents: unknown[] = [...contents];
 
-        if (!response.ok) {
-          lastError = await readUpstreamError(response);
-          logEvent('gemini_error', {
-            id,
-            model,
-            key: `#${index + 1}`,
-            status: response.status,
-            ms: Date.now() - started,
-            error: lastError
-          });
-          continue;
-        }
-
-        const payload = (await response.json()) as unknown;
-        const candidates = payload && typeof payload === 'object'
-          ? (payload as { candidates?: unknown }).candidates
-          : null;
-        const parts = Array.isArray(candidates) && candidates[0] && typeof candidates[0] === 'object'
-          ? (candidates[0] as { content?: { parts?: unknown } }).content?.parts
-          : null;
-        const functionCallPart = Array.isArray(parts)
-          ? parts.find((part) =>
-              Boolean(part && typeof part === 'object' && 'functionCall' in part)
-            )
-          : undefined;
-
-        if (functionCallPart && typeof functionCallPart === 'object') {
-          const call = (functionCallPart as {
-            functionCall?: { name?: unknown; args?: unknown };
-          }).functionCall;
-          if (typeof call?.name !== 'string') {
-            lastError = 'The model returned an invalid memory action';
-            continue;
-          }
-
-          const operation = await applyMemoryTool(env, ownerId, memories, call.name, call.args);
-          memories = operation.memories;
-          if (operation.event) onMemory(operation.event);
-
-          const followUpResponse = await fetchWithTimeout(
+        for (let round = 0; round < 3; round += 1) {
+          const allowToolsThisRound = round < 2;
+          const response = await fetchWithTimeout(
             url,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                contents: [
-                  ...contents,
-                  { role: 'model', parts: [functionCallPart] },
-                  {
-                    role: 'user',
-                    parts: [{
-                      functionResponse: {
-                        name: call.name,
-                        response: { result: operation.result }
-                      }
-                    }]
-                  }
-                ],
+                contents: activeContents,
+                ...(allowToolsThisRound
+                  ? {
+                      tools: [{ functionDeclarations: MEMORY_TOOL_DECLARATIONS }],
+                      toolConfig: { functionCallingConfig: { mode: 'AUTO' } }
+                    }
+                  : {}),
                 generationConfig: {
-                  temperature: 0.7,
-                  maxOutputTokens: 512,
+                  temperature: 0.72,
+                  maxOutputTokens: 1024,
                   ...(thinkingConfig ? { thinkingConfig } : {})
                 }
               })
             },
-            22_000,
+            round === 0 ? 16_000 : 22_000,
             signal
           );
-          if (!followUpResponse.ok) {
-            lastError = await readUpstreamError(followUpResponse);
+
+          if (!response.ok) {
+            lastError = await readUpstreamError(response);
+            logEvent('gemini_error', {
+              id,
+              model,
+              key: `#${index + 1}`,
+              status: response.status,
+              ms: Date.now() - started,
+              error: lastError
+            });
+            break;
+          }
+
+          const payload = (await response.json()) as unknown;
+          const candidates = payload && typeof payload === 'object'
+            ? (payload as { candidates?: unknown }).candidates
+            : null;
+          const parts = Array.isArray(candidates) && candidates[0] && typeof candidates[0] === 'object'
+            ? (candidates[0] as { content?: { parts?: unknown } }).content?.parts
+            : null;
+          const functionCallParts = Array.isArray(parts)
+            ? parts.filter((part): part is { functionCall: { name?: unknown; args?: unknown } } =>
+                Boolean(part && typeof part === 'object' && 'functionCall' in part)
+              )
+            : [];
+
+          if (allowToolsThisRound && functionCallParts.length > 0) {
+            const responseParts: unknown[] = [];
+            for (const part of functionCallParts) {
+              const call = part.functionCall;
+              if (typeof call?.name !== 'string') {
+                lastError = 'The model returned an invalid memory action';
+                continue;
+              }
+
+              const operation = await applyMemoryTool(env, ownerId, memories, call.name, call.args);
+              memories = operation.memories;
+              if (operation.event) onMemory(operation.event);
+              logEvent('gemini_memory_tool', {
+                id,
+                model,
+                action: call.name,
+                scope: operation.event?.scope,
+                ms: Date.now() - started
+              });
+
+              responseParts.push({
+                functionResponse: {
+                  name: call.name,
+                  response: { result: operation.result }
+                }
+              });
+            }
+
+            if (responseParts.length === 0) break;
+
+            activeContents = [
+              ...activeContents,
+              { role: 'model', parts },
+              { role: 'user', parts: responseParts }
+            ];
             continue;
           }
 
-          const text = extractReplyText(await followUpResponse.json() as unknown);
+          const text = extractReplyText(payload);
           if (!text) {
-            lastError = 'The model returned no response after the memory action';
-            continue;
+            lastError = round > 0
+              ? 'The model returned no response after the memory action'
+              : 'The model returned an empty reply';
+            logEvent('gemini_empty', { id, model, key: `#${index + 1}`, ms: Date.now() - started });
+            break;
           }
-          logEvent('gemini_memory_tool', {
+
+          logEvent('gemini_ok', {
             id,
             model,
-            action: call.name,
-            scope: operation.event?.scope,
-            ms: Date.now() - started
+            key: `#${index + 1}`,
+            ms: Date.now() - started,
+            chars: text.length
           });
           return { text, model };
         }
-
-        const text = extractReplyText(payload);
-        if (!text) {
-          lastError = 'The model returned an empty reply';
-          logEvent('gemini_empty', { id, model, key: `#${index + 1}`, ms: Date.now() - started });
-          continue;
-        }
-
-        logEvent('gemini_ok', {
-          id,
-          model,
-          key: `#${index + 1}`,
-          ms: Date.now() - started,
-          chars: text.length
-        });
-        return { text, model };
+        continue;
       } catch (error) {
         if (signal.aborted) throw error;
         lastError = error instanceof Error ? error.message : String(error);

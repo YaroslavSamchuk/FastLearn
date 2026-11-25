@@ -25,7 +25,11 @@ test('uses the same synthesized speed options for messages and selected phrases'
   assert.equal(clampPlaybackSpeed(0.8), 0.7);
 });
 
-test('strips Ukrainian correction labels and markdown noise from English speech text', () => {
+test('strips non-target and UI correction labels from English speech text', () => {
+  assert.equal(
+    toSpeechText('Corrected: I went home.\n\nMore natural: I headed home.', 'en'),
+    'I went home. I headed home.'
+  );
   assert.equal(
     toSpeechText('Виправлено: I went home.\n\nРозмовніше: I headed home. [Link](https://example.com) 🎉', 'en'),
     'I went home. I headed home. Link'

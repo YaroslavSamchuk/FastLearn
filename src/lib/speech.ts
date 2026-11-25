@@ -5,7 +5,7 @@ const CODE_FENCE = /```[\s\S]*?```/g;
 const MARKDOWN_LINK = /\[([^\]]+)\]\([^)]+\)/g;
 const MARKUP = /[*_`#~]+/g;
 const PICTOGRAPHS = /[\p{Extended_Pictographic}\uFE0F\u200D]/gu;
-const ENGLISH_UI_LABELS = /(^|\n)\s*(?:Виправлено|Розмовніше)\s*:\s*/giu;
+const ENGLISH_UI_LABELS = /(^|\n)\s*(?:Corrected|More natural|Виправлено|Розмовніше)\s*:\s*/giu;
 
 export const SPEECH_PLAYBACK_SPEEDS = [1, 0.7, 0.5] as const;
 export const PHRASE_PLAYBACK_SPEEDS = SPEECH_PLAYBACK_SPEEDS;

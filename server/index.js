@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import crypto from 'node:crypto';
 import { generateChatTitle, keyRotator, streamChatCompletion } from './llm.js';
 import { applyMemoryTool } from './memory.js';
+import { MAX_FACTS_PER_SCOPE } from './modelConfig.js';
 import {
   cacheSpeechResult,
   synthesizeSpeech,
@@ -150,7 +151,7 @@ function cleanStringList(value) {
   return value
     .map((item) => cleanString(item, 220))
     .filter(Boolean)
-    .slice(0, 40);
+    .slice(0, MAX_FACTS_PER_SCOPE);
 }
 
 function parseMessages(value) {
