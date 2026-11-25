@@ -18,10 +18,12 @@ import {
 } from '../lib/speech.ts';
 import {
   getPrefetchedSpeechAudio,
-  loadSpeechAudioVariants
+  loadSpeechAudioVariants,
+  seedPrefetchedSpeechAudio
 } from '../lib/speechAudioCache.ts';
 import {
   getTranslationHistoryEntry,
+  saveCachedSpeech,
   updateTranslationHistoryEntry
 } from '../lib/translationHistory.ts';
 
@@ -86,16 +88,35 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
     });
 
     const loadSelection = async () => {
-      let cached = null;
-      try {
-        cached = await getTranslationHistoryEntry(userId, language, selection.text);
-      } catch (reason) {
-        log.warn('translation-history', 'Could not read translation cache', {
-          error: reason instanceof Error ? reason.message : String(reason)
-        });
+      const speechInput = language === 'da'
+        ? addDanishPhrasePauses(selection.text)
+        : selection.text;
+      const speechText = toSpeechText(speechInput);
+      const historyAudioText = language === 'da' && speechText ? speechText : selection.text;
+
+      const memoryReadySpeeds = speechText
+        ? PHRASE_PLAYBACK_SPEEDS.filter((speed) =>
+            Boolean(getPrefetchedSpeechAudio(language, speechText, speed))
+          )
+        : [];
+      if (memoryReadySpeeds.length > 0) {
+        setReadyPhraseSpeeds(memoryReadySpeeds);
       }
+
+      const [cached, speechCached] = await Promise.all([
+        getTranslationHistoryEntry(userId, language, selection.text).catch((reason: unknown) => {
+          log.warn('translation-history', 'Could not read translation cache', {
+            error: reason instanceof Error ? reason.message : String(reason)
+          });
+          return null;
+        }),
+        speechText && historyAudioText !== selection.text
+          ? getTranslationHistoryEntry(userId, language, historyAudioText).catch(() => null)
+          : Promise.resolve(null)
+      ]);
       if (!active) return;
 
+      const audioEntry = speechCached ?? cached;
       const base: TranscribeResult = {
         original: selection.text,
         translation: cached?.translation ?? '',
@@ -159,34 +180,66 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         setLoadingPronunciation(false);
       }
 
-      const speechInput = language === 'da'
-        ? addDanishPhrasePauses(selection.text)
-        : selection.text;
-      const speechText = toSpeechText(speechInput);
       if (speechText) {
-        const allSpeedsReady = PHRASE_PLAYBACK_SPEEDS.every((speed) =>
-          getPrefetchedSpeechAudio(language, speechText, speed)
-        );
-        if (allSpeedsReady) {
-          setReadyPhraseSpeeds([...PHRASE_PLAYBACK_SPEEDS]);
-        } else {
+        const storedSpeedMap: Record<number, Blob | undefined> = {
+          1: audioEntry?.normalAudio,
+          0.7: audioEntry?.slowAudio07,
+          0.5: audioEntry?.slowAudio05
+        };
+        const missingSpeeds: number[] = [];
+
+        for (const speed of PHRASE_PLAYBACK_SPEEDS) {
+          if (getPrefetchedSpeechAudio(language, speechText, speed)) {
+            setReadyPhraseSpeeds((previous) =>
+              previous.includes(speed) ? previous : [...previous, speed]
+            );
+            continue;
+          }
+          const storedAudio = storedSpeedMap[speed];
+          if (storedAudio) {
+            seedPrefetchedSpeechAudio(language, speechText, speed, storedAudio);
+            setReadyPhraseSpeeds((previous) =>
+              previous.includes(speed) ? previous : [...previous, speed]
+            );
+            continue;
+          }
+          missingSpeeds.push(speed);
+        }
+
+        if (missingSpeeds.length > 0) {
           tasks.push(
             loadSpeechAudioVariants(
               language,
               speechText,
-              PHRASE_PLAYBACK_SPEEDS,
-              (speed) => fetchSpeechAudio(speechText, language, speed, controller.signal)
+              missingSpeeds,
+              (speed) => fetchSpeechAudio(speechText, language, speed),
+              {
+                onSpeedReady: (speed, audio) => {
+                  if (active) {
+                    setReadyPhraseSpeeds((previous) =>
+                      previous.includes(speed) ? previous : [...previous, speed]
+                    );
+                  }
+                  if (userId) {
+                    void saveCachedSpeech(userId, language, historyAudioText, speed, audio).catch(
+                      () => {}
+                    );
+                  }
+                },
+                onSpeedError: (speed, reason) => {
+                  if (reason instanceof DOMException && reason.name === 'AbortError') return;
+                  if (active) {
+                    setFailedPhraseSpeeds((previous) =>
+                      previous.includes(speed) ? previous : [...previous, speed]
+                    );
+                  }
+                  log.warn('audio', 'Could not preload selected phrase audio', {
+                    speed,
+                    error: reason instanceof Error ? reason.message : String(reason)
+                  });
+                }
+              }
             )
-              .then(() => {
-                if (active) setReadyPhraseSpeeds([...PHRASE_PLAYBACK_SPEEDS]);
-              })
-              .catch((reason: unknown) => {
-                if (reason instanceof DOMException && reason.name === 'AbortError') return;
-                if (active) setFailedPhraseSpeeds([...PHRASE_PLAYBACK_SPEEDS]);
-                log.warn('audio', 'Could not preload selected phrase audio', {
-                  error: reason instanceof Error ? reason.message : String(reason)
-                });
-              })
           );
         }
       }

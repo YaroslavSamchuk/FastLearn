@@ -21,6 +21,19 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
 const cache = new Map();
 
 let edgeCooldownUntil = 0;
+let consecutiveEdgeFailures = 0;
+
+function markEdgeSuccess() {
+  consecutiveEdgeFailures = 0;
+  edgeCooldownUntil = 0;
+}
+
+function markEdgeFailure() {
+  consecutiveEdgeFailures += 1;
+  if (consecutiveEdgeFailures >= 3) {
+    edgeCooldownUntil = Date.now() + 15 * 1000;
+  }
+}
 
 export function mapSpeedToRate(speed) {
   const value = Number.parseFloat(speed);
@@ -62,23 +75,30 @@ async function synthesizeEdge(text, language, speed, voiceName) {
   }
 
   for (const voice of voicesToTry) {
-    const tts = new MsEdgeTTS();
-    try {
-      await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-      const stream = await tts.toStream(text, {
-        rate: mapSpeedToRate(speed),
-        pitch: '+0Hz'
-      });
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 14_000 });
+      try {
+        await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+        const stream = await tts.toStream(text, {
+          rate: mapSpeedToRate(speed),
+          pitch: '+0Hz'
+        });
 
-      const buffer = await collectStream(stream.audioStream, 9_000);
-      if (buffer.byteLength > 0) return buffer;
-    } catch (error) {
-      console.warn(`[tts] Edge voice ${voice} attempt failed:`, error.message);
+        const buffer = await collectStream(stream.audioStream, 9_000);
+        if (buffer.byteLength > 0) {
+          markEdgeSuccess();
+          return buffer;
+        }
+      } catch (error) {
+        console.warn(`[tts] Edge voice ${voice} attempt ${attempt} failed:`, error.message);
+      } finally {
+        tts.close();
+      }
     }
   }
 
   console.warn('[tts] Edge TTS unavailable, using Google fallback');
-  edgeCooldownUntil = Date.now() + 30 * 1000;
+  markEdgeFailure();
   return null;
 }
 
@@ -238,9 +258,10 @@ export async function synthesizeSpeechStream(text, language = 'da', speed = 1, v
           pitch: '+0Hz'
         });
         audioStream.once('error', (error) => {
-          edgeCooldownUntil = Date.now() + 30_000;
+          markEdgeFailure();
           console.warn(`[tts] Edge voice ${voiceNameToTry} stream failed:`, error.message);
         });
+        audioStream.once('end', () => markEdgeSuccess());
         return { stream: audioStream, source: 'edge', cached: false, cacheKey };
       } catch (error) {
         console.warn(`[tts] Edge voice ${voiceNameToTry} stream setup failed:`, error.message);
@@ -248,7 +269,7 @@ export async function synthesizeSpeechStream(text, language = 'da', speed = 1, v
     }
   }
 
-  edgeCooldownUntil = Date.now() + 30_000;
+  markEdgeFailure();
   if (safeSpeed !== 1) {
     throw new Error('Edge TTS is unavailable; refusing audio that would not preserve the requested speed');
   }

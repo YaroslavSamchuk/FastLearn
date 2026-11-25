@@ -1,6 +1,6 @@
 // language: TypeScript, file: src/hooks/useAudio.ts, target: Web / Mobile Browser
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchSpeechAudio, ttsUrl } from '../lib/api.ts';
+import { fetchSpeechAudio } from '../lib/api.ts';
 import {
   addDanishPhrasePauses,
   clampPlaybackSpeed,
@@ -8,7 +8,7 @@ import {
 } from '../lib/speech.ts';
 import { log } from '../lib/logger.ts';
 import { getCachedSpeech, saveCachedSpeech } from '../lib/translationHistory.ts';
-import { getPrefetchedSpeechAudio } from '../lib/speechAudioCache.ts';
+import { getPrefetchedSpeechAudio, loadSpeechAudio } from '../lib/speechAudioCache.ts';
 
 const CACHE_LIMIT = 30;
 const audioCache = new Map<string, string>();
@@ -114,6 +114,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
       const requestId = requestRef.current;
       const safeSpeed = clampPlaybackSpeed(speed);
       const cacheKey = `${userId}:${language}:${safeSpeed}:${spokenText}`;
+      const historyKeyText = addPhrasePauses ? spokenText : text;
 
       setIsPlaying(true);
       setCurrentSpeed(safeSpeed);
@@ -129,15 +130,21 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         let url = audioCache.get(cacheKey);
 
         if (!url) {
+          const prefetched = getPrefetchedSpeechAudio(language, spokenText, safeSpeed);
+          if (prefetched) {
+            url = URL.createObjectURL(prefetched);
+            rememberUrl(cacheKey, url);
+          }
+        }
+
+        if (!url && userId) {
           let blob: Blob | null = null;
-          if (userId && !addPhrasePauses) {
-            try {
-              blob = await getCachedSpeech(userId, language, text, safeSpeed);
-            } catch (error) {
-              log.warn('audio', 'Could not read persistent speech cache', {
-                error: error instanceof Error ? error.message : String(error)
-              });
-            }
+          try {
+            blob = await getCachedSpeech(userId, language, historyKeyText, safeSpeed);
+          } catch (error) {
+            log.warn('audio', 'Could not read persistent speech cache', {
+              error: error instanceof Error ? error.message : String(error)
+            });
           }
           if (blob) {
             url = URL.createObjectURL(blob);
@@ -146,36 +153,31 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         }
 
         if (!url) {
-          const prefetched = getPrefetchedSpeechAudio(language, spokenText, safeSpeed);
-          if (prefetched) {
-            url = URL.createObjectURL(prefetched);
-            rememberUrl(cacheKey, url);
+          const downloaded = await loadSpeechAudio(
+            language,
+            spokenText,
+            safeSpeed,
+            () => fetchSpeechAudio(spokenText, language, safeSpeed)
+          );
+          url = URL.createObjectURL(downloaded);
+          rememberUrl(cacheKey, url);
+
+          if (cacheForHistory && userId) {
+            void saveCachedSpeech(userId, language, historyKeyText, safeSpeed, downloaded).catch(
+              (error: unknown) => {
+                log.warn('audio', 'Could not save persistent speech cache', {
+                  error: error instanceof Error ? error.message : String(error)
+                });
+              }
+            );
           }
         }
 
         if (requestRef.current !== requestId) return;
 
-        const isRemoteStream = !url;
-        const audio = new Audio(url ?? ttsUrl(spokenText, language, safeSpeed));
+        const audio = new Audio(url);
         audioRef.current = audio;
-        audio.onended = () => {
-          if (isRemoteStream && cacheForHistory && userId && !addPhrasePauses) {
-            const controller = new AbortController();
-            fetchRef.current = controller;
-            void fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal)
-              .then((blob) => saveCachedSpeech(userId, language, text, safeSpeed, blob))
-              .catch((error: unknown) => {
-                if (error instanceof DOMException && error.name === 'AbortError') return;
-                log.warn('audio', 'Could not save persistent speech cache', {
-                  error: error instanceof Error ? error.message : String(error)
-                });
-              })
-              .finally(() => {
-                if (fetchRef.current === controller) fetchRef.current = null;
-              });
-          }
-          finish(requestId);
-        };
+        audio.onended = () => finish(requestId);
         audio.onerror = () => {
           if (requestRef.current !== requestId) return;
           log.warn('audio', 'Audio element could not play the TTS file, falling back');

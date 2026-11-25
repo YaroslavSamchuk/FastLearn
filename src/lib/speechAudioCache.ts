@@ -31,14 +31,37 @@ export function getPrefetchedSpeechAudio(
   return audio;
 }
 
+export function seedPrefetchedSpeechAudio(
+  language: SpeechLanguage,
+  text: string,
+  speed: number,
+  audio: Blob
+): void {
+  rememberAudio(makeKey(language, text, speed), audio);
+}
+
 export async function loadSpeechAudioVariants(
   language: SpeechLanguage,
   text: string,
   speeds: readonly number[],
-  load: (speed: number) => Promise<Blob>
+  load: (speed: number) => Promise<Blob>,
+  callbacks?: {
+    onSpeedReady?: (speed: number, audio: Blob) => void;
+    onSpeedError?: (speed: number, error: unknown) => void;
+  }
 ): Promise<Blob[]> {
   return Promise.all(
-    speeds.map((speed) => loadSpeechAudio(language, text, speed, () => load(speed)))
+    speeds.map((speed) =>
+      loadSpeechAudio(language, text, speed, () => load(speed))
+        .then((audio) => {
+          callbacks?.onSpeedReady?.(speed, audio);
+          return audio;
+        })
+        .catch((error: unknown) => {
+          callbacks?.onSpeedError?.(speed, error);
+          throw error;
+        })
+    )
   );
 }
 

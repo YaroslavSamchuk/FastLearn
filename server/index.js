@@ -48,18 +48,48 @@ function readCookie(req, name) {
   return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
 }
 
+const SESSION_CACHE_TTL_MS = 30_000;
+const sessionCache = new Map();
+const pendingSessionLookups = new Map();
+
 async function getAuthenticatedUser(req) {
   const token = readCookie(req, SESSION_COOKIE);
   if (!token) return null;
 
-  const db = getDatabase();
-  const session = await db.collection('sessions').findOne({
-    tokenHash: hashToken(token),
-    expiresAt: { $gt: new Date() }
-  });
-  if (!session) return null;
+  const tokenHash = hashToken(token);
+  const cached = sessionCache.get(tokenHash);
+  if (cached) {
+    if (cached.expiresAt > Date.now()) return cached.user;
+    sessionCache.delete(tokenHash);
+  }
 
-  return db.collection('users').findOne({ googleSub: session.googleSub });
+  const inFlight = pendingSessionLookups.get(tokenHash);
+  if (inFlight) return inFlight;
+
+  const lookup = (async () => {
+    const db = getDatabase();
+    const session = await db.collection('sessions').findOne({
+      tokenHash,
+      expiresAt: { $gt: new Date() }
+    });
+    if (!session) return null;
+
+    const user = await db.collection('users').findOne({ googleSub: session.googleSub });
+    if (user) {
+      sessionCache.set(tokenHash, {
+        user,
+        expiresAt: Math.min(Date.now() + SESSION_CACHE_TTL_MS, new Date(session.expiresAt).getTime())
+      });
+    }
+    return user;
+  })().finally(() => {
+    if (pendingSessionLookups.get(tokenHash) === lookup) {
+      pendingSessionLookups.delete(tokenHash);
+    }
+  });
+
+  pendingSessionLookups.set(tokenHash, lookup);
+  return lookup;
 }
 
 function requireAuth(req, res, next) {
@@ -301,7 +331,9 @@ app.get('/api/auth/me', async (req, res, next) => {
 app.post('/api/auth/logout', requireAuth, async (req, res) => {
   const token = readCookie(req, SESSION_COOKIE);
   if (token) {
-    await getDatabase().collection('sessions').deleteOne({ tokenHash: hashToken(token) });
+    const tokenHash = hashToken(token);
+    sessionCache.delete(tokenHash);
+    await getDatabase().collection('sessions').deleteOne({ tokenHash });
   }
   clearSessionCookie(res);
   res.json({ ok: true });

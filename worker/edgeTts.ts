@@ -116,13 +116,13 @@ async function loadEdgeTts(): Promise<typeof import('msedge-tts')> {
   return edgeTtsModule;
 }
 
-export async function synthesizeEdgeSpeech(
+async function synthesizeEdgeSpeechOnce(
   text: string,
   language: 'da' | 'en',
   speed: number
 ): Promise<Uint8Array> {
   const { MsEdgeTTS, OUTPUT_FORMAT } = await loadEdgeTts();
-  const tts = new MsEdgeTTS({ connectionTimeoutMs: 12_000, synthesisTimeoutMs: 20_000 });
+  const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 14_000 });
   try {
     const voice = language === 'da' ? 'da-DK-JeppeNeural' : 'en-US-JennyNeural';
     await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
@@ -142,4 +142,20 @@ export async function synthesizeEdgeSpeech(
   } finally {
     tts.close();
   }
+}
+
+export async function synthesizeEdgeSpeech(
+  text: string,
+  language: 'da' | 'en',
+  speed: number
+): Promise<Uint8Array> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      return await synthesizeEdgeSpeechOnce(text, language, speed);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }

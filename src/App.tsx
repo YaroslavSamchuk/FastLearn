@@ -52,7 +52,7 @@ function preloadAssistantAudio(text: string, userId: string, language: Language)
   const spokenText = toSpeechText(text);
   if (!spokenText) return;
 
-  void Promise.all(SPEECH_PLAYBACK_SPEEDS.map(async (speed) => {
+  const preloadSpeed = async (speed: number) => {
     const cachedAudio = await getCachedSpeech(userId, language, text, speed).catch((error: unknown) => {
       log.warn('audio', 'Could not check the assistant audio cache', {
         language,
@@ -69,7 +69,11 @@ function preloadAssistantAudio(text: string, userId: string, language: Language)
       () => fetchSpeechAudio(spokenText, language, speed)
     );
     await saveCachedSpeech(userId, language, text, speed, audio);
-  }))
+  };
+
+  const [primarySpeed, ...secondarySpeeds] = SPEECH_PLAYBACK_SPEEDS;
+  void preloadSpeed(primarySpeed)
+    .then(() => Promise.all(secondarySpeeds.map(preloadSpeed)))
     .then(() => {
       log.info('audio', 'Assistant message audio preloaded', {
         language,

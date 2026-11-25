@@ -357,22 +357,68 @@ interface Workspace {
   activeChatId: Record<'da' | 'en', string | null>;
 }
 
+const SESSION_CACHE_TTL_MS = 60_000;
+const SESSION_CACHE_LIMIT = 200;
+const sessionCache = new Map<string, { user: StoredUser; expiresAt: number }>();
+const pendingSessionLookups = new Map<string, Promise<StoredUser | null>>();
+
+function rememberSession(tokenHash: string, user: StoredUser, sessionExpiresAt: number): void {
+  const cacheUntil = Math.min(Date.now() + SESSION_CACHE_TTL_MS, sessionExpiresAt);
+  if (cacheUntil <= Date.now()) return;
+  sessionCache.set(tokenHash, { user, expiresAt: cacheUntil });
+  while (sessionCache.size > SESSION_CACHE_LIMIT) {
+    const oldestKey = sessionCache.keys().next().value;
+    if (!oldestKey) break;
+    sessionCache.delete(oldestKey);
+  }
+}
+
 async function getAuthenticatedUser(request: Request, env: Env): Promise<StoredUser | null> {
   const token = cookieValue(request, SESSION_COOKIE);
   if (!token) return null;
 
-  const session = await mongoCommand<{ googleSub: string; expiresAt: number } | null>(env, {
-    operation: 'findOne',
-    collection: 'sessions',
-    filter: { tokenHash: await hashToken(token), expiresAt: { $gt: Date.now() } }
-  });
-  if (!session) return null;
+  const tokenHash = await hashToken(token);
+  const cached = sessionCache.get(tokenHash);
+  if (cached) {
+    if (cached.expiresAt > Date.now()) return cached.user;
+    sessionCache.delete(tokenHash);
+  }
 
-  return mongoCommand<StoredUser | null>(env, {
-    operation: 'findOne',
-    collection: 'users',
-    filter: { googleSub: session.googleSub }
+  const inFlight = pendingSessionLookups.get(tokenHash);
+  if (inFlight) return inFlight;
+
+  const lookup = (async () => {
+    const session = await mongoCommand<{ googleSub: string; expiresAt: number } | null>(env, {
+      operation: 'findOne',
+      collection: 'sessions',
+      filter: { tokenHash, expiresAt: { $gt: Date.now() } }
+    });
+    if (!session) return null;
+
+    const user = await mongoCommand<StoredUser | null>(env, {
+      operation: 'findOne',
+      collection: 'users',
+      filter: { googleSub: session.googleSub }
+    });
+    if (user) {
+      const expiresAtMs = typeof session.expiresAt === 'number'
+        ? session.expiresAt
+        : Date.parse(String(session.expiresAt));
+      rememberSession(
+        tokenHash,
+        user,
+        Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + SESSION_CACHE_TTL_MS
+      );
+    }
+    return user;
+  })().finally(() => {
+    if (pendingSessionLookups.get(tokenHash) === lookup) {
+      pendingSessionLookups.delete(tokenHash);
+    }
   });
+
+  pendingSessionLookups.set(tokenHash, lookup);
+  return lookup;
 }
 
 async function requireAuthenticatedUser(request: Request, env: Env): Promise<StoredUser> {
@@ -1233,6 +1279,42 @@ function splitTtsText(text: string, maxChars: number): string[] {
   return chunks.filter(Boolean);
 }
 
+async function googleTtsChunk(text: string, language: 'da' | 'en'): Promise<Uint8Array> {
+  const url = new URL('https://translate.google.com/translate_tts');
+  url.searchParams.set('ie', 'UTF-8');
+  url.searchParams.set('client', 'tw-ob');
+  url.searchParams.set('tl', language);
+  url.searchParams.set('ttsspeed', '1');
+  url.searchParams.set('total', '1');
+  url.searchParams.set('idx', '0');
+  url.searchParams.set('textlen', String(text.length));
+  url.searchParams.set('q', text);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(url.toString(), {
+      headers: {
+        Accept: 'audio/mpeg,audio/*;q=0.9,*/*;q=0.5',
+        Referer: 'https://translate.google.com/',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+      },
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`Google TTS returned HTTP ${response.status}`);
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('audio')) {
+      throw new Error(`Google TTS returned ${contentType || 'an unknown content type'}`);
+    }
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0) throw new Error('Google TTS returned an empty audio file');
+    return new Uint8Array(buffer);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function synthesizeSpeech(
   text: string,
   language: 'da' | 'en',
@@ -1265,6 +1347,21 @@ async function synthesizeSpeech(
         ms: Date.now() - started,
         error: error instanceof Error ? error.message : String(error)
       });
+      if (speed === 1) {
+        try {
+          const fallback = await googleTtsChunk(chunk, language);
+          logEvent('tts_chunk_fallback_ok', {
+            id,
+            chunk: index + 1,
+            of: chunks.length,
+            chars: chunk.length,
+            ms: Date.now() - started
+          });
+          return fallback;
+        } catch {
+          // fall through to 502
+        }
+      }
       throw new HttpError(502, 'Speech synthesis is unavailable right now');
     }
   }));
@@ -1649,10 +1746,12 @@ async function handleLogout(request: Request, env: Env): Promise<Response> {
   const origin = getAllowedOrigin(request);
   const token = cookieValue(request, SESSION_COOKIE);
   if (token) {
+    const tokenHash = await hashToken(token);
+    sessionCache.delete(tokenHash);
     await mongoCommand(env, {
       operation: 'deleteOne',
       collection: 'sessions',
-      filter: { tokenHash: await hashToken(token) }
+      filter: { tokenHash }
     });
   }
   return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie('', origin, true) });

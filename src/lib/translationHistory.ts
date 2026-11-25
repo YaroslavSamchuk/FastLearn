@@ -23,6 +23,7 @@ type TranslationHistoryUpdate = Partial<
 const DATABASE_NAME = 'fastlearn_translation_history';
 const STORE_NAME = 'entries';
 const DATABASE_VERSION = 2;
+let databasePromise: Promise<IDBDatabase> | null = null;
 
 function makeKey(userId: string, language: 'da' | 'en', text: string): string {
   return `${userId}:${language}:${text.trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`;
@@ -33,7 +34,9 @@ function openDatabase(): Promise<IDBDatabase> {
     return Promise.reject(new Error('IndexedDB is unavailable in this browser'));
   }
 
-  return new Promise((resolve, reject) => {
+  if (databasePromise) return databasePromise;
+
+  databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
     request.onupgradeneeded = (event) => {
       const database = request.result;
@@ -64,10 +67,28 @@ function openDatabase(): Promise<IDBDatabase> {
         };
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('Could not open translation history'));
-    request.onblocked = () => reject(new Error('Translation history database upgrade is blocked'));
+    request.onsuccess = () => {
+      const database = request.result;
+      database.onclose = () => {
+        databasePromise = null;
+      };
+      database.onversionchange = () => {
+        database.close();
+        databasePromise = null;
+      };
+      resolve(database);
+    };
+    request.onerror = () => {
+      databasePromise = null;
+      reject(request.error ?? new Error('Could not open translation history'));
+    };
+    request.onblocked = () => {
+      databasePromise = null;
+      reject(new Error('Translation history database upgrade is blocked'));
+    };
   });
+
+  return databasePromise;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
@@ -105,18 +126,11 @@ export async function getTranslationHistoryEntry(
   if (!userId || !text.trim()) return null;
 
   const database = await openDatabase();
-  const transaction = database.transaction(STORE_NAME, 'readwrite');
-  const done = transactionDone(transaction);
+  const transaction = database.transaction(STORE_NAME, 'readonly');
   const store = transaction.objectStore(STORE_NAME);
   const key = makeKey(userId, language, text);
   const entry = await requestResult(store.get(key)) as TranslationHistoryEntry | undefined;
 
-  if (entry) {
-    entry.lastUsedAt = Date.now();
-    store.put(entry);
-  }
-
-  await done;
   return entry ?? null;
 }
 
