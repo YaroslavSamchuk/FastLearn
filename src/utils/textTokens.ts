@@ -8,8 +8,27 @@ export interface WordToken {
   isItalic?: boolean;
 }
 
+export const MAX_SELECTION_WORDS = 20;
+
 export function normalizeAssistantText(text: string): string {
   return text.replace(/\s+([,.;:!?…])/gu, '$1');
+}
+
+/**
+ * Clamps a word selection end index so the inclusive span never exceeds maxWords.
+ */
+export function clampSelectionRange(
+  startIndex: number,
+  endIndex: number,
+  maxWords = MAX_SELECTION_WORDS
+): { start: number; end: number } {
+  const safeMax = Math.max(1, Math.floor(maxWords));
+  const maxOffset = safeMax - 1;
+  const clampedEnd =
+    endIndex >= startIndex
+      ? Math.min(endIndex, startIndex + maxOffset)
+      : Math.max(endIndex, startIndex - maxOffset);
+  return { start: startIndex, end: clampedEnd };
 }
 
 // Regex matching markdown bold/italic tags

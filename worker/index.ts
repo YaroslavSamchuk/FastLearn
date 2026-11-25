@@ -2,6 +2,10 @@
 import { DurableObject } from 'cloudflare:workers';
 import { MongoClient, type Document, type Filter, type UpdateFilter } from 'mongodb';
 import {
+  lookupWordFallbackFromDictionaries,
+  resolveWordListPronunciation
+} from '../server/ipa.js';
+import {
   applyMemoryTool as applyMemoryMutation,
   type MemoryToolEvent
 } from '../server/memory.js';
@@ -1131,133 +1135,94 @@ async function translateText(
   throw new HttpError(502, `Translation failed: ${failures.join('; ')}`);
 }
 
-async function lookupGeminiIpa(text: string, language: 'da' | 'en', env: Env): Promise<string> {
-  const keys = rotate(getKeys(env));
-  if (keys.length === 0) return '';
+const IPA_SHARD_CACHE = new Map<string, string>();
+const IPA_SHARD_CACHE_LIMIT = 64;
 
-  const model = getModels(env)[0];
-  const langLabel = language === 'da' ? 'Danish' : 'English';
-  const prompt = `Exact standard International Phonetic Alphabet (IPA) for ${langLabel} text: ${JSON.stringify(text)}. Include stress marks (ˈ) and stød (ˀ) where appropriate. Output ONLY the IPA transcription enclosed in slashes /.../ with NO other text.`;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3_500);
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${keys[0]}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 160, temperature: 0.1 }
-      })
-    });
-    if (!res.ok) return '';
-    const data = (await res.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-    const match = raw.match(/\/([^\n/]+)\//);
-    if (match?.[0]) return match[0];
-    if (raw.startsWith('/') && raw.endsWith('/')) return raw;
-  } catch {
-    return '';
-  } finally {
-    clearTimeout(timer);
-  }
-  return '';
-}
-
-async function lookupEnglishIpa(word: string): Promise<string> {
-  const clean = word.toLowerCase().replace(/[^a-z']/g, '');
-  if (!clean) return '';
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6_000);
-
-  try {
-    const response = await fetch(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`,
-      { signal: controller.signal }
-    );
-    if (!response.ok) return '';
-    const data = (await response.json()) as unknown;
-    if (!Array.isArray(data) || data.length === 0) return '';
-    const entry = data[0] as {
-      phonetic?: unknown;
-      phonetics?: Array<{ text?: unknown }>;
-    };
-    if (typeof entry.phonetic === 'string' && entry.phonetic.trim()) return entry.phonetic.trim();
-    const phonetic = entry.phonetics?.find((item) => typeof item.text === 'string' && item.text.trim());
-    return typeof phonetic?.text === 'string' ? phonetic.text.trim() : '';
-  } catch {
-    return '';
-  } finally {
-    clearTimeout(timer);
+function rememberIpaShard(key: string, text: string): void {
+  IPA_SHARD_CACHE.set(key, text);
+  if (IPA_SHARD_CACHE.size > IPA_SHARD_CACHE_LIMIT) {
+    const oldest = IPA_SHARD_CACHE.keys().next().value;
+    if (oldest) IPA_SHARD_CACHE.delete(oldest);
   }
 }
 
-async function lookupDanishIpa(word: string): Promise<string> {
-  const clean = word.toLowerCase().replace(/[^a-zæøå]/g, '');
-  if (!clean) return '';
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6_000);
+async function readAssetIpaShard(
+  env: Env,
+  requestUrl: string,
+  language: 'da' | 'en',
+  hash: string
+): Promise<string> {
+  const cacheKey = `${language}:${hash}`;
+  const cached = IPA_SHARD_CACHE.get(cacheKey);
+  if (cached !== undefined) return cached;
 
   try {
-    const response = await fetch(
-      `https://en.wiktionary.org/w/api.php?action=query&prop=revisions&rvprop=content&titles=${encodeURIComponent(
-        clean
-      )}&format=json&origin=*`,
-      { signal: controller.signal }
-    );
-    if (!response.ok) return '';
-
-    const data = (await response.json()) as {
-      query?: {
-        pages?: Record<string, { revisions?: Array<{ '*'?: string; content?: string }> }>;
-      };
-    };
-    const pages = data.query?.pages;
-    if (!pages) return '';
-
-    const page = Object.values(pages)[0];
-    const content = page?.revisions?.[0]?.['*'] ?? page?.revisions?.[0]?.content ?? '';
-    if (!content) return '';
-
-    const match =
-      content.match(/\{\{IPA\|da\|([^}|]+)/i) ??
-      content.match(/\{\{lyd\|da\|([^}|]+)/i) ??
-      content.match(/\[([a-zæøåɡðŋʁɕʑʔˈˌː.\s]+)\]/i);
-    if (!match?.[1]) return '';
-
-    const ipa = match[1].replace(/[[\]/]/g, '').trim();
-    return ipa ? `/${ipa}/` : '';
+    const assetUrl = new URL(`/ipa/${language}/${hash}.txt`, requestUrl).toString();
+    const response = await env.ASSETS.fetch(new Request(assetUrl));
+    if (!response.ok) {
+      rememberIpaShard(cacheKey, '');
+      return '';
+    }
+    const text = await response.text();
+    rememberIpaShard(cacheKey, text);
+    return text;
   } catch {
     return '';
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-async function resolveIpa(text: string, language: 'da' | 'en', env?: Env): Promise<string> {
-  const clean = text.trim();
-  if (!clean || clean.split(/\s+/).length > 20) return '';
+async function fetchEdgeCachedWordFallback(
+  word: string,
+  language: 'da' | 'en',
+  ctx?: ExecutionContext
+): Promise<string> {
+  const edgeCacheUrl = `https://ipa-fallback.fastlearn.internal/v2/${language}/${encodeURIComponent(word)}`;
+  let edgeCache: Cache | null = null;
+  try {
+    edgeCache = (caches as unknown as { default?: Cache }).default ?? null;
+  } catch {
+    edgeCache = null;
+  }
 
-  if (env) {
+  if (edgeCache) {
     try {
-      const gemini = await lookupGeminiIpa(clean, language, env);
-      if (gemini) return gemini;
+      const hit = await edgeCache.match(edgeCacheUrl);
+      if (hit) {
+        const value = (await hit.text()).trim();
+        if (value) return value;
+      }
     } catch {
-      // fallback
+      // continue to live dictionary lookup
     }
   }
 
-  const words = clean.split(/\s+/).filter(Boolean).slice(0, 10);
-  const values = await Promise.all(
-    words.map((word) => (language === 'da' ? lookupDanishIpa(word) : lookupEnglishIpa(word)))
-  );
-  return values.filter(Boolean).join(' ');
+  const value = await lookupWordFallbackFromDictionaries(word, language);
+
+  if (value && edgeCache) {
+    const cacheResponse = new Response(value, {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'public, max-age=2592000'
+      }
+    });
+    const putPromise = edgeCache.put(edgeCacheUrl, cacheResponse).catch(() => {});
+    if (ctx) ctx.waitUntil(putPromise);
+  }
+
+  return value;
+}
+
+async function resolveIpa(
+  text: string,
+  language: 'da' | 'en',
+  env: Env,
+  requestUrl: string,
+  ctx?: ExecutionContext
+): Promise<string> {
+  return resolveWordListPronunciation(text, language, {
+    readShard: (lang, hash) => readAssetIpaShard(env, requestUrl, lang, hash),
+    fetchFallbackWord: (word, lang) => fetchEdgeCachedWordFallback(word, lang, ctx)
+  });
 }
 
 function splitTtsText(text: string, maxChars: number): string[] {
@@ -1392,7 +1357,12 @@ async function handleTranslation(request: Request, env: Env, id: string): Promis
   return json({ original: text, translation, sourceLang: body.lang, userLang });
 }
 
-async function handlePronunciation(request: Request, env: Env, id: string): Promise<Response> {
+async function handlePronunciation(
+  request: Request,
+  env: Env,
+  id: string,
+  ctx?: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/ipa');
   const body = await readJsonBody(request) as Record<string, unknown> | null;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -1403,7 +1373,7 @@ async function handlePronunciation(request: Request, env: Env, id: string): Prom
   if (!text) throw new HttpError(400, 'text is required');
   if (body.lang !== 'da' && body.lang !== 'en') throw new HttpError(400, 'lang must be "da" or "en"');
   const started = Date.now();
-  const ipa = await resolveIpa(text, body.lang, env);
+  const ipa = await resolveIpa(text, body.lang, env, request.url, ctx);
   logEvent('pronunciation_ok', {
     id,
     language: body.lang,
@@ -1414,7 +1384,12 @@ async function handlePronunciation(request: Request, env: Env, id: string): Prom
   return json({ ipa, sourceLang: body.lang });
 }
 
-async function handleTranscribe(request: Request, env: Env, id: string): Promise<Response> {
+async function handleTranscribe(
+  request: Request,
+  env: Env,
+  id: string,
+  ctx?: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/transcribe');
   const body = (await readJsonBody(request)) as Record<string, unknown> | null;
   if (!body || typeof body !== 'object') throw new HttpError(400, 'Request body must be an object');
@@ -1430,7 +1405,7 @@ async function handleTranscribe(request: Request, env: Env, id: string): Promise
   const started = Date.now();
   const [translation, ipa] = await Promise.all([
     translateText(text, language, userLang, env, id),
-    resolveIpa(text, language, env).catch((error: unknown) => {
+    resolveIpa(text, language, env, request.url, ctx).catch((error: unknown) => {
       logEvent('ipa_lookup_failed', {
         id,
         error: error instanceof Error ? error.message : String(error)
@@ -2085,8 +2060,8 @@ async function routeApi(
   if (url.pathname === '/api/chat') return handleChat(request, env, id, user);
   if (url.pathname === '/api/title') return handleTitle(request, env, id);
   if (url.pathname === '/api/translate') return handleTranslation(request, env, id);
-  if (url.pathname === '/api/ipa') return handlePronunciation(request, env, id);
-  if (url.pathname === '/api/transcribe') return handleTranscribe(request, env, id);
+  if (url.pathname === '/api/ipa') return handlePronunciation(request, env, id, ctx);
+  if (url.pathname === '/api/transcribe') return handleTranscribe(request, env, id, ctx);
   if (url.pathname === '/api/tts') return handleTts(url, id, ctx);
   if (url.pathname === '/api/tts/batch') return handleTtsBatch(request, id, ctx);
 

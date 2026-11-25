@@ -1,9 +1,21 @@
 // language: JavaScript, file: server/transcribe.js, target: Node.js / Local dev proxy
-import { keyRotator } from './llm.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  lookupWordFallbackFromDictionaries,
+  resolveWordListPronunciation
+} from './ipa.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_IPA_DIR = path.resolve(__dirname, '..', 'public', 'ipa');
 
 const CACHE_LIMIT = 300;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const cache = new Map();
+
+const SHARD_CACHE_LIMIT = 64;
+const shardCache = new Map();
 
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
@@ -98,117 +110,30 @@ async function translateText(text, sourceLang, targetLang) {
   }
 }
 
-async function lookupGeminiIpa(text, language) {
-  const keys = keyRotator?.getKeysForRequest?.() || [];
-  if (keys.length === 0) return '';
-
-  const langLabel = language === 'da' ? 'Danish' : 'English';
-  const prompt = `Exact standard International Phonetic Alphabet (IPA) for ${langLabel} text: ${JSON.stringify(text)}. Include stress marks (ˈ) and stød (ˀ) where appropriate. Output ONLY the IPA transcription enclosed in slashes /.../ with NO other text.`;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3_500);
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${keys[0]}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 160, temperature: 0.1 }
-      })
-    });
-    if (!res.ok) return '';
-    const data = await res.json();
-    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-    const match = raw.match(/\/([^\n/]+)\//);
-    if (match?.[0]) return match[0];
-    if (raw.startsWith('/') && raw.endsWith('/')) return raw;
-  } catch {
-    return '';
-  } finally {
-    clearTimeout(timer);
-  }
-  return '';
-}
-
-async function lookupEnglishIpa(word) {
-  const clean = word.toLowerCase().replace(/[^a-z']/g, '');
-  if (!clean) return '';
+async function readLocalShard(language, hash) {
+  const cacheKey = `${language}:${hash}`;
+  if (shardCache.has(cacheKey)) return shardCache.get(cacheKey);
 
   try {
-    const response = await fetchWithTimeout(
-      `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`,
-      {},
-      5_000
-    );
-    if (!response.ok) return '';
-
-    const data = await response.json();
-    if (!Array.isArray(data) || data.length === 0) return '';
-
-    const entry = data[0];
-    if (typeof entry.phonetic === 'string' && entry.phonetic.trim()) return entry.phonetic.trim();
-    const phonetic = entry.phonetics?.find((item) => typeof item.text === 'string' && item.text.trim());
-    return typeof phonetic?.text === 'string' ? phonetic.text.trim() : '';
+    const filePath = path.join(PUBLIC_IPA_DIR, language, `${hash}.txt`);
+    const text = await fs.readFile(filePath, 'utf8');
+    shardCache.set(cacheKey, text);
+    if (shardCache.size > SHARD_CACHE_LIMIT) {
+      const oldest = shardCache.keys().next().value;
+      if (oldest) shardCache.delete(oldest);
+    }
+    return text;
   } catch {
-    return '';
-  }
-}
-
-async function lookupDanishIpa(word) {
-  const clean = word.toLowerCase().replace(/[^a-zæøå]/g, '');
-  if (!clean) return '';
-
-  try {
-    const response = await fetchWithTimeout(
-      `https://en.wiktionary.org/w/api.php?action=query&prop=revisions&rvprop=content&titles=${encodeURIComponent(
-        clean
-      )}&format=json&origin=*`,
-      {},
-      5_000
-    );
-    if (!response.ok) return '';
-
-    const data = await response.json();
-    const pages = data.query?.pages;
-    if (!pages) return '';
-
-    const page = Object.values(pages)[0];
-    const content = page?.revisions?.[0]?.['*'] ?? page?.revisions?.[0]?.content ?? '';
-    if (!content) return '';
-
-    const match =
-      content.match(/\{\{IPA\|da\|([^}|]+)/i) ??
-      content.match(/\{\{lyd\|da\|([^}|]+)/i) ??
-      content.match(/\[([a-zæøåɡðŋʁɕʑʔˈˌː.\s]+)\]/i);
-
-    if (!match?.[1]) return '';
-    const ipa = match[1].replace(/[[\]/]/g, '').trim();
-    return ipa ? `/${ipa}/` : '';
-  } catch {
+    shardCache.set(cacheKey, '');
     return '';
   }
 }
 
 async function resolveIpa(text, language) {
-  const clean = text.trim();
-  if (!clean || clean.split(/\s+/).length > 20) return '';
-
-  // 1. Primary: High-precision phonetic IPA via Gemini
-  try {
-    const geminiIpa = await lookupGeminiIpa(clean, language);
-    if (geminiIpa) return geminiIpa;
-  } catch (err) {
-    console.warn('[transcribe] Gemini IPA lookup failed:', err.message);
-  }
-
-  // 2. Secondary fallback: Dictionary / Wiktionary word-by-word lookup
-  const words = clean.split(/\s+/).filter(Boolean).slice(0, 10);
-  const values = await Promise.all(
-    words.map((word) => (language === 'da' ? lookupDanishIpa(word) : lookupEnglishIpa(word)))
-  );
-  return values.filter(Boolean).join(' ');
+  return resolveWordListPronunciation(text, language, {
+    readShard: readLocalShard,
+    fetchFallbackWord: lookupWordFallbackFromDictionaries
+  });
 }
 
 function readCache(key) {

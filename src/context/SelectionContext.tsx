@@ -1,7 +1,12 @@
 // language: TypeScript (React), file: src/context/SelectionContext.tsx, target: Web / Mobile Browser
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { SelectionData } from '../types.ts';
-import { WordToken, cleanTextForTranslation } from '../utils/textTokens.ts';
+import {
+  MAX_SELECTION_WORDS,
+  WordToken,
+  clampSelectionRange,
+  cleanTextForTranslation
+} from '../utils/textTokens.ts';
 import { haptic } from '../utils/haptics.ts';
 
 interface SelectionContextValue {
@@ -61,8 +66,9 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       tokens: WordToken[],
       selectionId: number
     ) => {
-      const minIdx = Math.min(startIdx, endIdx);
-      const maxIdx = Math.max(startIdx, endIdx);
+      const clampedRange = clampSelectionRange(startIdx, endIdx, MAX_SELECTION_WORDS);
+      const minIdx = Math.min(clampedRange.start, clampedRange.end);
+      const maxIdx = Math.max(clampedRange.start, clampedRange.end);
 
       const matchedTokens = tokens.filter((t) => t.index >= minIdx && t.index <= maxIdx);
       if (matchedTokens.length === 0) return;
@@ -134,7 +140,7 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const updateWordDrag = useCallback((wordIndex: number) => {
     setSelectedRange((prev) => {
       if (!prev) return { start: wordIndex, end: wordIndex };
-      const next = { ...prev, end: wordIndex };
+      const next = clampSelectionRange(prev.start, wordIndex, MAX_SELECTION_WORDS);
       rangeRef.current = next;
       return next;
     });

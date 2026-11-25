@@ -4,6 +4,7 @@ import { SelectionData, Language } from '../types.ts';
 import { Volume2, X, Loader2, RotateCw } from 'lucide-react';
 import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { haptic } from '../utils/haptics.ts';
+import { MAX_SELECTION_WORDS } from '../utils/textTokens.ts';
 import { log } from '../lib/logger.ts';
 import type { TranscribeResult } from '../lib/api.ts';
 import {
@@ -135,9 +136,15 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         userLang: 'uk'
       };
 
+      const selectionWordCount = selection.text.split(/\s+/).filter(Boolean).length;
+      const exceedsWordLimit = selectionWordCount > MAX_SELECTION_WORDS;
+
       setData(base);
       setLoadingTranslation(!cached?.translation);
-      setLoadingPronunciation(!cached?.ipa);
+      setLoadingPronunciation(!cached?.ipa && !exceedsWordLimit);
+      if (exceedsWordLimit && !cached?.ipa) {
+        setPronunciationError(true);
+      }
 
       const tasks: Promise<unknown>[] = [];
       if (!cached?.translation) {
@@ -161,7 +168,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         );
       }
 
-      if (!cached?.ipa) {
+      if (!cached?.ipa && !exceedsWordLimit) {
         tasks.push(
           getPronunciation(selection.text, language, controller.signal)
             .then((ipa) => {
@@ -413,11 +420,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               ) : pronunciationError ? (
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
-                    {wordCount > 20
-                      ? 'Виберіть фразу до 20 слів'
+                    {wordCount > MAX_SELECTION_WORDS
+                      ? `Виберіть фразу до ${MAX_SELECTION_WORDS} слів`
                       : 'Транскрипція недоступна'}
                   </p>
-                  {wordCount <= 20 && (
+                  {wordCount <= MAX_SELECTION_WORDS && (
                     <button
                       type="button"
                       onClick={() => setAttempt((value) => value + 1)}
