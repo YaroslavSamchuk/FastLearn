@@ -14,15 +14,15 @@
 
   html.dark {
     color-scheme: dark;
-    background-color: #0c0a09;
-    color: #fafaf9;
+    background-color: #0c0c0e;
+    color: #f4f4f5;
   }
 
   html.light,
   html:not(.dark) {
     color-scheme: light;
-    background-color: #faf9f6;
-    color: #1c1917;
+    background-color: #f4f4f2;
+    color: #111113;
   }
 
   body {
@@ -35,18 +35,18 @@
   }
 
   html.dark ::selection {
-    background-color: rgba(245, 158, 11, 0.28);
+    background-color: rgba(245, 158, 11, 0.32);
     color: inherit;
   }
 
   html.light ::selection,
   html:not(.dark) ::selection {
-    background-color: rgba(245, 158, 11, 0.32);
+    background-color: rgba(245, 158, 11, 0.35);
     color: inherit;
   }
 
   :focus-visible {
-    outline: 2px solid rgba(217, 119, 6, 0.72);
+    outline: 1.5px solid #d97706;
     outline-offset: 2px;
   }
 }
@@ -72,29 +72,27 @@ button, [role="button"], input, textarea, select {
   padding-top: calc(0.75rem + env(safe-area-inset-top, 0px));
 }
 
-/* Thin, quiet scrollbars */
+/* Sharp minimal scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 html.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
 }
 html.dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.28);
 }
 html.light ::-webkit-scrollbar-thumb,
 html:not(.dark) ::-webkit-scrollbar-thumb {
-  background: rgba(28, 25, 23, 0.16);
-  border-radius: 4px;
+  background: rgba(17, 17, 19, 0.16);
 }
 html.light ::-webkit-scrollbar-thumb:hover,
 html:not(.dark) ::-webkit-scrollbar-thumb:hover {
-  background: rgba(28, 25, 23, 0.28);
+  background: rgba(17, 17, 19, 0.32);
 }
 
 /* Streaming caret */
@@ -112,7 +110,7 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
   }
 }
 .animate-caret {
-  animation: caretBlink 1.05s steps(1) infinite;
+  animation: caretBlink 1s steps(1) infinite;
 }
 
 /* Toast */
@@ -130,30 +128,15 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
   animation: toastIn 0.16s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Side panel */
-@keyframes panelIn {
-  from {
-    opacity: 0;
-    transform: translateX(14px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-.animate-panel-in {
-  animation: panelIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
 /* Selection popover */
 @keyframes popoverIn {
   from {
     opacity: 0;
-    transform: translateY(4px) scale(0.985);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 .animate-popover {
@@ -164,7 +147,7 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
 @keyframes eqBar1 {
   0%,
   100% {
-    height: 5px;
+    height: 4px;
   }
   50% {
     height: 14px;
@@ -176,13 +159,13 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
     height: 13px;
   }
   50% {
-    height: 6px;
+    height: 5px;
   }
 }
 @keyframes eqBar3 {
   0%,
   100% {
-    height: 8px;
+    height: 7px;
   }
   50% {
     height: 16px;
@@ -191,10 +174,10 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
 @keyframes eqBar4 {
   0%,
   100% {
-    height: 15px;
+    height: 14px;
   }
   50% {
-    height: 7px;
+    height: 6px;
   }
 }
 .animate-eq-1 {
@@ -212,7 +195,6 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-toast-in,
-  .animate-panel-in,
   .animate-popover {
     animation: none;
   }

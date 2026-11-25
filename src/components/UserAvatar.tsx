@@ -1,4 +1,4 @@
-// language: TypeScript (React), file: src/components/UserAvatar.tsx, target: Web
+// language: TypeScript, file: src/components/UserAvatar.tsx, target: Web
 
 import React, { useState } from 'react';
 
@@ -24,7 +24,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ name, src, size = 36, cl
 
   return (
     <span
-      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-200 ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-black/[0.1] bg-zinc-200 text-zinc-800 dark:border-white/[0.12] dark:bg-zinc-800 dark:text-zinc-200 ${className}`}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
@@ -40,7 +40,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ name, src, size = 36, cl
           }}
         />
       ) : (
-        <span className="text-[11px] font-semibold">{initials(name)}</span>
+        <span className="font-mono text-[11px] font-medium tabular-nums">{initials(name)}</span>
       )}
     </span>
   );

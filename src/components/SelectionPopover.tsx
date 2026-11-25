@@ -337,66 +337,64 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       className="fixed z-50 max-h-[calc(100dvh-24px)] w-[min(350px,calc(100vw-24px))] overflow-y-auto overscroll-contain transition-[opacity,transform] duration-150 ease-out"
       style={style}
     >
-      <div className="animate-popover rounded-2xl border border-stone-200/90 bg-white text-stone-900 shadow-lg shadow-stone-900/10 dark:border-white/[0.1] dark:bg-[#191817] dark:text-stone-100 dark:shadow-black/30">
-        <div className="flex items-start justify-between gap-2 border-b border-stone-100 px-4 pt-4 pb-2.5 dark:border-white/[0.07]">
+      <div className="animate-popover rounded-md border border-black/[0.14] bg-white text-[#111113] shadow-sm dark:border-white/[0.14] dark:bg-[#141416] dark:text-zinc-100">
+        <div className="flex items-start justify-between gap-3 border-b border-black/[0.08] px-4 py-3 dark:border-white/[0.08]">
           <div className="min-w-0 flex-1">
-            <p className="line-clamp-2 text-[14px] font-medium leading-snug text-stone-950 dark:text-stone-50">
+            <p className="line-clamp-2 text-[14px] font-medium leading-snug text-[#111113] dark:text-zinc-50">
               {selection.text}
             </p>
             {wordCount > 1 && (
-              <p className="mt-0.5 font-mono text-[11px] text-stone-400 dark:text-stone-500">
+              <p className="mt-1 font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
                 {wordCount} слів
               </p>
             )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                haptic.tap();
-                onClose();
-              }}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:text-stone-500 dark:hover:bg-white/[0.08] dark:hover:text-stone-200"
-              title="Закрити"
-              aria-label="Закрити панель перекладу"
-            >
-              <X className="h-4 w-4" strokeWidth={1.75} />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              haptic.tap();
+              onClose();
+            }}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] text-zinc-400 transition-colors duration-150 hover:bg-black/[0.06] hover:text-[#111113] dark:text-zinc-500 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
+            title="Закрити"
+            aria-label="Закрити панель перекладу"
+          >
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
         </div>
 
         <div className="px-4 py-3">
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             <section aria-label="Переклад" aria-live="polite">
               {data?.translation ? (
-                <p className="text-[14px] leading-snug text-stone-800 dark:text-stone-200">
+                <p className="text-[14px] leading-snug text-zinc-800 dark:text-zinc-200">
                   {data.translation}
                 </p>
               ) : loadingTranslation ? (
-                <div className="flex items-center gap-2 py-1 text-[12px] text-stone-500 dark:text-stone-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                  Перекладаємо…
+                <div className="flex items-center gap-2 py-1 text-[12px] text-zinc-500 dark:text-zinc-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+                  Переклад…
                 </div>
               ) : translationError ? (
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <p className="text-[12px] leading-relaxed text-red-600 dark:text-red-400">
                     Не вдалося отримати переклад
                   </p>
-                  <p className="break-words text-[11px] leading-relaxed text-stone-500 dark:text-stone-400">
+                  <p className="break-words text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                     {translationError}
                   </p>
                   <button
                     type="button"
                     onClick={() => setAttempt((value) => value + 1)}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
+                    className="inline-flex h-7 items-center gap-1.5 rounded-[4px] border border-black/[0.12] px-2.5 text-[11px] font-medium text-zinc-700 transition-colors duration-150 hover:bg-black/[0.04] dark:border-white/[0.12] dark:text-zinc-300 dark:hover:bg-white/[0.05]"
                   >
-                    <RotateCw className="h-3 w-3" strokeWidth={2} />
+                    <RotateCw className="h-3.5 w-3.5" strokeWidth={1.75} />
                     Повторити переклад
                   </button>
                 </div>
               ) : (
-                <p className="text-[12px] text-stone-500 dark:text-stone-500">
+                <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
                   Переклад недоступний
                 </p>
               )}
@@ -408,13 +406,13 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                   {data.ipa}
                 </p>
               ) : loadingPronunciation ? (
-                <div className="flex items-center gap-2 py-1 text-[12px] text-stone-500 dark:text-stone-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                  Шукаємо транскрипцію…
+                <div className="flex items-center gap-2 py-1 text-[12px] text-zinc-500 dark:text-zinc-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+                  Транскрипція…
                 </div>
               ) : pronunciationError ? (
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[12px] text-stone-500 dark:text-stone-500">
+                  <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
                     {wordCount > 20
                       ? 'Виберіть фразу до 20 слів'
                       : 'Транскрипція недоступна'}
@@ -423,9 +421,9 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                     <button
                       type="button"
                       onClick={() => setAttempt((value) => value + 1)}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-stone-200 px-2 py-1 text-[11px] font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-white/[0.09] dark:text-stone-300 dark:hover:bg-white/[0.05]"
+                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[4px] border border-black/[0.12] px-2 text-[11px] font-medium text-zinc-700 transition-colors duration-150 hover:bg-black/[0.04] dark:border-white/[0.12] dark:text-zinc-300 dark:hover:bg-white/[0.05]"
                     >
-                      <RotateCw className="h-3 w-3" strokeWidth={2} />
+                      <RotateCw className="h-3.5 w-3.5" strokeWidth={1.75} />
                       Повторити
                     </button>
                   )}
@@ -436,7 +434,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         </div>
 
         <div
-          className="grid gap-2 border-t border-stone-100 px-4 pt-3 pb-4 dark:border-white/[0.07]"
+          className="grid gap-2 border-t border-black/[0.08] px-4 py-3 dark:border-white/[0.08]"
           style={{ gridTemplateColumns: `repeat(${phraseSpeeds.length}, minmax(0, 1fr))` }}
         >
           {phraseSpeeds.map((speed) => {
@@ -446,16 +444,16 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                 key={speed}
                 type="button"
                 onClick={() => handlePlay(speed)}
-                className={`flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-medium transition-colors ${
+                className={`flex h-9 min-w-0 items-center justify-center gap-1.5 rounded-[4px] border px-2 font-mono text-[12px] font-medium tabular-nums transition-colors duration-150 ${
                   active
-                    ? 'bg-amber-400 text-stone-950'
-                    : 'bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-white/[0.06] dark:text-stone-300 dark:hover:bg-white/[0.1]'
+                    ? 'border-amber-500 bg-amber-400 text-[#111113]'
+                    : 'border-black/[0.1] bg-[#f4f4f2] text-zinc-700 hover:border-black/25 hover:text-[#111113] dark:border-white/[0.1] dark:bg-[#1c1c1f] dark:text-zinc-300 dark:hover:border-white/25 dark:hover:text-zinc-100'
                 }`}
                 aria-label={`Прослухати виділену фразу зі швидкістю ${speed}×`}
                 aria-pressed={active}
               >
                 {active ? (
-                  <AudioVisualizer isPlaying barColor="bg-stone-950" />
+                  <AudioVisualizer isPlaying barColor="bg-[#111113]" />
                 ) : !readyPhraseSpeeds.includes(speed) && !failedPhraseSpeeds.includes(speed) ? (
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={1.75} />
                 ) : (

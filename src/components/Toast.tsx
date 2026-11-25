@@ -21,7 +21,7 @@ const ICONS = {
 
 const TONES = {
   success: 'text-emerald-700 dark:text-emerald-400',
-  info: 'text-stone-500 dark:text-stone-400',
+  info: 'text-zinc-500 dark:text-zinc-400',
   warning: 'text-red-600 dark:text-red-400'
 } as const;
 
@@ -41,17 +41,17 @@ export const Toast: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
         return (
           <div
             key={toast.id}
-            className="pointer-events-auto flex animate-toast-in items-start gap-2.5 rounded-lg border border-stone-200 bg-white px-3 py-2.5 text-stone-900 shadow-sm dark:border-white/[0.09] dark:bg-[#1c1917] dark:text-stone-100"
+            className="pointer-events-auto flex animate-toast-in items-start gap-2.5 rounded-md border border-black/[0.14] bg-white px-3 py-2.5 text-[#111113] dark:border-white/[0.14] dark:bg-[#141416] dark:text-zinc-100"
             role="status"
           >
-            <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${TONES[type]}`} strokeWidth={2} />
+            <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${TONES[type]}`} strokeWidth={1.75} />
             <p className="min-w-0 flex-1 text-[13px] font-medium leading-snug">
               {toast.text}
             </p>
             <button
               type="button"
               onClick={() => onDismiss(toast.id)}
-              className="-mr-1 -mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-700 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-200"
+              className="-mr-1 -mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-zinc-400 transition-colors duration-150 hover:bg-zinc-100 hover:text-zinc-700 dark:text-zinc-500 dark:hover:bg-white/[0.06] dark:hover:text-zinc-200"
               aria-label="Закрити повідомлення"
             >
               <X className="h-3.5 w-3.5" strokeWidth={1.75} />

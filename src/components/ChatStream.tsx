@@ -23,6 +23,7 @@ interface ChatStreamProps {
 }
 
 interface Starter {
+  index: string;
   text: string;
   label: string;
   translation: string;
@@ -31,36 +32,42 @@ interface Starter {
 const STARTERS: Record<Language, Starter[]> = {
   da: [
     {
+      index: '01',
       text: 'Hej! Hvordan går det i dag?',
-      label: 'Hej! Hvordan går det?',
-      translation: 'Привіт! Як справи сьогодні?'
+      label: 'Hej, hvordan går det?',
+      translation: 'Коротка розмова про день'
     },
     {
+      index: '02',
       text: 'Lad os bestille mad på en hyggelig café i København',
       label: 'Bestil på en café',
-      translation: 'Замовити їжу в затишному кафе'
+      translation: 'Замовлення у кав’ярні в Копенгагені'
     },
     {
+      index: '03',
       text: 'Fortæl mig 3 typiske danske udtryk og deres betydning',
       label: '3 danske udtryk',
-      translation: '3 типові данські вирази та їхнє значення'
+      translation: 'Живі ідіоми зі значенням і вимовою'
     }
   ],
   en: [
     {
+      index: '01',
       text: 'Hello! How is your day going?',
-      label: 'Hello! How are you?',
-      translation: 'Привіт! Як твій день?'
+      label: 'Hello, how are you?',
+      translation: 'Невимушений вступний діалог'
     },
     {
+      index: '02',
       text: 'Let’s simulate a natural job interview conversation',
       label: 'Job interview practice',
-      translation: 'Практика співбесіди на роботу'
+      translation: 'Симуляція співбесіди англійською'
     },
     {
+      index: '03',
       text: 'Explain 3 natural English idioms used in daily life',
       label: '3 daily idioms',
-      translation: '3 живі англійські ідіоми'
+      translation: 'Три повсякденні вирази з прикладами'
     }
   ]
 };
@@ -121,14 +128,14 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   const starterCopy =
     language === 'da'
       ? {
-          title: 'Klar til at øve?',
-          subtitle: 'Skriv en besked på dansk, eller vælg et udgangspunkt.',
-          label: 'Dansk'
+          code: 'DA // Daglig praksis',
+          title: 'Практика данської',
+          subtitle: 'Пишіть данською чи українською, або оберіть сценарій'
         }
       : {
-          title: 'Ready to practice?',
-          subtitle: 'Write a message in English, or start with one of these.',
-          label: 'English'
+          code: 'EN // Daily practice',
+          title: 'Практика англійської',
+          subtitle: 'Пишіть англійською чи українською, або оберіть сценарій'
         };
 
   return (
@@ -139,39 +146,46 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
     >
       <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
         {messages.length === 0 && !streamingContent ? (
-          <div className="flex flex-1 flex-col justify-center py-12">
-            <p className="font-mono text-[11px] text-stone-500 dark:text-stone-500">
-              {starterCopy.label}
-            </p>
-            <h2 className="mt-2 text-[28px] font-medium leading-tight text-stone-950 dark:text-stone-50 sm:text-3xl">
-              {starterCopy.title}
-            </h2>
-            <p className="mt-3 max-w-md text-[14px] leading-6 text-stone-600 dark:text-stone-400">
-              {starterCopy.subtitle}
-            </p>
+          <div className="flex flex-1 flex-col justify-center py-8">
+            <div className="border-l-2 border-amber-500 pl-4">
+              <p className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                {starterCopy.code}
+              </p>
+              <h2 className="mt-2 text-[28px] font-medium leading-tight text-[#111113] dark:text-zinc-50">
+                {starterCopy.title}
+              </h2>
+              <p className="mt-2 max-w-md text-[14px] leading-6 text-zinc-600 dark:text-zinc-400">
+                {starterCopy.subtitle}
+              </p>
+            </div>
 
             {onQuickSend && (
-              <div className="mt-8 grid w-full gap-2 sm:grid-cols-3">
+              <div className="mt-8 grid w-full divide-y divide-black/[0.09] overflow-hidden rounded-md border border-black/[0.1] bg-white dark:divide-white/[0.09] dark:border-white/[0.1] dark:bg-[#141416] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                 {STARTERS[language].map((item) => (
                   <button
-                    key={item.label}
+                    key={item.index}
                     type="button"
                     onClick={() => handleSuggestionClick(item.text)}
-                    className="group rounded-xl border border-stone-200 bg-white px-4 py-4 text-left transition-colors hover:border-stone-300 hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-500/30 dark:border-white/[0.08] dark:bg-[#191817] dark:hover:border-white/[0.14] dark:hover:bg-[#201e1c]"
+                    className="group flex flex-col items-start justify-between gap-3 p-4 text-left transition-colors duration-150 hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
                   >
-                    <span className="block text-[13px] font-medium leading-snug text-stone-900 dark:text-stone-100">
-                      {item.label}
+                    <span className="font-mono text-[11px] tabular-nums text-amber-700 dark:text-amber-400">
+                      {item.index}
                     </span>
-                    <span className="mt-1 block text-[11px] leading-snug text-stone-500 dark:text-stone-500">
-                      {item.translation}
-                    </span>
+                    <div>
+                      <span className="block text-[13px] font-medium leading-snug text-[#111113] dark:text-zinc-100">
+                        {item.label}
+                      </span>
+                      <span className="mt-1 block text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
+                        {item.translation}
+                      </span>
+                    </div>
                   </button>
                 ))}
               </div>
             )}
           </div>
         ) : (
-          <div className="flex w-full flex-col gap-5 pb-4">
+          <div className="flex w-full flex-col gap-6 pb-4">
             {messages.map((message) => (
               <ChatMessage
                 key={message._id ?? `${message.createdAt}-${message.role}`}

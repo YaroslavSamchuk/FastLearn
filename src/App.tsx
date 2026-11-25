@@ -827,7 +827,7 @@ const AppContent: React.FC = () => {
 
   if (!authChecked) {
     return (
-      <div className="flex h-[100dvh] items-center justify-center bg-[#faf9f6] text-stone-500 dark:bg-[#0c0a09] dark:text-stone-500">
+      <div className="flex h-[100dvh] items-center justify-center bg-[#f4f4f2] text-zinc-500 dark:bg-[#0c0c0e] dark:text-zinc-500">
         <p className="font-mono text-[12px]">FastLearn</p>
       </div>
     );
@@ -835,19 +835,21 @@ const AppContent: React.FC = () => {
 
   if (!user) {
     return (
-      <main className="flex h-[100dvh] items-center justify-center bg-[#f7f4ee] px-6 text-stone-900 dark:bg-[#12100e] dark:text-stone-100">
+      <main className="flex h-[100dvh] items-center justify-center bg-[#f4f4f2] px-6 text-[#111113] dark:bg-[#0c0c0e] dark:text-zinc-100">
         <section className="w-full max-w-sm" aria-labelledby="login-title">
-          <p className="font-mono text-[12px] text-amber-700 dark:text-amber-400">FastLearn</p>
-          <h1 id="login-title" className="mt-3 text-[32px] font-medium leading-tight">
-            Увійдіть, щоб продовжити практику
-          </h1>
-          <p className="mt-3 text-[14px] leading-6 text-stone-600 dark:text-stone-400">
-            Діалоги, налаштування та пам’ять зберігатимуться в вашому акаунті
-          </p>
+          <div className="border-l-2 border-amber-500 pl-4">
+            <p className="font-mono text-[12px] text-amber-700 dark:text-amber-400">FastLearn</p>
+            <h1 id="login-title" className="mt-2 text-[28px] font-medium tracking-[-0.02em] leading-tight">
+              Увійдіть, щоб продовжити практику
+            </h1>
+            <p className="mt-3 text-[14px] leading-6 text-zinc-600 dark:text-zinc-400">
+              Діалоги, налаштування та пам’ять зберігатимуться у вашому акаунті.
+            </p>
+          </div>
           <button
             type="button"
             onClick={handleGoogleLogin}
-            className="mt-8 flex h-12 w-full items-center justify-center gap-3 rounded-lg border border-stone-300 bg-white px-5 text-[14px] font-medium text-stone-900 transition-colors hover:bg-stone-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-500/30 dark:border-white/[0.12] dark:bg-[#191817] dark:text-stone-100 dark:hover:bg-[#201e1c]"
+            className="mt-8 flex h-11 w-full items-center justify-center gap-3 rounded-[4px] border border-black/[0.14] bg-white px-5 text-[14px] font-medium text-[#111113] transition-colors hover:bg-[#eaeae7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:border-white/[0.14] dark:bg-[#141416] dark:text-zinc-100 dark:hover:bg-[#1c1c1f]"
           >
             <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -857,7 +859,7 @@ const AppContent: React.FC = () => {
             </svg>
             Продовжити через Google
           </button>
-          <p className="mt-3 text-center text-[11px] text-stone-500 dark:text-stone-500">
+          <p className="mt-3 text-center text-[11px] text-zinc-500 dark:text-zinc-500">
             Можна вибрати будь-який Google-акаунт
           </p>
         </section>
@@ -866,7 +868,7 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#faf9f6] text-stone-900 transition-colors duration-200 dark:bg-[#0c0a09] dark:text-stone-100">
+    <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#f4f4f2] text-[#111113] dark:bg-[#0c0c0e] dark:text-zinc-100">
       <Toast toasts={toasts} onDismiss={dismissToast} />
 
       <Header
@@ -985,7 +987,7 @@ function installTheme(theme: 'dark' | 'light') {
   root.classList.toggle('dark', theme === 'dark');
   root.classList.toggle('light', theme !== 'dark');
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0c0a09' : '#faf9f6');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0c0c0e' : '#f4f4f2');
 }
 
 export default App;

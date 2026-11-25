@@ -65,19 +65,19 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
   };
 
   const subtleButton =
-    'text-stone-500 hover:bg-stone-200/60 hover:text-stone-900 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-100';
+    'text-zinc-500 hover:bg-black/[0.06] hover:text-[#111113] dark:text-zinc-400 dark:hover:bg-white/[0.07] dark:hover:text-zinc-100';
 
   return (
     <div className="flex items-center gap-1 select-none">
       {!isUser && (
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={handlePlayAudio}
-            className={`inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[12px] transition-colors ${subtleButton} ${
+            className={`inline-flex h-7 items-center gap-1.5 rounded-[4px] px-1.5 text-[12px] transition-colors duration-150 ${subtleButton} ${
               isPlaying ? 'text-amber-700 dark:text-amber-400' : ''
             }`}
-            title={isPlaying ? 'Зупинити відтворення' : `Прослухати зі швидкістю ${speed}x`}
+            title={isPlaying ? 'Зупинити відтворення' : `Прослухати зі швидкістю ${speed}×`}
             aria-label={isPlaying ? 'Зупинити відтворення' : 'Прослухати повідомлення'}
           >
             {isPlaying ? (
@@ -90,7 +90,7 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
           <button
             type="button"
             onClick={handleToggleSpeed}
-            className="h-7 rounded-md px-1 font-mono text-[11px] text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-800 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-200"
+            className="h-7 rounded-[4px] px-1.5 font-mono text-[11px] tabular-nums text-zinc-500 transition-colors duration-150 hover:bg-black/[0.06] hover:text-[#111113] dark:text-zinc-400 dark:hover:bg-white/[0.07] dark:hover:text-zinc-100"
             title="Змінити темп мовлення"
             aria-label={`Темп мовлення ${speed}×. Натисніть, щоб змінити`}
           >
@@ -102,14 +102,14 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
       <button
         type="button"
         onClick={handleCopy}
-        className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${subtleButton}`}
-        title="Скопіювати текст"
-        aria-label="Скопіювати текст"
+        className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] transition-colors duration-150 ${subtleButton}`}
+        title="Копіювати текст"
+        aria-label="Копіювати текст"
       >
         {copied ? (
-          <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" strokeWidth={2} />
+          <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" strokeWidth={1.75} />
         ) : (
-          <Copy className="h-4 w-4" strokeWidth={1.75} />
+          <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />
         )}
       </button>
     </div>

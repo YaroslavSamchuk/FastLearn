@@ -168,11 +168,11 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
               data-token-idx={token.index}
               data-msg-id={messageId}
               onPointerDown={(e) => handlePointerDown(e, token.index)}
-              className={`inline rounded-[4px] px-[2.5px] py-[0.5px] transition-colors duration-100 ${
+              className={`inline rounded-[2px] px-[2px] py-[0.5px] transition-colors duration-150 ${
                 isSelected
-                  ? 'bg-amber-300 font-medium text-stone-950 shadow-sm dark:bg-amber-400 dark:text-stone-950'
-                  : 'hover:bg-stone-900/[0.07] dark:hover:bg-white/[0.09]'
-              } ${token.isBold ? 'font-semibold' : ''} ${token.isItalic ? 'italic' : ''}`}
+                  ? 'bg-amber-300 font-medium text-[#111113] dark:bg-amber-400 dark:text-[#111113]'
+                  : 'hover:bg-black/[0.07] dark:hover:bg-white/[0.1]'
+              } ${token.isBold ? 'font-medium' : ''} ${token.isItalic ? 'italic' : ''}`}
             >
               {token.text}
             </span>

@@ -17,14 +17,14 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 }) => {
   return (
     <span
-      className={`inline-flex h-4 items-center gap-[2.5px] ${className}`}
+      className={`inline-flex h-4 items-center gap-[2px] ${className}`}
       role="img"
       aria-label={isPlaying ? 'Аудіо відтворюється' : 'Аудіо зупинено'}
     >
       {BARS.map((animation, index) => (
         <span
           key={animation}
-          className={`w-[2.5px] rounded-full ${barColor} ${
+          className={`w-[2px] ${barColor} ${
             isPlaying ? animation : `${IDLE_HEIGHTS[index]} opacity-40`
           }`}
         />

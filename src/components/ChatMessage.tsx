@@ -41,8 +41,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       <div
         className={
           isUser
-            ? 'max-w-[85%] rounded-2xl bg-stone-200/65 px-4 py-2.5 text-stone-900 dark:bg-white/[0.07] dark:text-stone-100 sm:max-w-[72%]'
-            : 'w-full py-1 text-stone-900 dark:text-stone-100'
+            ? 'max-w-[85%] rounded-md border border-black/[0.1] bg-white px-4 py-2.5 text-[#111113] dark:border-white/[0.1] dark:bg-[#141416] dark:text-zinc-100 sm:max-w-[72%]'
+            : 'w-full py-1 text-[#111113] dark:text-zinc-100'
         }
       >
         <div className={isUser ? 'text-[15px] leading-[1.6]' : 'text-[15px] leading-[1.7]'}>
@@ -53,7 +53,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           />
           {isStreaming && (
             <span
-              className="ml-1 inline-block h-[1.1em] w-[2px] translate-y-[2px] animate-caret bg-stone-500 dark:bg-stone-400"
+              className="ml-1 inline-block h-[1em] w-[7px] translate-y-[2px] animate-caret bg-amber-500"
               aria-hidden="true"
             />
           )}
@@ -62,13 +62,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
       {!isStreaming && (
         <div
-          className={`mt-1 flex items-center gap-2 ${
+          className={`mt-1.5 flex items-center gap-2 ${
             isUser
-              ? 'justify-end px-1 opacity-75 transition-opacity duration-150 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100'
+              ? 'justify-end opacity-80 transition-opacity duration-150 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100'
               : 'w-full justify-between'
           }`}
         >
-          <div className={isUser ? '' : '-ml-1.5'}>
+          <div className={isUser ? '' : '-ml-1'}>
             <MessageActionsDock
               content={message.content}
               isUser={isUser}
@@ -83,7 +83,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           </div>
 
           {timeFormatted && (
-            <span className="shrink-0 font-mono text-[11px] tabular-nums text-stone-400 dark:text-stone-600">
+            <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
               {timeFormatted}
             </span>
           )}
