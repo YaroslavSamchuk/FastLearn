@@ -195,6 +195,9 @@ export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceNa
   let source = 'edge';
 
   if (!buffer) {
+    if (safeSpeed !== 1) {
+      throw new Error('Edge TTS is unavailable; refusing audio that would not preserve the requested speed');
+    }
     buffer = await synthesizeGoogle(cleanText, language, Math.min(1, safeSpeed));
     source = 'google';
   }
@@ -246,6 +249,9 @@ export async function synthesizeSpeechStream(text, language = 'da', speed = 1, v
   }
 
   edgeCooldownUntil = Date.now() + 30_000;
+  if (safeSpeed !== 1) {
+    throw new Error('Edge TTS is unavailable; refusing audio that would not preserve the requested speed');
+  }
   const buffer = await synthesizeGoogle(cleanText, language, Math.min(1, safeSpeed));
   return {
     stream: Readable.from([buffer]),

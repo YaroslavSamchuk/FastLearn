@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  applySpeechPlaybackRate,
   addDanishPhrasePauses,
   clampPlaybackSpeed,
-  PHRASE_PLAYBACK_SPEEDS
+  SPEECH_PLAYBACK_SPEEDS
 } from './speech.ts';
 
 test('adds commas around a selected phrase without changing its words', () => {
@@ -17,21 +16,10 @@ test('does not add pauses to empty or punctuation-only selections', () => {
   assert.equal(addDanishPhrasePauses(' , '), '');
 });
 
-test('preserves the phrase playback choices without changing standard chat speeds', () => {
-  assert.deepEqual(PHRASE_PLAYBACK_SPEEDS, [1, 0.7, 0.4]);
-  assert.equal(clampPlaybackSpeed(0.7, true), 0.7);
-  assert.equal(clampPlaybackSpeed(0.4, true), 0.4);
-  assert.equal(clampPlaybackSpeed(0.7), 0.8);
-  assert.equal(clampPlaybackSpeed(0.4), 0.6);
-});
-
-test('applies each supported speech rate to the media element without changing pitch', () => {
-  const audio = { playbackRate: 1, defaultPlaybackRate: 1, preservesPitch: false };
-
-  for (const speed of [1, 0.8, 0.6, 0.7, 0.4]) {
-    applySpeechPlaybackRate(audio, speed);
-    assert.equal(audio.playbackRate, speed);
-    assert.equal(audio.defaultPlaybackRate, speed);
-    assert.equal(audio.preservesPitch, true);
-  }
+test('uses the same synthesized speed options for messages and selected phrases', () => {
+  assert.deepEqual(SPEECH_PLAYBACK_SPEEDS, [1, 0.7, 0.5]);
+  assert.equal(clampPlaybackSpeed(0.7), 0.7);
+  assert.equal(clampPlaybackSpeed(0.5), 0.5);
+  assert.equal(clampPlaybackSpeed(0.4), 0.5);
+  assert.equal(clampPlaybackSpeed(0.8), 0.7);
 });

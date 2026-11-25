@@ -135,7 +135,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       onScroll={handleScroll}
       className="relative flex-1 overflow-y-auto overscroll-contain px-4 py-6 select-text sm:px-6"
     >
-      <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col">
+      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
         {messages.length === 0 && !streamingContent ? (
           <div className="flex flex-1 flex-col justify-center py-12">
             <p className="font-mono text-[11px] text-stone-500 dark:text-stone-500">
@@ -169,7 +169,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
             )}
           </div>
         ) : (
-          <div className="flex w-full flex-col gap-4 pb-2">
+          <div className="flex w-full flex-col gap-5 pb-4">
             {messages.map((message) => (
               <ChatMessage
                 key={message._id ?? `${message.createdAt}-${message.role}`}

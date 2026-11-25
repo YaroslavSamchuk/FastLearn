@@ -6,6 +6,7 @@ import {
   type MemoryToolEvent
 } from '../server/memory.js';
 import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from '../server/modelConfig.js';
+import { synthesizeEdgeSpeech } from './edgeTts';
 
 export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
@@ -1232,45 +1233,6 @@ function splitTtsText(text: string, maxChars: number): string[] {
   return chunks.filter(Boolean);
 }
 
-async function googleTtsChunk(text: string, language: 'da' | 'en', speed: number): Promise<Uint8Array> {
-  const url = new URL('https://translate.google.com/translate_tts');
-  url.searchParams.set('ie', 'UTF-8');
-  url.searchParams.set('client', 'tw-ob');
-  url.searchParams.set('tl', language);
-  url.searchParams.set('ttsspeed', String(speed));
-  url.searchParams.set('total', '1');
-  url.searchParams.set('idx', '0');
-  url.searchParams.set('textlen', String(text.length));
-  url.searchParams.set('q', text);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
-
-  try {
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: 'audio/mpeg,audio/*;q=0.9,*/*;q=0.5',
-        Referer: 'https://translate.google.com/',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-      },
-      signal: controller.signal
-    });
-
-    if (!response.ok) throw new Error(`Google TTS returned HTTP ${response.status}`);
-    const contentType = response.headers.get('content-type') ?? '';
-    if (!contentType.includes('audio')) {
-      throw new Error(`Google TTS returned ${contentType || 'an unknown content type'}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) throw new Error('Google TTS returned an empty audio file');
-    return new Uint8Array(buffer);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function synthesizeSpeech(
   text: string,
   language: 'da' | 'en',
@@ -1286,7 +1248,7 @@ async function synthesizeSpeech(
   const buffers = await Promise.all(chunks.map(async (chunk, index) => {
     const started = Date.now();
     try {
-      const buffer = await googleTtsChunk(chunk, language, speed);
+      const buffer = await synthesizeEdgeSpeech(chunk, language, speed);
       logEvent('tts_chunk_ok', {
         id,
         chunk: index + 1,

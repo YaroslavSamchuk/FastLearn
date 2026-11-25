@@ -8,6 +8,15 @@ function makeKey(language: SpeechLanguage, text: string, speed: number): string 
   return `${language}:${speed}:${text}`;
 }
 
+function rememberAudio(key: string, audio: Blob): void {
+  audioCache.set(key, audio);
+  while (audioCache.size > CACHE_LIMIT) {
+    const oldestKey = audioCache.keys().next().value;
+    if (!oldestKey) break;
+    audioCache.delete(oldestKey);
+  }
+}
+
 export function getPrefetchedSpeechAudio(
   language: SpeechLanguage,
   text: string,
@@ -20,6 +29,17 @@ export function getPrefetchedSpeechAudio(
   audioCache.delete(key);
   audioCache.set(key, audio);
   return audio;
+}
+
+export async function loadSpeechAudioVariants(
+  language: SpeechLanguage,
+  text: string,
+  speeds: readonly number[],
+  load: (speed: number) => Promise<Blob>
+): Promise<Blob[]> {
+  return Promise.all(
+    speeds.map((speed) => loadSpeechAudio(language, text, speed, () => load(speed)))
+  );
 }
 
 export function loadSpeechAudio(
@@ -37,12 +57,7 @@ export function loadSpeechAudio(
 
   const request = load()
     .then((audio) => {
-      audioCache.set(key, audio);
-      while (audioCache.size > CACHE_LIMIT) {
-        const oldestKey = audioCache.keys().next().value;
-        if (!oldestKey) break;
-        audioCache.delete(oldestKey);
-      }
+      rememberAudio(key, audio);
       return audio;
     })
     .finally(() => {

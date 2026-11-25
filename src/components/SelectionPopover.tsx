@@ -16,7 +16,10 @@ import {
   PHRASE_PLAYBACK_SPEEDS,
   toSpeechText
 } from '../lib/speech.ts';
-import { getPrefetchedSpeechAudio, loadSpeechAudio } from '../lib/speechAudioCache.ts';
+import {
+  getPrefetchedSpeechAudio,
+  loadSpeechAudioVariants
+} from '../lib/speechAudioCache.ts';
 import {
   getTranslationHistoryEntry,
   updateTranslationHistoryEntry
@@ -161,35 +164,26 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         : selection.text;
       const speechText = toSpeechText(speechInput);
       if (speechText) {
-        for (const speed of PHRASE_PLAYBACK_SPEEDS) {
-          if (getPrefetchedSpeechAudio(language, speechText, speed)) {
-            setReadyPhraseSpeeds((previous) => [...previous, speed]);
-            continue;
-          }
-
+        const allSpeedsReady = PHRASE_PLAYBACK_SPEEDS.every((speed) =>
+          getPrefetchedSpeechAudio(language, speechText, speed)
+        );
+        if (allSpeedsReady) {
+          setReadyPhraseSpeeds([...PHRASE_PLAYBACK_SPEEDS]);
+        } else {
           tasks.push(
-            loadSpeechAudio(
+            loadSpeechAudioVariants(
               language,
               speechText,
-              speed,
-              () => fetchSpeechAudio(speechText, language, speed, controller.signal)
+              PHRASE_PLAYBACK_SPEEDS,
+              (speed) => fetchSpeechAudio(speechText, language, speed, controller.signal)
             )
               .then(() => {
-                if (active) {
-                  setReadyPhraseSpeeds((previous) =>
-                    previous.includes(speed) ? previous : [...previous, speed]
-                  );
-                }
+                if (active) setReadyPhraseSpeeds([...PHRASE_PLAYBACK_SPEEDS]);
               })
               .catch((reason: unknown) => {
                 if (reason instanceof DOMException && reason.name === 'AbortError') return;
-                if (active) {
-                  setFailedPhraseSpeeds((previous) =>
-                    previous.includes(speed) ? previous : [...previous, speed]
-                  );
-                }
-                log.warn('audio', 'Could not prefetch selected phrase audio', {
-                  speed,
+                if (active) setFailedPhraseSpeeds([...PHRASE_PLAYBACK_SPEEDS]);
+                log.warn('audio', 'Could not preload selected phrase audio', {
                   error: reason instanceof Error ? reason.message : String(reason)
                 });
               })

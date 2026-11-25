@@ -171,7 +171,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
               className={`inline rounded-[4px] px-[2.5px] py-[0.5px] transition-colors duration-100 ${
                 isSelected
                   ? 'bg-amber-300 font-medium text-stone-950 shadow-sm dark:bg-amber-400 dark:text-stone-950'
-                  : 'hover:bg-stone-200/60 dark:hover:bg-white/[0.08]'
+                  : 'hover:bg-stone-900/[0.07] dark:hover:bg-white/[0.09]'
               } ${token.isBold ? 'font-semibold' : ''} ${token.isItalic ? 'italic' : ''}`}
             >
               {token.text}

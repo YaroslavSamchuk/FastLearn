@@ -66,8 +66,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   if (!isLoggedIn) {
     return (
-      <div className="shrink-0 border-t border-stone-200/80 bg-[#faf9f6] px-4 py-4 pb-safe transition-colors dark:border-white/[0.08] dark:bg-[#0c0a09] sm:px-6">
-        <div className="mx-auto max-w-2xl">
+      <div className="shrink-0 border-t border-stone-200/60 bg-[#faf9f6] px-4 py-4 pb-safe transition-colors dark:border-white/[0.06] dark:bg-[#0c0a09] sm:px-6">
+        <div className="mx-auto max-w-3xl">
           <button
             type="button"
             onClick={() => {
@@ -105,8 +105,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }
 
   return (
-    <div className="shrink-0 border-t border-stone-200/80 bg-[#faf9f6] px-3 py-3 pb-safe transition-colors dark:border-white/[0.08] dark:bg-[#0c0a09] sm:px-6 sm:py-4">
-      <form onSubmit={handleSubmit} className="mx-auto max-w-2xl">
+    <div className="shrink-0 border-t border-stone-200/60 bg-[#faf9f6] px-3 py-3 pb-safe transition-colors dark:border-white/[0.06] dark:bg-[#0c0a09] sm:px-6 sm:py-4">
+      <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
         <div
           className={`flex items-end gap-2 rounded-2xl border bg-white p-2 transition-colors dark:bg-[#191817] ${
             isLimitReached

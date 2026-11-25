@@ -35,15 +35,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     : '';
 
   return (
-    <div className={`flex w-full px-0.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`group flex w-full flex-col ${isUser ? 'items-end' : 'items-start'}`}>
       <div
-        className={`max-w-[92%] rounded-2xl px-4 py-3.5 sm:max-w-[80%] ${
+        className={
           isUser
-            ? 'rounded-br-lg bg-stone-900 text-stone-50 shadow-sm shadow-stone-950/10 dark:bg-stone-100 dark:text-stone-950'
-            : 'rounded-bl-lg border border-stone-200/90 bg-white text-stone-900 shadow-sm shadow-stone-900/[0.03] dark:border-white/[0.08] dark:bg-[#191817] dark:text-stone-100'
-        }`}
+            ? 'max-w-[85%] rounded-2xl bg-stone-200/65 px-4 py-2.5 text-stone-900 dark:bg-white/[0.07] dark:text-stone-100 sm:max-w-[72%]'
+            : 'w-full py-1 text-stone-900 dark:text-stone-100'
+        }
       >
-        <div className="text-[15px] leading-6">
+        <div className={isUser ? 'text-[15px] leading-[1.6]' : 'text-[15px] leading-[1.7]'}>
           <SelectableText
             text={message.content}
             messageId={message._id ?? `${message.createdAt}-${message.role}`}
@@ -56,9 +56,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
             />
           )}
         </div>
+      </div>
 
-        {!isStreaming && (
-          <div className="mt-2 flex items-center justify-between gap-3">
+      {!isStreaming && (
+        <div
+          className={`mt-1 flex items-center gap-2 ${
+            isUser
+              ? 'justify-end px-1 opacity-75 transition-opacity duration-150 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100'
+              : 'w-full justify-between'
+          }`}
+        >
+          <div className={isUser ? '' : '-ml-1.5'}>
             <MessageActionsDock
               content={message.content}
               isUser={isUser}
@@ -69,21 +77,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               onSpeedChange={onPlaybackSpeedChange}
               onShowToast={onShowToast}
             />
-
-            {timeFormatted && (
-              <span
-                className={`shrink-0 font-mono text-[11px] tabular-nums ${
-                  isUser
-                    ? 'text-stone-400 dark:text-stone-500'
-                    : 'text-stone-500 dark:text-stone-500'
-                }`}
-              >
-                {timeFormatted}
-              </span>
-            )}
           </div>
-        )}
-      </div>
+
+          {timeFormatted && (
+            <span className="shrink-0 font-mono text-[11px] tabular-nums text-stone-400 dark:text-stone-600">
+              {timeFormatted}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 };

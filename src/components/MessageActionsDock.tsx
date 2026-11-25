@@ -4,6 +4,7 @@ import { Volume2, Copy, Check } from 'lucide-react';
 import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { haptic } from '../utils/haptics.ts';
 import { log } from '../lib/logger.ts';
+import { SPEECH_PLAYBACK_SPEEDS } from '../lib/speech.ts';
 
 interface MessageActionsDockProps {
   content: string;
@@ -15,8 +16,6 @@ interface MessageActionsDockProps {
   onSpeedChange: (speed: number) => void;
   onShowToast: (msg: string, type?: 'success' | 'info' | 'warning') => void;
 }
-
-const SPEEDS = [1, 0.8, 0.6];
 
 export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
   content,
@@ -47,8 +46,8 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
 
   const handleToggleSpeed = () => {
     haptic.tap();
-    const currentIndex = SPEEDS.indexOf(speed);
-    const nextSpeed = SPEEDS[(currentIndex + 1) % SPEEDS.length] ?? 1;
+    const currentIndex = SPEECH_PLAYBACK_SPEEDS.findIndex((candidate) => candidate === speed);
+    const nextSpeed = SPEECH_PLAYBACK_SPEEDS[(currentIndex + 1) % SPEECH_PLAYBACK_SPEEDS.length] ?? 1;
     onSpeedChange(nextSpeed);
     log.debug('audio', 'Playback speed changed', { speed: nextSpeed });
   };
@@ -62,9 +61,8 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
     onPlay(speed);
   };
 
-  const subtleButton = isUser
-    ? 'text-stone-400 hover:bg-white/10 hover:text-stone-100 dark:text-stone-500 dark:hover:bg-black/10 dark:hover:text-stone-900'
-    : 'text-stone-500 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-100';
+  const subtleButton =
+    'text-stone-500 hover:bg-stone-200/60 hover:text-stone-900 dark:text-stone-500 dark:hover:bg-white/[0.06] dark:hover:text-stone-100';
 
   return (
     <div className="flex items-center gap-1 select-none">

@@ -35,7 +35,7 @@ import {
 import { log } from './lib/logger.ts';
 import { readString, storageKeys, writeString } from './lib/storage.ts';
 import { loadSpeechAudio } from './lib/speechAudioCache.ts';
-import { toSpeechText } from './lib/speech.ts';
+import { SPEECH_PLAYBACK_SPEEDS, toSpeechText } from './lib/speech.ts';
 import { getCachedSpeech, saveCachedSpeech } from './lib/translationHistory.ts';
 
 const GOOGLE_CLIENT_ID =
@@ -52,23 +52,24 @@ function preloadAssistantAudio(text: string, userId: string, language: Language)
   const spokenText = toSpeechText(text);
   if (!spokenText) return;
 
-  void getCachedSpeech(userId, language, text, 1)
-    .catch((error: unknown) => {
+  void Promise.all(SPEECH_PLAYBACK_SPEEDS.map(async (speed) => {
+    const cachedAudio = await getCachedSpeech(userId, language, text, speed).catch((error: unknown) => {
       log.warn('audio', 'Could not check the assistant audio cache', {
         language,
+        speed,
         error: error instanceof Error ? error.message : String(error)
       });
       return null;
-    })
-    .then((cachedAudio) => {
-      if (cachedAudio) return;
-      return loadSpeechAudio(
-        language,
-        spokenText,
-        1,
-        () => fetchSpeechAudio(spokenText, language, 1)
-      ).then((audio) => saveCachedSpeech(userId, language, text, 1, audio));
-    })
+    });
+    if (cachedAudio) return;
+    const audio = await loadSpeechAudio(
+      language,
+      spokenText,
+      speed,
+      () => fetchSpeechAudio(spokenText, language, speed)
+    );
+    await saveCachedSpeech(userId, language, text, speed, audio);
+  }))
     .then(() => {
       log.info('audio', 'Assistant message audio preloaded', {
         language,

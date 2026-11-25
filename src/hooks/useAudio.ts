@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchSpeechAudio, ttsUrl } from '../lib/api.ts';
 import {
-  applySpeechPlaybackRate,
   addDanishPhrasePauses,
   clampPlaybackSpeed,
   toSpeechText
@@ -113,7 +112,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
 
       stop();
       const requestId = requestRef.current;
-      const safeSpeed = clampPlaybackSpeed(speed, cacheForHistory || addPhrasePauses);
+      const safeSpeed = clampPlaybackSpeed(speed);
       const cacheKey = `${userId}:${language}:${safeSpeed}:${spokenText}`;
 
       setIsPlaying(true);
@@ -131,9 +130,9 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
 
         if (!url) {
           let blob: Blob | null = null;
-          if (userId && !addPhrasePauses && safeSpeed === 1) {
+          if (userId && !addPhrasePauses) {
             try {
-              blob = await getCachedSpeech(userId, language, text, 1);
+              blob = await getCachedSpeech(userId, language, text, safeSpeed);
             } catch (error) {
               log.warn('audio', 'Could not read persistent speech cache', {
                 error: error instanceof Error ? error.message : String(error)
@@ -146,36 +145,25 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
           }
         }
 
-        let synthesizedRateReady = false;
         if (!url) {
           const prefetched = getPrefetchedSpeechAudio(language, spokenText, safeSpeed);
           if (prefetched) {
             url = URL.createObjectURL(prefetched);
             rememberUrl(cacheKey, url);
-            synthesizedRateReady = true;
           }
         }
-        synthesizedRateReady = synthesizedRateReady || (cacheForHistory && Boolean(url));
 
         if (requestRef.current !== requestId) return;
 
         const isRemoteStream = !url;
-        const audio = new Audio(url ?? ttsUrl(spokenText, language, 1));
-        const playbackSpeed = synthesizedRateReady ? 1 : safeSpeed;
-        const applyRate = () => {
-          if (requestRef.current === requestId) applySpeechPlaybackRate(audio, playbackSpeed);
-        };
-        applyRate();
-        audio.onloadedmetadata = applyRate;
-        audio.oncanplay = applyRate;
-        audio.onplaying = applyRate;
+        const audio = new Audio(url ?? ttsUrl(spokenText, language, safeSpeed));
         audioRef.current = audio;
         audio.onended = () => {
           if (isRemoteStream && cacheForHistory && userId && !addPhrasePauses) {
             const controller = new AbortController();
             fetchRef.current = controller;
-            void fetchSpeechAudio(spokenText, language, 1, controller.signal)
-              .then((blob) => saveCachedSpeech(userId, language, text, 1, blob))
+            void fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal)
+              .then((blob) => saveCachedSpeech(userId, language, text, safeSpeed, blob))
               .catch((error: unknown) => {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
                 log.warn('audio', 'Could not save persistent speech cache', {

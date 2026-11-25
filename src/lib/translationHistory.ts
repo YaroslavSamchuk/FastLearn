@@ -10,19 +10,19 @@ export interface TranslationHistoryEntry {
   translation?: string;
   ipa?: string;
   normalAudio?: Blob;
-  slowAudio?: Blob;
-  slowAudio06?: Blob;
+  slowAudio07?: Blob;
+  slowAudio05?: Blob;
   sizeBytes: number;
   lastUsedAt: number;
 }
 
 type TranslationHistoryUpdate = Partial<
-  Pick<TranslationHistoryEntry, 'translation' | 'ipa' | 'normalAudio' | 'slowAudio' | 'slowAudio06'>
+  Pick<TranslationHistoryEntry, 'translation' | 'ipa' | 'normalAudio' | 'slowAudio07' | 'slowAudio05'>
 >;
 
 const DATABASE_NAME = 'fastlearn_translation_history';
 const STORE_NAME = 'entries';
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 
 function makeKey(userId: string, language: 'da' | 'en', text: string): string {
   return `${userId}:${language}:${text.trim().replace(/\s+/g, ' ').toLocaleLowerCase()}`;
@@ -35,11 +35,33 @@ function openDatabase(): Promise<IDBDatabase> {
 
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         const store = database.createObjectStore(STORE_NAME, { keyPath: 'key' });
         store.createIndex('lastUsedAt', 'lastUsedAt');
+      } else if (event.oldVersion < 2) {
+        const store = request.transaction?.objectStore(STORE_NAME);
+        if (!store) {
+          reject(new Error('Could not access translation history during its upgrade'));
+          return;
+        }
+
+        const cursorRequest = store.openCursor();
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+
+          const entry = cursor.value as TranslationHistoryEntry & {
+            slowAudio?: Blob;
+            slowAudio06?: Blob;
+          };
+          delete entry.slowAudio;
+          delete entry.slowAudio06;
+          entry.sizeBytes = entrySize(entry);
+          cursor.update(entry);
+          cursor.continue();
+        };
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -71,8 +93,8 @@ function entrySize(entry: Omit<TranslationHistoryEntry, 'sizeBytes'>): number {
   ).byteLength;
   return textBytes
     + (entry.normalAudio?.size ?? 0)
-    + (entry.slowAudio?.size ?? 0)
-    + (entry.slowAudio06?.size ?? 0);
+    + (entry.slowAudio07?.size ?? 0)
+    + (entry.slowAudio05?.size ?? 0);
 }
 
 export async function getTranslationHistoryEntry(
@@ -120,8 +142,8 @@ export async function updateTranslationHistoryEntry(
     translation: update.translation ?? existing?.translation,
     ipa: update.ipa ?? existing?.ipa,
     normalAudio: update.normalAudio ?? existing?.normalAudio,
-    slowAudio: update.slowAudio ?? existing?.slowAudio,
-    slowAudio06: update.slowAudio06 ?? existing?.slowAudio06,
+    slowAudio07: update.slowAudio07 ?? existing?.slowAudio07,
+    slowAudio05: update.slowAudio05 ?? existing?.slowAudio05,
     lastUsedAt: Date.now()
   };
   const next: TranslationHistoryEntry = {
@@ -164,8 +186,8 @@ export function getCachedSpeech(
 ): Promise<Blob | null> {
   return getTranslationHistoryEntry(userId, language, text).then((entry) => {
     if (speed === 1) return entry?.normalAudio ?? null;
-    if (speed === 0.8) return entry?.slowAudio ?? null;
-    if (speed === 0.6) return entry?.slowAudio06 ?? null;
+    if (speed === 0.7) return entry?.slowAudio07 ?? null;
+    if (speed === 0.5) return entry?.slowAudio05 ?? null;
     return null;
   });
 }
@@ -180,10 +202,10 @@ export function saveCachedSpeech(
   const update =
     speed === 1
       ? { normalAudio: audio }
-      : speed === 0.8
-        ? { slowAudio: audio }
-        : speed === 0.6
-          ? { slowAudio06: audio }
+      : speed === 0.7
+        ? { slowAudio07: audio }
+        : speed === 0.5
+          ? { slowAudio05: audio }
           : null;
   if (!update) return Promise.reject(new RangeError(`Unsupported speech speed: ${speed}`));
 
