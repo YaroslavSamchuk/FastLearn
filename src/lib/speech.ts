@@ -33,3 +33,13 @@ export function clampPlaybackSpeed(speed: number, allowPhraseSpeeds = false): nu
     1
   );
 }
+
+export function applySpeechPlaybackRate(
+  audio: Pick<HTMLAudioElement, 'playbackRate' | 'defaultPlaybackRate' | 'preservesPitch'>,
+  speed: number
+): void {
+  const rate = clampPlaybackSpeed(speed, true);
+  audio.defaultPlaybackRate = rate;
+  audio.playbackRate = rate;
+  audio.preservesPitch = true;
+}

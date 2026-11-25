@@ -11,10 +11,14 @@ import {
   getPronunciation,
   translateSelection
 } from '../lib/api.ts';
-import { PHRASE_PLAYBACK_SPEEDS, toSpeechText } from '../lib/speech.ts';
+import {
+  addDanishPhrasePauses,
+  PHRASE_PLAYBACK_SPEEDS,
+  toSpeechText
+} from '../lib/speech.ts';
+import { getPrefetchedSpeechAudio, loadSpeechAudio } from '../lib/speechAudioCache.ts';
 import {
   getTranslationHistoryEntry,
-  saveCachedSpeech,
   updateTranslationHistoryEntry
 } from '../lib/translationHistory.ts';
 
@@ -48,6 +52,8 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
   const [loadingPronunciation, setLoadingPronunciation] = useState(true);
   const [translationError, setTranslationError] = useState<string | null>(null);
   const [pronunciationError, setPronunciationError] = useState(false);
+  const [readyPhraseSpeeds, setReadyPhraseSpeeds] = useState<number[]>([]);
+  const [failedPhraseSpeeds, setFailedPhraseSpeeds] = useState<number[]>([]);
   const [attempt, setAttempt] = useState(0);
   const [style, setStyle] = useState<React.CSSProperties>({
     left: selection.x,
@@ -64,6 +70,8 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
     setLoadingPronunciation(true);
     setTranslationError(null);
     setPronunciationError(false);
+    setReadyPhraseSpeeds([]);
+    setFailedPhraseSpeeds([]);
     setData(null);
 
     const saveHistory = (
@@ -148,27 +156,45 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         setLoadingPronunciation(false);
       }
 
-      const speechText = toSpeechText(selection.text);
-      const speechVariants = [{ speed: 1, cachedAudio: cached?.normalAudio }];
-      for (const variant of speechVariants) {
-        if (!speechText || variant.cachedAudio) continue;
-        tasks.push(
-          fetchSpeechAudio(speechText, language, variant.speed, controller.signal)
-            .then((audio) => saveCachedSpeech(
-              userId,
+      const speechInput = language === 'da'
+        ? addDanishPhrasePauses(selection.text)
+        : selection.text;
+      const speechText = toSpeechText(speechInput);
+      if (speechText) {
+        for (const speed of PHRASE_PLAYBACK_SPEEDS) {
+          if (getPrefetchedSpeechAudio(language, speechText, speed)) {
+            setReadyPhraseSpeeds((previous) => [...previous, speed]);
+            continue;
+          }
+
+          tasks.push(
+            loadSpeechAudio(
               language,
-              selection.text,
-              variant.speed,
-              audio
-            ))
-            .catch((reason: unknown) => {
-              if (reason instanceof DOMException && reason.name === 'AbortError') return;
-              log.warn('audio', 'Could not prefetch selected phrase audio', {
-                speed: variant.speed,
-                error: reason instanceof Error ? reason.message : String(reason)
-              });
-            })
-        );
+              speechText,
+              speed,
+              () => fetchSpeechAudio(speechText, language, speed, controller.signal)
+            )
+              .then(() => {
+                if (active) {
+                  setReadyPhraseSpeeds((previous) =>
+                    previous.includes(speed) ? previous : [...previous, speed]
+                  );
+                }
+              })
+              .catch((reason: unknown) => {
+                if (reason instanceof DOMException && reason.name === 'AbortError') return;
+                if (active) {
+                  setFailedPhraseSpeeds((previous) =>
+                    previous.includes(speed) ? previous : [...previous, speed]
+                  );
+                }
+                log.warn('audio', 'Could not prefetch selected phrase audio', {
+                  speed,
+                  error: reason instanceof Error ? reason.message : String(reason)
+                });
+              })
+          );
+        }
       }
 
       void Promise.allSettled(tasks);
@@ -363,6 +389,8 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               >
                 {active ? (
                   <AudioVisualizer isPlaying barColor="bg-stone-950" />
+                ) : !readyPhraseSpeeds.includes(speed) && !failedPhraseSpeeds.includes(speed) ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={1.75} />
                 ) : (
                   <Volume2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
                 )}

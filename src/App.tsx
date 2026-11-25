@@ -15,6 +15,7 @@ import { haptic } from './utils/haptics.ts';
 import {
   ApiError,
   checkHealth,
+  fetchSpeechAudio,
   generateChatTitle,
   getSessionUser,
   getWorkspace,
@@ -33,6 +34,9 @@ import {
 } from './lib/data.ts';
 import { log } from './lib/logger.ts';
 import { readString, storageKeys, writeString } from './lib/storage.ts';
+import { loadSpeechAudio } from './lib/speechAudioCache.ts';
+import { toSpeechText } from './lib/speech.ts';
+import { getCachedSpeech, saveCachedSpeech } from './lib/translationHistory.ts';
 
 const GOOGLE_CLIENT_ID =
   (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ||
@@ -42,6 +46,42 @@ function errorText(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function preloadAssistantAudio(text: string, userId: string, language: Language): void {
+  const spokenText = toSpeechText(text);
+  if (!spokenText) return;
+
+  void getCachedSpeech(userId, language, text, 1)
+    .catch((error: unknown) => {
+      log.warn('audio', 'Could not check the assistant audio cache', {
+        language,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    })
+    .then((cachedAudio) => {
+      if (cachedAudio) return;
+      return loadSpeechAudio(
+        language,
+        spokenText,
+        1,
+        () => fetchSpeechAudio(spokenText, language, 1)
+      ).then((audio) => saveCachedSpeech(userId, language, text, 1, audio));
+    })
+    .then(() => {
+      log.info('audio', 'Assistant message audio preloaded', {
+        language,
+        chars: spokenText.length
+      });
+    })
+    .catch((error: unknown) => {
+      log.warn('audio', 'Could not preload assistant message audio', {
+        language,
+        chars: spokenText.length,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
 }
 
 function isUserAbort(error: unknown): boolean {
@@ -622,6 +662,7 @@ const AppContent: React.FC = () => {
       });
 
       const assistantMessage = createAssistantMessage(chatId, result.text);
+      preloadAssistantAudio(result.text, user.id, currentLanguage);
       setData((previous) => ({
         ...previous,
         messages: {

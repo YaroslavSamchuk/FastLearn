@@ -2,12 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchSpeechAudio, ttsUrl } from '../lib/api.ts';
 import {
+  applySpeechPlaybackRate,
   addDanishPhrasePauses,
   clampPlaybackSpeed,
   toSpeechText
 } from '../lib/speech.ts';
 import { log } from '../lib/logger.ts';
 import { getCachedSpeech, saveCachedSpeech } from '../lib/translationHistory.ts';
+import { getPrefetchedSpeechAudio } from '../lib/speechAudioCache.ts';
 
 const CACHE_LIMIT = 30;
 const audioCache = new Map<string, string>();
@@ -111,7 +113,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
 
       stop();
       const requestId = requestRef.current;
-      const safeSpeed = clampPlaybackSpeed(speed, addPhrasePauses);
+      const safeSpeed = clampPlaybackSpeed(speed, cacheForHistory || addPhrasePauses);
       const cacheKey = `${userId}:${language}:${safeSpeed}:${spokenText}`;
 
       setIsPlaying(true);
@@ -144,10 +146,29 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
           }
         }
 
+        let synthesizedRateReady = false;
+        if (!url) {
+          const prefetched = getPrefetchedSpeechAudio(language, spokenText, safeSpeed);
+          if (prefetched) {
+            url = URL.createObjectURL(prefetched);
+            rememberUrl(cacheKey, url);
+            synthesizedRateReady = true;
+          }
+        }
+        synthesizedRateReady = synthesizedRateReady || (cacheForHistory && Boolean(url));
+
         if (requestRef.current !== requestId) return;
 
         const isRemoteStream = !url;
-        const audio = new Audio(url ?? ttsUrl(spokenText, language, safeSpeed));
+        const audio = new Audio(url ?? ttsUrl(spokenText, language, 1));
+        const playbackSpeed = synthesizedRateReady ? 1 : safeSpeed;
+        const applyRate = () => {
+          if (requestRef.current === requestId) applySpeechPlaybackRate(audio, playbackSpeed);
+        };
+        applyRate();
+        audio.onloadedmetadata = applyRate;
+        audio.oncanplay = applyRate;
+        audio.onplaying = applyRate;
         audioRef.current = audio;
         audio.onended = () => {
           if (isRemoteStream && cacheForHistory && userId && !addPhrasePauses) {
