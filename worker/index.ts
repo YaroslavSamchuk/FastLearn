@@ -7,7 +7,7 @@ import {
 } from '../server/memory.js';
 import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from '../server/modelConfig.js';
 import { DEFAULT_VOICES, isValidVoice, normalizeVoices, resolveVoice } from '../server/ttsConfig.js';
-import { synthesizeEdgeSpeech } from './edgeTts';
+import { synthesizeEdgeSpeech, synthesizeEdgeSpeechBatch } from './edgeTts';
 
 export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
@@ -1441,7 +1441,62 @@ async function handleTranscribe(request: Request, env: Env, id: string): Promise
   });
 }
 
-async function handleTts(url: URL, id: string): Promise<Response> {
+function buildTtsCacheRequest(
+  language: 'da' | 'en',
+  voice: string,
+  speed: number,
+  text: string
+): Request {
+  return new Request(
+    `https://fastlearn-cache.internal/tts?lang=${language}&voice=${encodeURIComponent(voice)}&speed=${speed}&text=${encodeURIComponent(text)}`,
+    { method: 'GET' }
+  );
+}
+
+async function readCachedTts(cacheKey: Request, id: string, language: 'da' | 'en', voice: string, chars: number): Promise<Response | null> {
+  try {
+    const cached = await caches.default.match(cacheKey);
+    if (cached) {
+      logEvent('tts_cache_hit', { id, language, voice, chars });
+      return cached;
+    }
+  } catch {
+    // Edge cache is an optimization only.
+  }
+  return null;
+}
+
+function buildAudioResponse(audio: Uint8Array): Response {
+  return new Response(audio, {
+    headers: {
+      ...CORS_HEADERS,
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': String(audio.byteLength),
+      'Cache-Control': 'public, max-age=86400'
+    }
+  });
+}
+
+function writeCachedTts(cacheKey: Request, audio: Uint8Array, ctx?: ExecutionContext): void {
+  const promise = (async () => {
+    try {
+      await caches.default.put(cacheKey, buildAudioResponse(audio));
+    } catch {
+      // Ignore cache write failures.
+    }
+  })();
+  if (ctx) ctx.waitUntil(promise);
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+async function handleTts(url: URL, id: string, ctx?: ExecutionContext): Promise<Response> {
   const text = cleanString(url.searchParams.get('text'), MAX_TTS_CHARS);
   if (!text) throw new HttpError(400, 'text is required');
 
@@ -1453,39 +1508,172 @@ async function handleTts(url: URL, id: string): Promise<Response> {
     throw new HttpError(400, 'Unknown voice for this language');
   }
   const voice = resolveVoice(language, requestedVoice);
+  const cacheKey = buildTtsCacheRequest(language, voice, speed, text);
 
-  const cacheKey = new Request(
-    `https://fastlearn-cache.internal/tts?lang=${language}&voice=${encodeURIComponent(voice)}&speed=${speed}&text=${encodeURIComponent(text)}`,
-    { method: 'GET' }
-  );
-
-  try {
-    const cached = await caches.default.match(cacheKey);
-    if (cached) {
-      logEvent('tts_cache_hit', { id, language, voice, chars: text.length });
-      return cached;
-    }
-  } catch {
-    // Edge cache is an optimization only.
-  }
+  const cached = await readCachedTts(cacheKey, id, language, voice, text.length);
+  if (cached) return cached;
 
   const audio = await synthesizeSpeech(text, language, speed, id, voice);
-  const response = new Response(audio, {
-    headers: {
-      ...CORS_HEADERS,
-      'Content-Type': 'audio/mpeg',
-      'Content-Length': String(audio.byteLength),
-      'Cache-Control': 'public, max-age=86400'
+  const response = buildAudioResponse(audio);
+  writeCachedTts(cacheKey, audio, ctx);
+  return response;
+}
+
+async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionContext): Promise<Response> {
+  if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/tts/batch');
+  const parsed = await readJsonBody(request);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new HttpError(400, 'Request body must be an object');
+  }
+
+  const raw = parsed as Record<string, unknown>;
+  const text = cleanString(raw.text, MAX_TTS_CHARS);
+  if (!text) throw new HttpError(400, 'text is required');
+
+  const language = raw.lang === 'en' ? 'en' : 'da';
+  const requestedVoice = typeof raw.voice === 'string' && raw.voice.trim() ? raw.voice.trim() : null;
+  if (requestedVoice && !isValidVoice(language, requestedVoice)) {
+    throw new HttpError(400, 'Unknown voice for this language');
+  }
+  const voice = resolveVoice(language, requestedVoice);
+
+  const rawSpeeds = Array.isArray(raw.speeds) ? raw.speeds : [1, 0.7, 0.5];
+  const speeds = Array.from(
+    new Set(
+      rawSpeeds
+        .map((item) => {
+          const parsedSpeed = Number(item);
+          return Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1, parsedSpeed)) : 1;
+        })
+        .slice(0, 3)
+    )
+  );
+  if (speeds.length === 0) throw new HttpError(400, 'speeds must not be empty');
+
+  const encoder = new TextEncoder();
+  const clipped = text.length > MAX_TTS_CHARS ? text.slice(0, MAX_TTS_CHARS) : text;
+  const chunks = splitTtsText(clipped, TTS_CHUNK_CHARS);
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const sendLine = (payload: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+      };
+
+      try {
+        const missingSpeeds: number[] = [];
+        const cachedMatches = await Promise.all(
+          speeds.map(async (speed) => {
+            const cacheKey = buildTtsCacheRequest(language, voice, speed, clipped);
+            const cached = await readCachedTts(cacheKey, id, language, voice, clipped.length);
+            return { speed, cached };
+          })
+        );
+
+        for (const { speed, cached } of cachedMatches) {
+          if (cached) {
+            const bytes = new Uint8Array(await cached.arrayBuffer());
+            sendLine({ speed, audioBase64: encodeBase64(bytes), source: 'cache' });
+          } else {
+            missingSpeeds.push(speed);
+          }
+        }
+
+        if (missingSpeeds.length > 0) {
+          if (chunks.length === 1) {
+            const failed = await synthesizeEdgeSpeechBatch(
+              chunks[0],
+              language,
+              missingSpeeds,
+              voice,
+              async (variant) => {
+                sendLine({
+                  speed: variant.speed,
+                  audioBase64: encodeBase64(variant.audio),
+                  source: variant.source
+                });
+                writeCachedTts(
+                  buildTtsCacheRequest(language, voice, variant.speed, clipped),
+                  variant.audio,
+                  ctx
+                );
+                logEvent('tts_ok', {
+                  id,
+                  chunks: 1,
+                  bytes: variant.audio.byteLength,
+                  language,
+                  speed: variant.speed,
+                  voice: variant.voice,
+                  source: variant.source
+                });
+              }
+            );
+            for (const speed of failed) {
+              sendLine({ speed, error: 'Speech synthesis is unavailable right now' });
+            }
+          } else {
+            const buffersBySpeed = new Map<number, Uint8Array[]>(
+              missingSpeeds.map((speed) => [speed, new Array<Uint8Array>(chunks.length)])
+            );
+            const failedSpeeds = new Set<number>();
+
+            await Promise.all(
+              chunks.map(async (chunk, chunkIndex) => {
+                const chunkMissing = await synthesizeEdgeSpeechBatch(
+                  chunk,
+                  language,
+                  missingSpeeds,
+                  voice,
+                  (variant) => {
+                    const arr = buffersBySpeed.get(variant.speed);
+                    if (arr) arr[chunkIndex] = variant.audio;
+                  }
+                );
+                for (const speed of chunkMissing) failedSpeeds.add(speed);
+              })
+            );
+
+            for (const speed of missingSpeeds) {
+              if (failedSpeeds.has(speed)) {
+                sendLine({ speed, error: 'Speech synthesis is unavailable right now' });
+                continue;
+              }
+              const parts = buffersBySpeed.get(speed) ?? [];
+              const total = parts.reduce((sum, part) => sum + (part?.byteLength ?? 0), 0);
+              if (parts.some((part) => !part) || total === 0) {
+                sendLine({ speed, error: 'Speech synthesis is unavailable right now' });
+                continue;
+              }
+              const merged = new Uint8Array(total);
+              let offset = 0;
+              for (const part of parts) {
+                merged.set(part, offset);
+                offset += part.byteLength;
+              }
+              sendLine({ speed, audioBase64: encodeBase64(merged), source: 'edge' });
+              writeCachedTts(buildTtsCacheRequest(language, voice, speed, clipped), merged, ctx);
+              logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice });
+            }
+          }
+        }
+      } catch (error) {
+        logEvent('tts_batch_error', {
+          id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      } finally {
+        controller.close();
+      }
     }
   });
 
-  try {
-    await caches.default.put(cacheKey, response.clone());
-  } catch {
-    // Ignore cache write failures.
-  }
-
-  return response;
+  return new Response(stream, {
+    headers: {
+      ...CORS_HEADERS,
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-store'
+    }
+  });
 }
 
 async function handleTitle(request: Request, env: Env, id: string): Promise<Response> {
@@ -1818,7 +2006,13 @@ async function handleWorkspace(request: Request, env: Env, user: StoredUser): Pr
   return json({ ok: true });
 }
 
-async function routeApi(request: Request, env: Env, url: URL, id: string): Promise<Response> {
+async function routeApi(
+  request: Request,
+  env: Env,
+  url: URL,
+  id: string,
+  ctx?: ExecutionContext
+): Promise<Response> {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
   }
@@ -1859,13 +2053,14 @@ async function routeApi(request: Request, env: Env, url: URL, id: string): Promi
   if (url.pathname === '/api/translate') return handleTranslation(request, env, id);
   if (url.pathname === '/api/ipa') return handlePronunciation(request, env, id);
   if (url.pathname === '/api/transcribe') return handleTranscribe(request, env, id);
-  if (url.pathname === '/api/tts') return handleTts(url, id);
+  if (url.pathname === '/api/tts') return handleTts(url, id, ctx);
+  if (url.pathname === '/api/tts/batch') return handleTtsBatch(request, id, ctx);
 
   throw new HttpError(404, `Unknown API route: ${url.pathname}`);
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (!url.pathname.startsWith('/api/')) {
@@ -1876,7 +2071,7 @@ export default {
     const started = Date.now();
 
     try {
-      const response = await routeApi(request, env, url, id);
+      const response = await routeApi(request, env, url, id, ctx);
       logEvent('request', {
         id,
         method: request.method,

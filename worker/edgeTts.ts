@@ -1,154 +1,221 @@
+// language: TypeScript, file: worker/edgeTts.ts, target: Cloudflare Workers
 import { resolveVoice } from '../server/ttsConfig.js';
+import {
+  buildEdgeSsmlMessage,
+  buildEdgeWsConnection,
+  buildEdgeWsUrl,
+  buildSpeechConfigMessage,
+  concatUint8Arrays,
+  generateRequestId,
+  hasHealthyAgent,
+  markAgentCooldown,
+  parseEdgeBinaryAudioFrame,
+  synthesizeBingTranslatorTts
+} from '../server/ttsProviders.js';
 
-type SocketEvent = Event | MessageEvent | CloseEvent | { error?: unknown; code?: number };
-type SocketHandler = ((event: SocketEvent) => void) | null;
-type SocketListener = (...args: unknown[]) => void;
+type EdgeEndpoint = 'bing' | 'apim';
 
-class WorkerFetchWebSocket {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static readonly CLOSING = 2;
-  static readonly CLOSED = 3;
-  readonly CONNECTING = 0;
-  readonly OPEN = 1;
-  readonly CLOSING = 2;
-  readonly CLOSED = 3;
-  readyState = WorkerFetchWebSocket.CONNECTING;
-  binaryType: BinaryType = 'blob';
-  onopen: SocketHandler = null;
-  onmessage: SocketHandler = null;
-  onerror: SocketHandler = null;
-  onclose: SocketHandler = null;
-  private socket: WebSocket | null = null;
-  private listeners = new Map<string, Set<SocketListener>>();
+interface PendingTurn {
+  speed: number;
+  chunks: Uint8Array[];
+  timer: ReturnType<typeof setTimeout>;
+  resolve: (audio: Uint8Array) => void;
+  reject: (error: Error) => void;
+}
 
-  constructor(url: string, options?: { headers?: Record<string, string> }) {
-    void this.connect(url, options?.headers ?? {});
+export interface BatchSynthVariant {
+  speed: number;
+  audio: Uint8Array;
+  source: string;
+  voice: string;
+}
+
+class EdgeHttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
   }
+}
 
-  private async connect(url: string, headers: Record<string, string>): Promise<void> {
-    try {
-      const response = await fetch(url.replace(/^wss:/, 'https:'), {
-        headers: { ...headers, Upgrade: 'websocket' }
-      });
-      if (response.status !== 101 || !response.webSocket) {
-        throw new Error(`Edge TTS WebSocket returned HTTP ${response.status}`);
+let clockOffsetMs = 0;
+
+function isChristelVoice(voice: string): boolean {
+  return voice === 'da-DK-ChristelNeural';
+}
+
+async function openEdgeWebSocket(endpoint: EdgeEndpoint, timeoutMs = 4_500): Promise<WebSocket> {
+  const triedAgents = new Set<string>();
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { agent, url, headers } = await buildEdgeWsConnection(endpoint, clockOffsetMs, triedAgents);
+    triedAgents.add(agent.id);
+
+    for (let clockAttempt = 0; clockAttempt < 2; clockAttempt += 1) {
+      const targetUrl =
+        clockAttempt === 0 ? url : await buildEdgeWsUrl(endpoint, clockOffsetMs, agent.secMsGecVersion);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch(targetUrl.replace(/^wss:/, 'https:'), {
+          headers,
+          signal: controller.signal
+        });
+
+        if (response.status === 403 && clockAttempt === 0) {
+          const serverDate = response.headers.get('date');
+          const serverMs = serverDate ? Date.parse(serverDate) : Number.NaN;
+          if (Number.isFinite(serverMs)) {
+            clockOffsetMs = serverMs - Date.now();
+            continue;
+          }
+        }
+
+        if (response.status === 429 || response.status === 403) {
+          markAgentCooldown(endpoint, agent.id);
+          lastError = new EdgeHttpError(
+            response.status,
+            `Edge TTS WebSocket (${endpoint}/${agent.id}) returned HTTP ${response.status}`
+          );
+          break;
+        }
+
+        if (response.status !== 101 || !response.webSocket) {
+          lastError = new EdgeHttpError(
+            response.status,
+            `Edge TTS WebSocket (${endpoint}/${agent.id}) returned HTTP ${response.status}`
+          );
+          break;
+        }
+
+        const socket = response.webSocket;
+        socket.binaryType = 'arraybuffer';
+        socket.accept();
+        socket.send(buildSpeechConfigMessage());
+        return socket;
+      } catch (error) {
+        lastError = error;
+        break;
+      } finally {
+        clearTimeout(timer);
       }
-
-      const socket = response.webSocket;
-      this.socket = socket;
-      socket.binaryType = this.binaryType;
-      socket.addEventListener('open', (event) => {
-        if (this.readyState !== WorkerFetchWebSocket.CONNECTING) return;
-        this.readyState = WorkerFetchWebSocket.OPEN;
-        this.emit('open', event);
-      });
-      socket.addEventListener('message', (event) => this.emit('message', event));
-      socket.addEventListener('error', (event) => this.emit('error', event));
-      socket.addEventListener('close', (event) => {
-        this.readyState = WorkerFetchWebSocket.CLOSED;
-        this.emit('close', event);
-      });
-      socket.accept();
-
-      if (this.readyState === WorkerFetchWebSocket.CONNECTING) {
-        this.readyState = WorkerFetchWebSocket.OPEN;
-        this.emit('open', new Event('open'));
-      } else if (this.readyState === WorkerFetchWebSocket.CLOSING) {
-        socket.close();
-      }
-    } catch (error) {
-      this.readyState = WorkerFetchWebSocket.CLOSED;
-      this.emit('error', { error });
     }
   }
 
-  private emit(type: string, event: SocketEvent): void {
-    const handler = this[`on${type}` as 'onopen' | 'onmessage' | 'onerror' | 'onclose'];
-    handler?.(event);
-    for (const listener of this.listeners.get(type) ?? []) listener(event);
-  }
-
-  once(type: string, listener: SocketListener): this {
-    const wrapper: SocketListener = (...args) => {
-      this.listeners.get(type)?.delete(wrapper);
-      listener(...args);
-    };
-    const listeners = this.listeners.get(type) ?? new Set<SocketListener>();
-    listeners.add(wrapper);
-    this.listeners.set(type, listeners);
-    return this;
-  }
-
-  send(data: string, callback?: (error?: Error) => void): void {
-    try {
-      if (!this.socket || this.readyState !== WorkerFetchWebSocket.OPEN) {
-        throw new Error('Edge TTS WebSocket is not open.');
-      }
-      this.socket.send(data);
-      callback?.();
-    } catch (error) {
-      const sendError = error instanceof Error ? error : new Error(String(error));
-      if (callback) callback(sendError);
-      else throw sendError;
-    }
-  }
-
-  close(): void {
-    this.readyState = WorkerFetchWebSocket.CLOSING;
-    this.socket?.close();
-  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Edge TTS WebSocket (${endpoint}) handshake failed`);
 }
 
-let edgeTtsModule: Promise<typeof import('msedge-tts')> | undefined;
-
-async function loadEdgeTts(): Promise<typeof import('msedge-tts')> {
-  if (!edgeTtsModule) {
-    const originalWebSocket = globalThis.WebSocket;
-    globalThis.WebSocket = WorkerFetchWebSocket as unknown as typeof WebSocket;
-    edgeTtsModule = import('msedge-tts')
-      .catch((error: unknown) => {
-        edgeTtsModule = undefined;
-        throw error;
-      })
-      .finally(() => {
-        globalThis.WebSocket = originalWebSocket;
-      });
-  }
-  return edgeTtsModule;
-}
-
-function escapeSsmlText(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-async function synthesizeEdgeSpeechOnce(
+async function synthesizeViaWebSocket(
+  endpoint: EdgeEndpoint,
   text: string,
-  language: 'da' | 'en',
-  speed: number,
-  voiceName?: string | null
-): Promise<Uint8Array> {
-  const { MsEdgeTTS, OUTPUT_FORMAT } = await loadEdgeTts();
-  const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 14_000 });
-  try {
-    const voice = resolveVoice(language, voiceName);
-    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-    const { audioStream } = tts.toStream(escapeSsmlText(text), { rate: speed, pitch: '+0Hz' });
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of audioStream) chunks.push(new Uint8Array(chunk));
-    const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-    if (size === 0) throw new Error('Edge TTS returned an empty audio stream');
+  voice: string,
+  speeds: readonly number[],
+  mode: 'concurrent' | 'sequential',
+  onSpeedReady?: (speed: number, audio: Uint8Array) => void | Promise<void>
+): Promise<Map<number, Uint8Array>> {
+  const socket = await openEdgeWebSocket(endpoint, 4_500);
+  const pending = new Map<string, PendingTurn>();
+  const completed = new Map<number, Uint8Array>();
 
-    const audio = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      audio.set(chunk, offset);
-      offset += chunk.byteLength;
+  const failPending = (error: Error) => {
+    for (const [reqId, turn] of pending.entries()) {
+      clearTimeout(turn.timer);
+      pending.delete(reqId);
+      turn.reject(error);
     }
-    return audio;
+  };
+
+  socket.addEventListener('message', (event: MessageEvent) => {
+    const data = event.data;
+    if (typeof data === 'string') {
+      const requestId = /X-RequestId:([^\r\n]+)/.exec(data)?.[1]?.trim();
+      if (!requestId) return;
+      const turn = pending.get(requestId);
+      if (!turn) return;
+
+      if (data.includes('Path:turn.end')) {
+        clearTimeout(turn.timer);
+        pending.delete(requestId);
+        const audio = concatUint8Arrays(turn.chunks);
+        if (audio.byteLength === 0) {
+          turn.reject(new Error('Edge TTS returned an empty audio stream'));
+          return;
+        }
+        completed.set(turn.speed, audio);
+        turn.resolve(audio);
+      }
+      return;
+    }
+
+    const frame = parseEdgeBinaryAudioFrame(data);
+    if (!frame) return;
+    const turn = pending.get(frame.requestId);
+    if (!turn) return;
+    turn.chunks.push(frame.audio);
+  });
+
+  socket.addEventListener('close', () => {
+    failPending(new Error('Stream closed before the synthesis completed (no turn.end received). The audio is likely truncated.'));
+  });
+
+  socket.addEventListener('error', () => {
+    failPending(new Error(`Edge TTS WebSocket (${endpoint}) error`));
+  });
+
+  const sendSingleSpeed = (speed: number): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const requestId = generateRequestId();
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error(`Edge TTS (${endpoint}) timed out waiting for audio`));
+      }, 5_500);
+
+      pending.set(requestId, {
+        speed,
+        chunks: [],
+        timer,
+        resolve: async (audio) => {
+          try {
+            await onSpeedReady?.(speed, audio);
+            resolve();
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)));
+          }
+        },
+        reject
+      });
+
+      try {
+        socket.send(buildEdgeSsmlMessage(requestId, text, voice, speed));
+      } catch (error) {
+        clearTimeout(timer);
+        pending.delete(requestId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+
+  try {
+    if (mode === 'sequential') {
+      for (const speed of speeds) {
+        await sendSingleSpeed(speed);
+      }
+    } else {
+      await Promise.allSettled(speeds.map((speed) => sendSingleSpeed(speed)));
+    }
   } finally {
-    tts.close();
+    failPending(new Error('Edge TTS session ended'));
+    try {
+      socket.close(1000, 'done');
+    } catch {
+      // Socket already closed.
+    }
   }
+
+  return completed;
 }
 
 export async function synthesizeEdgeSpeech(
@@ -157,13 +224,149 @@ export async function synthesizeEdgeSpeech(
   speed: number,
   voiceName?: string | null
 ): Promise<Uint8Array> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  const voice = resolveVoice(language, voiceName);
+  const errors: string[] = [];
+
+  if (isChristelVoice(voice)) {
+    if (hasHealthyAgent('apim')) {
+      try {
+        const res = await synthesizeViaWebSocket('apim', text, voice, [speed], 'sequential');
+        const audio = res.get(speed);
+        if (audio) return audio;
+      } catch (error) {
+        errors.push(`apim:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    if (hasHealthyAgent('bing-http')) {
+      try {
+        return await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
+      } catch (error) {
+        errors.push(`bing-http:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const res = await synthesizeViaWebSocket('bing', text, 'da-DK-JeppeNeural', [speed], 'sequential');
+        const audio = res.get(speed);
+        if (audio) return audio;
+      } catch (error) {
+        errors.push(`jeppe-${attempt}:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    throw new Error(errors.join(' | ') || 'Edge TTS unavailable');
+  }
+
+  try {
+    const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
+    const audio = res.get(speed);
+    if (audio) return audio;
+  } catch (error) {
+    errors.push(`bing-1:${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (hasHealthyAgent('bing-http')) {
     try {
-      return await synthesizeEdgeSpeechOnce(text, language, speed, voiceName);
+      return await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
     } catch (error) {
-      lastError = error;
+      errors.push(`bing-http:${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+
+  try {
+    const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
+    const audio = res.get(speed);
+    if (audio) return audio;
+  } catch (error) {
+    errors.push(`bing-2:${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  throw new Error(errors.join(' | ') || 'Edge TTS unavailable');
+}
+
+export async function synthesizeEdgeSpeechBatch(
+  text: string,
+  language: 'da' | 'en',
+  speeds: readonly number[],
+  voiceName: string | null | undefined,
+  onVariantReady: (variant: BatchSynthVariant) => void | Promise<void>
+): Promise<number[]> {
+  const voice = resolveVoice(language, voiceName);
+  const missing = new Set(speeds);
+
+  const emitDone = async (speed: number, audio: Uint8Array, source: string, usedVoice: string) => {
+    missing.delete(speed);
+    await onVariantReady({ speed, audio, source, voice: usedVoice });
+  };
+
+  if (isChristelVoice(voice)) {
+    if (hasHealthyAgent('apim')) {
+      try {
+        await synthesizeViaWebSocket('apim', text, voice, [...missing], 'sequential', async (speed, audio) => {
+          await emitDone(speed, audio, 'apim', voice);
+        });
+      } catch {
+        // Remaining speeds fall through to another agent/provider immediately.
+      }
+    }
+
+    if (missing.size > 0 && hasHealthyAgent('bing-http')) {
+      await Promise.allSettled(
+        [...missing].map(async (speed) => {
+          const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
+          await emitDone(speed, audio, 'bing-http', voice);
+        })
+      );
+    }
+
+    if (missing.size > 0) {
+      try {
+        await synthesizeViaWebSocket(
+          'bing',
+          text,
+          'da-DK-JeppeNeural',
+          [...missing],
+          'concurrent',
+          async (speed, audio) => {
+            await emitDone(speed, audio, 'edge-fallback', 'da-DK-JeppeNeural');
+          }
+        );
+      } catch {
+        // Any remaining speeds reported back to caller.
+      }
+    }
+
+    return [...missing];
+  }
+
+  try {
+    await synthesizeViaWebSocket('bing', text, voice, [...missing], 'concurrent', async (speed, audio) => {
+      await emitDone(speed, audio, 'edge', voice);
+    });
+  } catch {
+    // Remaining speeds fall through immediately.
+  }
+
+  if (missing.size > 0 && hasHealthyAgent('bing-http')) {
+    await Promise.allSettled(
+      [...missing].map(async (speed) => {
+        const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
+        await emitDone(speed, audio, 'bing-http', voice);
+      })
+    );
+  }
+
+  if (missing.size > 0) {
+    try {
+      await synthesizeViaWebSocket('bing', text, voice, [...missing], 'sequential', async (speed, audio) => {
+        await emitDone(speed, audio, 'edge-retry', voice);
+      });
+    } catch {
+      // Any remaining speeds reported back to caller.
+    }
+  }
+
+  return [...missing];
 }

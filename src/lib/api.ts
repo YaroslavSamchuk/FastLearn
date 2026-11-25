@@ -394,6 +394,116 @@ export function ttsUrl(text: string, language: Language, speed: number, voice?: 
   return `/api/tts?${query.toString()}`;
 }
 
+function decodeBase64Audio(audioBase64: string): Blob {
+  const binary = atob(audioBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: 'audio/mpeg' });
+}
+
+export function createSpeechBatchLoader(
+  text: string,
+  language: Language,
+  speeds: readonly number[],
+  voice?: string
+): (speed: number) => Promise<Blob> {
+  const pending = new Map<
+    number,
+    { settled: boolean; resolve: (audio: Blob) => void; reject: (error: unknown) => void; promise: Promise<Blob> }
+  >();
+
+  for (const speed of speeds) {
+    let resolve!: (audio: Blob) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<Blob>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    pending.set(speed, { settled: false, resolve, reject, promise });
+  }
+
+  const fallbackRemaining = () => {
+    for (const [speed, entry] of pending.entries()) {
+      if (entry.settled) continue;
+      entry.settled = true;
+      fetchSpeechAudio(text, language, speed, undefined, voice).then(entry.resolve, entry.reject);
+    }
+  };
+
+  void (async () => {
+    try {
+      const response = await fetch('/api/tts/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          lang: language,
+          speeds,
+          ...(voice ? { voice } : {})
+        })
+      });
+
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!response.ok || !contentType.includes('ndjson') || !response.body) {
+        fallbackRemaining();
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      const handleLine = (rawLine: string) => {
+        const line = rawLine.trim();
+        if (!line) return;
+        let parsed: { speed?: unknown; audioBase64?: unknown; error?: unknown };
+        try {
+          parsed = JSON.parse(line) as { speed?: unknown; audioBase64?: unknown; error?: unknown };
+        } catch {
+          return;
+        }
+        const speed = Number(parsed.speed);
+        const entry = pending.get(speed);
+        if (!entry || entry.settled) return;
+
+        if (typeof parsed.audioBase64 === 'string' && parsed.audioBase64) {
+          const blob = decodeBase64Audio(parsed.audioBase64);
+          if (blob.size > 0) {
+            entry.settled = true;
+            entry.resolve(blob);
+            return;
+          }
+        }
+
+        entry.settled = true;
+        fetchSpeechAudio(text, language, speed, undefined, voice).then(entry.resolve, entry.reject);
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf('\n');
+        while (newline !== -1) {
+          handleLine(buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf('\n');
+        }
+      }
+
+      if (buffer.trim()) handleLine(buffer);
+      fallbackRemaining();
+    } catch {
+      fallbackRemaining();
+    }
+  })();
+
+  return (speed: number) =>
+    pending.get(speed)?.promise ?? fetchSpeechAudio(text, language, speed, undefined, voice);
+}
+
 export async function generateChatTitle(message: string, language: Language): Promise<string> {
   const fallback = message.slice(0, 36).trim();
   const safeFallback = fallback

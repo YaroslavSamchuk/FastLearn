@@ -8,6 +8,7 @@ import { applyMemoryTool } from './memory.js';
 import {
   cacheSpeechResult,
   synthesizeSpeech,
+  synthesizeSpeechBatch,
   synthesizeSpeechStream,
   VOICES
 } from './tts.js';
@@ -562,7 +563,49 @@ app.get('/api/tts', requireAuth, async (req, res) => {
     console.error('[tts] synthesis failed', error.message);
     if (!res.headersSent) {
       res.status(502).json({ error: 'Speech synthesis is unavailable right now' });
+    } else if (!res.destroyed) {
+      res.end();
     }
+  }
+});
+
+app.post('/api/tts/batch', requireAuth, async (req, res) => {
+  const text = cleanString(req.body?.text, MAX_TTS_CHARS);
+  if (!text) {
+    res.status(400).json({ error: 'text is required' });
+    return;
+  }
+
+  const language = req.body?.lang === 'en' ? 'en' : 'da';
+  const voice = typeof req.body?.voice === 'string' && req.body.voice.trim() ? req.body.voice.trim() : null;
+  if (voice && !isValidVoice(language, voice)) {
+    res.status(400).json({ error: 'Unknown voice for this language' });
+    return;
+  }
+
+  const speeds = Array.isArray(req.body?.speeds) ? req.body.speeds : [1, 0.7, 0.5];
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+
+  try {
+    const failed = await synthesizeSpeechBatch(text, language, speeds, voice, async ({ speed, buffer, source }) => {
+      if (res.destroyed) return;
+      const line = JSON.stringify({
+        speed,
+        audioBase64: Buffer.from(buffer).toString('base64'),
+        source
+      });
+      res.write(`${line}\n`);
+    });
+
+    for (const speed of failed) {
+      if (res.destroyed) break;
+      res.write(`${JSON.stringify({ speed, error: 'Speech synthesis is unavailable right now' })}\n`);
+    }
+  } catch (error) {
+    console.error('[tts] batch synthesis failed', error.message);
+  } finally {
+    if (!res.destroyed) res.end();
   }
 });
 

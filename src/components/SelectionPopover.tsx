@@ -7,6 +7,7 @@ import { haptic } from '../utils/haptics.ts';
 import { log } from '../lib/logger.ts';
 import type { TranscribeResult } from '../lib/api.ts';
 import {
+  createSpeechBatchLoader,
   fetchSpeechAudio,
   getPronunciation,
   translateSelection
@@ -211,12 +212,17 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         }
 
         if (missingSpeeds.length > 0) {
+          const loadVariant =
+            missingSpeeds.length > 1
+              ? createSpeechBatchLoader(speechText, language, missingSpeeds, voice || undefined)
+              : (speed: number) => fetchSpeechAudio(speechText, language, speed, undefined, voice || undefined);
+
           tasks.push(
             loadSpeechAudioVariants(
               language,
               speechText,
               missingSpeeds,
-              (speed) => fetchSpeechAudio(speechText, language, speed, undefined, voice || undefined),
+              loadVariant,
               {
                 onSpeedReady: (speed, audio) => {
                   if (active) {
