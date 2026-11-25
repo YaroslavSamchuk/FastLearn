@@ -23,6 +23,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
     pointerId: number;
     tokenElement: HTMLElement;
     dragStarted: boolean;
+    cancelledByScroll: boolean;
     timer?: number;
   } | null>(null);
 
@@ -39,7 +40,9 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
 
   useEffect(() => {
     const handleTouchMove = (event: TouchEvent) => {
-      if (touchStateRef.current?.dragStarted) event.preventDefault();
+      if (touchStateRef.current?.dragStarted && event.cancelable) {
+        event.preventDefault();
+      }
     };
 
     document.addEventListener('touchmove', handleTouchMove, { passive: false });
@@ -52,7 +55,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
 
   const handlePointerDown = (e: React.PointerEvent, tokenIndex: number) => {
     if (isStreaming) return;
-    if (e.button !== 0) return; // Only main button
+    if (e.button !== 0) return;
 
     const container = containerRef.current;
     if (!container) return;
@@ -61,39 +64,35 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
       const tokenElement = e.currentTarget;
       if (!(tokenElement instanceof HTMLElement)) return;
 
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const startTime = Date.now();
       const touchState = {
-        startX,
-        startY,
-        startTime,
+        startX: e.clientX,
+        startY: e.clientY,
+        startTime: Date.now(),
         tokenIndex,
         pointerId: e.pointerId,
         tokenElement,
         dragStarted: false,
+        cancelledByScroll: false,
         timer: undefined as number | undefined
       };
 
-      // Clear any prior timer
       if (touchStateRef.current?.timer) {
         window.clearTimeout(touchStateRef.current.timer);
       }
 
       touchState.timer = window.setTimeout(() => {
-        if (touchStateRef.current !== touchState) return;
+        if (touchStateRef.current !== touchState || touchState.cancelledByScroll) return;
         touchState.dragStarted = true;
         try {
           touchState.tokenElement.setPointerCapture(touchState.pointerId);
         } catch {
-          // Ignore Android browsers rejecting capture when pointer already settled
+          // Ignore browsers rejecting capture when pointer already settled
         }
         startWordDrag(messageId, tokenIndex, tokens, container, true);
       }, 350);
 
       touchStateRef.current = touchState;
     } else {
-      // Desktop mouse / trackpad
       e.preventDefault();
       startWordDrag(messageId, tokenIndex, tokens, container, false);
     }
@@ -101,7 +100,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
 
   const handlePointerMove = (e: React.PointerEvent) => {
     const touchState = touchStateRef.current;
-    if (!touchState) return;
+    if (!touchState || touchState.cancelledByScroll) return;
 
     const dx = e.clientX - touchState.startX;
     const dy = e.clientY - touchState.startY;
@@ -115,14 +114,10 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
       return;
     }
 
-    // Let vertical movement scroll the chat before long-press selection begins.
-    if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+    // Let vertical or quick swipe movement scroll before long-press engages
+    if (Math.abs(dy) > 8 || Math.abs(dx) > 12) {
       if (touchState.timer) window.clearTimeout(touchState.timer);
-      touchStateRef.current = null;
-      return;
-    }
-    if (Math.abs(dx) > 12) {
-      if (touchState.timer) window.clearTimeout(touchState.timer);
+      touchState.cancelledByScroll = true;
       touchStateRef.current = null;
     }
   };
@@ -134,8 +129,8 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
     if (touchState.timer) window.clearTimeout(touchState.timer);
     const container = containerRef.current;
 
-    // Quick tap detection (held less than 220ms and barely moved)
-    if (!touchState.dragStarted && !isDragging && container && Date.now() - touchState.startTime < 260) {
+    // Any quick/medium tap before long-press drag starts selects the single word (no dead zone)
+    if (!touchState.dragStarted && !touchState.cancelledByScroll && !isDragging && container) {
       selectSingleWord(messageId, touchState.tokenIndex, tokens, container);
     }
 
@@ -156,6 +151,7 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
       onContextMenu={(event) => {
         if (touchStateRef.current?.dragStarted) event.preventDefault();
       }}
+      style={{ touchAction: isDragging && isCurrentMessage ? 'none' : 'pan-y' }}
       className="inline whitespace-pre-wrap break-words select-none leading-relaxed"
     >
       {tokens.map((token) => {
@@ -172,11 +168,11 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
               data-token-idx={token.index}
               data-msg-id={messageId}
               onPointerDown={(e) => handlePointerDown(e, token.index)}
-              className={`inline rounded-[2px] px-[2px] py-[0.5px] transition-colors duration-150 ${
+              className={`inline cursor-pointer rounded-[3px] transition-colors duration-150 ease-unslop ${
                 isSelected
-                  ? 'bg-amber-300 font-medium text-[#111113] dark:bg-amber-400 dark:text-[#111113]'
-                  : 'hover:bg-black/[0.07] dark:hover:bg-white/[0.1]'
-              } ${token.isBold ? 'font-medium' : ''} ${token.isItalic ? 'italic' : ''}`}
+                  ? '-mx-[2px] bg-amber-300/90 px-[2px] font-medium text-[#1c1917] dark:bg-amber-400 dark:text-[#161513]'
+                  : 'hover:bg-black/[0.06] dark:hover:bg-white/[0.09]'
+              } ${token.isBold || token.isItalic ? 'font-medium' : ''}`}
             >
               {token.text}
             </span>

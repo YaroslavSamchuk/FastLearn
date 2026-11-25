@@ -17,6 +17,7 @@ import { ChatStream } from './components/ChatStream.tsx';
 import { ChatInput } from './components/ChatInput.tsx';
 import { SelectionPopover } from './components/SelectionPopover.tsx';
 import { Toast } from './components/Toast.tsx';
+import { BrandMark } from './components/BrandMark.tsx';
 import { SelectionProvider, useWordSelection } from './context/SelectionContext.tsx';
 import { useAudio } from './hooks/useAudio.ts';
 import { useToast } from './hooks/useToast.ts';
@@ -150,6 +151,8 @@ const AppContent: React.FC = () => {
   const sendingRef = useRef(false);
   const bootLoggedRef = useRef(false);
   const healthCheckedRef = useRef(false);
+  const skipNextWorkspaceSaveRef = useRef(false);
+  const renamedChatIdsRef = useRef<Set<string>>(new Set());
 
   const { toasts, showToast, dismissToast } = useToast();
 
@@ -157,6 +160,22 @@ const AppContent: React.FC = () => {
   const currentSpeeds = data.playbackSpeeds[currentLanguage] ?? DEFAULT_PLAYBACK_SPEEDS[currentLanguage];
   const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage, user?.id ?? '', currentVoice);
   const { selection, clearSelection } = useWordSelection();
+
+  useEffect(() => {
+    const syncViewportHeight = () => {
+      const height = window.visualViewport?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`);
+    };
+
+    syncViewportHeight();
+    window.addEventListener('resize', syncViewportHeight);
+    window.visualViewport?.addEventListener('resize', syncViewportHeight);
+
+    return () => {
+      window.removeEventListener('resize', syncViewportHeight);
+      window.visualViewport?.removeEventListener('resize', syncViewportHeight);
+    };
+  }, []);
 
   useEffect(() => {
     if (!currentSpeeds.includes(playbackSpeed)) {
@@ -188,6 +207,11 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     if (!user) return;
+    if (skipNextWorkspaceSaveRef.current) {
+      skipNextWorkspaceSaveRef.current = false;
+      return;
+    }
+
     const timeout = window.setTimeout(() => {
       void saveWorkspace({
         theme,
@@ -277,6 +301,7 @@ const AppContent: React.FC = () => {
           ? workspace.activeChatId as Record<Language, string | null>
           : { da: null, en: null };
 
+        skipNextWorkspaceSaveRef.current = true;
         setTheme(workspace.theme === 'light' ? 'light' : 'dark');
         setData({
           ownerId: sessionUser.id,
@@ -295,15 +320,14 @@ const AppContent: React.FC = () => {
           currentLanguage: workspace.currentLanguage === 'en' ? 'en' : 'da'
         });
         setAuthChecked(true);
-        haptic.success();
         showToast(`Вітаємо, ${sessionUser.name.split(' ')[0]}`, 'success');
         log.info('auth', 'Mongo workspace loaded', { userId: sessionUser.id });
       })
       .catch((error) => {
         if (!active) return;
-        log.error('auth', 'Google sign-in failed', { error: errorText(error) });
+        log.error('auth', 'Session check failed', { error: errorText(error) });
         setAuthChecked(true);
-        showToast(`Не вдалося увійти: ${errorText(error)}`, 'warning');
+        showToast(`Не вдалося завантажити профіль: ${errorText(error)}`, 'warning');
       });
 
     return () => {
@@ -388,11 +412,13 @@ const AppContent: React.FC = () => {
   };
 
   const handleOpenDrawer = () => {
+    clearSelection();
     setIsSettingsOpen(false);
     setIsDrawerOpen(true);
   };
 
   const handleOpenSettings = () => {
+    clearSelection();
     setIsDrawerOpen(false);
     setIsSettingsOpen(true);
   };
@@ -449,10 +475,25 @@ const AppContent: React.FC = () => {
     [isPlaying, play, playingPhrase, playingPhraseWithPauses]
   );
 
+  const selectionAutoplayRef = useRef({
+    handlePlayAudio,
+    currentLanguage,
+    currentSpeeds
+  });
+  selectionAutoplayRef.current = {
+    handlePlayAudio,
+    currentLanguage,
+    currentSpeeds
+  };
+  const selectionTextRef = useRef<string | undefined>(undefined);
+  selectionTextRef.current = selection?.text;
+
   useEffect(() => {
-    if (!selection) return;
-    handlePlayAudio(selection.text, currentSpeeds[0] ?? 1, true, currentLanguage === 'da');
-  }, [selection?.id, handlePlayAudio, currentLanguage, currentSpeeds]);
+    if (!selection?.id || !selectionTextRef.current) return;
+    const { handlePlayAudio: playAudio, currentLanguage: lang, currentSpeeds: speeds } =
+      selectionAutoplayRef.current;
+    playAudio(selectionTextRef.current, speeds[0] ?? 1, true, lang === 'da');
+  }, [selection?.id]);
 
   const handleSelectLanguage = (language: Language) => {
     if (language === currentLanguage) return;
@@ -543,6 +584,7 @@ const AppContent: React.FC = () => {
       if (!activeChatId) return;
       const trimmed = newTitle.trim().slice(0, 60);
       if (!trimmed) return;
+      renamedChatIdsRef.current.add(activeChatId);
       setData((previous) => ({
         ...previous,
         chats: previous.chats.map((chat) =>
@@ -560,14 +602,6 @@ const AppContent: React.FC = () => {
     const chat = data.chats.find((item) => item._id === chatId);
     if (!chat) {
       log.warn('chat', 'Tried to delete a missing chat', { chatId });
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Видалити діалог «${chat.title}»? Повідомлення буде видалено з вашого акаунта.`
-    );
-    if (!confirmed) {
-      log.debug('chat', 'Chat deletion cancelled', { chatId });
       return;
     }
 
@@ -616,6 +650,10 @@ const AppContent: React.FC = () => {
     return chat._id;
   };
 
+  const handleAbortSending = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
   const handleSendMessage = async (rawText: string) => {
     const text = rawText.trim();
     if (!text || isSending || sendingRef.current) return;
@@ -651,6 +689,7 @@ const AppContent: React.FC = () => {
       .map((message) => ({ role: message.role, content: message.content }));
     const isFirstMessage = (data.messages[chatId]?.length ?? 0) === 0;
     const now = new Date().toISOString();
+    const optimisticTitle = text.slice(0, 36).trim();
 
     setData((previous) => ({
       ...previous,
@@ -658,7 +697,7 @@ const AppContent: React.FC = () => {
         chat._id === chatId
           ? {
               ...chat,
-              title: isFirstMessage ? text.slice(0, 36).trim() : chat.title,
+              title: isFirstMessage ? optimisticTitle : chat.title,
               updatedAt: now
             }
           : chat
@@ -674,11 +713,13 @@ const AppContent: React.FC = () => {
     if (isFirstMessage) {
       generateChatTitle(text, currentLanguage)
         .then((aiTitle) => {
-          if (!aiTitle) return;
+          if (!aiTitle || renamedChatIdsRef.current.has(chatId)) return;
           setData((previous) => ({
             ...previous,
             chats: previous.chats.map((chat) =>
-              chat._id === chatId ? { ...chat, title: aiTitle } : chat
+              chat._id === chatId && chat.title === optimisticTitle
+                ? { ...chat, title: aiTitle }
+                : chat
             )
           }));
           log.info('chat', 'AI generated chat title applied', { chatId, title: aiTitle });
@@ -827,48 +868,59 @@ const AppContent: React.FC = () => {
 
   if (!authChecked) {
     return (
-      <div className="flex h-[100dvh] items-center justify-center bg-[#f4f4f2] text-zinc-500 dark:bg-[#0c0c0e] dark:text-zinc-500">
-        <p className="font-mono text-[12px]">FastLearn</p>
+      <div className="flex h-[var(--app-height,100dvh)] items-center justify-center bg-[#f6f5f1] text-[#736d65] dark:bg-[#161513] dark:text-[#8a847c]">
+        <div className="flex items-center gap-2">
+          <BrandMark className="h-4 w-4" />
+          <p className="text-[14px] font-medium">FastLearn</p>
+        </div>
       </div>
     );
   }
 
   if (!user) {
     return (
-      <main className="flex h-[100dvh] items-center justify-center bg-[#f4f4f2] px-6 text-[#111113] dark:bg-[#0c0c0e] dark:text-zinc-100">
-        <section className="w-full max-w-sm" aria-labelledby="login-title">
-          <div className="border-l-2 border-amber-500 pl-4">
-            <p className="font-mono text-[12px] text-amber-700 dark:text-amber-400">FastLearn</p>
-            <h1 id="login-title" className="mt-2 text-[28px] font-medium tracking-[-0.02em] leading-tight">
-              Увійдіть, щоб продовжити практику
-            </h1>
-            <p className="mt-3 text-[14px] leading-6 text-zinc-600 dark:text-zinc-400">
-              Діалоги, налаштування та пам’ять зберігатимуться у вашому акаунті.
+      <>
+        <Toast toasts={toasts} onDismiss={dismissToast} />
+        <main className="pt-safe pb-safe flex h-[var(--app-height,100dvh)] items-center justify-center bg-[#f6f5f1] px-6 text-[#1c1917] dark:bg-[#161513] dark:text-[#efede8]">
+          <section className="w-full max-w-sm" aria-labelledby="login-title">
+            <div className="border-l-2 border-amber-500 pl-4">
+              <div className="flex items-center gap-2">
+                <BrandMark className="h-4 w-4" />
+                <p className="text-[13px] font-semibold tracking-[-0.01em] text-amber-700 dark:text-amber-400">
+                  FastLearn
+                </p>
+              </div>
+              <h1 id="login-title" className="mt-3 text-[28px] font-medium leading-tight tracking-[-0.02em]">
+                Увійдіть, щоб продовжити практику
+              </h1>
+              <p className="mt-3 text-[14px] leading-6 text-[#57534e] dark:text-[#a8a29a]">
+                Діалоги, налаштування та пам’ять зберігаються у вашому акаунті
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              className="mt-8 flex h-11 w-full items-center justify-center gap-3 rounded-lg border border-black/[0.1] bg-white px-5 text-[14px] font-medium text-[#1c1917] transition-[background-color,transform] duration-150 ease-unslop hover:bg-[#eceae4] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:hover:bg-[#262421]"
+            >
+              <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+              </svg>
+              Продовжити через Google
+            </button>
+            <p className="mt-3 text-center text-[12px] text-[#736d65] dark:text-[#8a847c]">
+              Можна вибрати будь-який Google-акаунт
             </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleGoogleLogin}
-            className="mt-8 flex h-11 w-full items-center justify-center gap-3 rounded-[4px] border border-black/[0.14] bg-white px-5 text-[14px] font-medium text-[#111113] transition-colors hover:bg-[#eaeae7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:border-white/[0.14] dark:bg-[#141416] dark:text-zinc-100 dark:hover:bg-[#1c1c1f]"
-          >
-            <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-            </svg>
-            Продовжити через Google
-          </button>
-          <p className="mt-3 text-center text-[11px] text-zinc-500 dark:text-zinc-500">
-            Можна вибрати будь-який Google-акаунт
-          </p>
-        </section>
-      </main>
+          </section>
+        </main>
+      </>
     );
   }
 
   return (
-    <div className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-[#f4f4f2] text-[#111113] dark:bg-[#0c0c0e] dark:text-zinc-100">
+    <div className="relative flex h-[var(--app-height,100dvh)] w-full flex-col overflow-hidden bg-[#f6f5f1] text-[#1c1917] dark:bg-[#161513] dark:text-[#efede8]">
       <Toast toasts={toasts} onDismiss={dismissToast} />
 
       <Header
@@ -962,6 +1014,7 @@ const AppContent: React.FC = () => {
 
       <ChatInput
         onSend={handleSendMessage}
+        onAbort={handleAbortSending}
         disabled={isSending}
         language={currentLanguage}
         remainingMessages={visibleQuota.remaining}
@@ -987,7 +1040,7 @@ function installTheme(theme: 'dark' | 'light') {
   root.classList.toggle('dark', theme === 'dark');
   root.classList.toggle('light', theme !== 'dark');
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0c0c0e' : '#f4f4f2');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#161513' : '#f6f5f1');
 }
 
 export default App;

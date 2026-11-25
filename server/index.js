@@ -312,7 +312,7 @@ app.get('/api/auth/google/callback', async (req, res, next) => {
     });
     await ensureWorkspace(profile.sub);
     setSessionCookie(res, sessionToken);
-    const appOrigin = process.env.APP_ORIGIN || 'http://localhost:3000';
+    const appOrigin = process.env.APP_ORIGIN || 'http://localhost:3002';
     res.redirect(appOrigin);
   } catch (error) {
     next(error);
@@ -326,13 +326,14 @@ app.get('/api/auth/me', async (req, res, next) => {
       res.json({ user: null });
       return;
     }
+    const workspace = await ensureWorkspace(user.googleSub);
     res.json({
       user: {
         id: `google_${user.googleSub}`,
         name: user.name,
         email: user.email,
         avatar: user.avatar || '',
-        currentLanguage: 'da'
+        currentLanguage: workspace.currentLanguage === 'en' ? 'en' : 'da'
       }
     });
   } catch (error) {
@@ -457,7 +458,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
           );
         }
         if (result.event) send({ memory: result.event });
-        return { ok: result.ok, message: result.message };
+        return result.result;
       },
       onDone: () => {
         if (closed || res.writableEnded) return;
@@ -565,6 +566,9 @@ app.get('/api/tts', requireAuth, async (req, res) => {
       if (bytes === 0 && synthesis.source === 'edge' && !res.destroyed) {
         console.warn('[tts] Edge stream failed before audio started; using fallback');
         const fallback = await synthesizeSpeech(text, language, speed, voice);
+        const fallbackCacheable = fallback.source !== 'bing-http' && fallback.source !== 'google';
+        res.setHeader('Cache-Control', fallbackCacheable ? 'public, max-age=86400' : 'no-store');
+        res.setHeader('x-fastlearn-tts-source', fallback.source);
         res.send(fallback.buffer);
         console.log(JSON.stringify({
           at: new Date().toISOString(),

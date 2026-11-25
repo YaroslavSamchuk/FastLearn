@@ -14,6 +14,9 @@ export default {
           'sans-serif'
         ],
         mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+      },
+      transitionTimingFunction: {
+        unslop: 'cubic-bezier(0.22, 1, 0.36, 1)'
       }
     }
   },

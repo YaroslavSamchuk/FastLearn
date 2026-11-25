@@ -99,15 +99,18 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         if (r.bottom > maxY) maxY = r.bottom;
       }
 
-      const viewportWidth = window.innerWidth;
+      const vv = window.visualViewport;
+      const viewportWidth = vv?.width ?? window.innerWidth;
+      const viewportLeft = vv?.offsetLeft ?? 0;
       const popoverWidth = Math.min(350, viewportWidth - 24);
       const halfWidth = popoverWidth / 2;
 
       let x = (minX + maxX) / 2;
-      x = Math.max(12 + halfWidth, Math.min(x, viewportWidth - 12 - halfWidth));
+      x = Math.max(viewportLeft + 12 + halfWidth, Math.min(x, viewportLeft + viewportWidth - 12 - halfWidth));
 
-      const estimatedHeight = 210;
-      const placement: 'top' | 'bottom' = minY - estimatedHeight - 12 > 0 ? 'top' : 'bottom';
+      const estimatedHeight = 200;
+      const topRoom = minY - (vv?.offsetTop ?? 0) - 68;
+      const placement: 'top' | 'bottom' = topRoom >= estimatedHeight ? 'top' : 'bottom';
       const y = placement === 'top' ? minY - 8 : maxY + 8;
 
       setSelection({
@@ -115,6 +118,8 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         text: cleanPhrase,
         x,
         y,
+        anchorTop: minY,
+        anchorBottom: maxY,
         placement
       });
     },
@@ -187,7 +192,6 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [calculateSelectionGeometry]
   );
 
-  // Global mouse/touch move and up listeners for seamless drag across words
   useEffect(() => {
     if (!isDragging) return;
 
@@ -199,7 +203,7 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const tokenEl = element?.closest(`[data-word-token][data-msg-id="${msgId}"]`);
       if (tokenEl) {
         const idx = Number(tokenEl.getAttribute('data-token-idx'));
-        if (!isNaN(idx)) {
+        if (!Number.isNaN(idx)) {
           updateWordDrag(idx);
         }
       }
@@ -220,7 +224,6 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [isDragging, updateWordDrag, endWordDrag]);
 
-  // Reposition or dismiss popover during chat scroll
   useEffect(() => {
     if (!selection || !containerElRef.current || !messageIdRef.current || !rangeRef.current) return;
 
@@ -246,11 +249,11 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return;
       }
 
-      const containerRect = container.getBoundingClientRect();
+      const scrollHost = container.closest('.overflow-y-auto') ?? container;
+      const containerRect = scrollHost.getBoundingClientRect();
       const firstRect = elements[0].getBoundingClientRect();
       const lastRect = elements[elements.length - 1].getBoundingClientRect();
 
-      // Check if tokens scrolled out of visible view
       if (lastRect.bottom < containerRect.top || firstRect.top > containerRect.bottom) {
         clearSelection();
         return;
@@ -268,7 +271,6 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [selection, calculateSelectionGeometry, clearSelection]);
 
-  // Dismiss on Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {

@@ -1,10 +1,11 @@
 // language: TypeScript (React), file: src/components/BurgerDrawer.tsx, target: Web / Mobile Browser
 import React, { useEffect, useState } from 'react';
 import { User, Chat, Language, Quota } from '../types.ts';
-import { X, Plus, Trash2, MessageSquare, Settings, LogOut } from 'lucide-react';
+import { X, Plus, Trash2, MessageSquare, Settings, LogOut, Check } from 'lucide-react';
 import { haptic } from '../utils/haptics.ts';
 import { UserAvatar } from './UserAvatar.tsx';
 import { formatResetAt } from '../lib/data.ts';
+import { BrandMark } from './BrandMark.tsx';
 
 interface BurgerDrawerProps {
   isOpen: boolean;
@@ -41,10 +42,12 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
 }) => {
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isVisible, setIsVisible] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setShouldRender(true);
+      setConfirmDeleteId(null);
       const frameId = requestAnimationFrame(() => {
         requestAnimationFrame(() => setIsVisible(true));
       });
@@ -52,14 +55,15 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
     }
 
     setIsVisible(false);
-    const timer = window.setTimeout(() => setShouldRender(false), 180);
+    setConfirmDeleteId(null);
+    const timer = window.setTimeout(() => setShouldRender(false), 200);
     return () => window.clearTimeout(timer);
   }, [isOpen]);
 
   if (!shouldRender) return null;
 
   const percentage = Math.max(0, Math.min(100, Math.round((quota.remaining / quota.limit) * 100)));
-  const quotaColor = quota.remaining <= 5 ? 'bg-red-500' : 'bg-amber-500';
+  const quotaColor = quota.remaining <= 5 ? 'bg-[#dc2626] dark:bg-[#e5484d]' : 'bg-amber-500';
 
   const handleCreateChat = () => {
     haptic.send();
@@ -82,7 +86,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex select-none" role="dialog" aria-modal="true" aria-label="Меню">
       <div
-        className={`fixed inset-0 bg-black/50 transition-opacity duration-200 dark:bg-black/75 ${
+        className={`fixed inset-0 bg-black/50 transition-opacity duration-200 ease-unslop dark:bg-black/75 ${
           isVisible ? 'opacity-100' : 'opacity-0'
         }`}
         onClick={() => {
@@ -93,22 +97,25 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
       />
 
       <div
-        className={`relative z-10 flex h-full w-[min(304px,86vw)] flex-col border-r border-black/[0.1] bg-[#f4f4f2] text-[#111113] transition-transform duration-200 ease-out dark:border-white/[0.1] dark:bg-[#101012] dark:text-zinc-100 ${
+        className={`pt-safe relative z-10 flex h-full w-[min(304px,86vw)] flex-col border-r border-black/[0.08] bg-[#f6f5f1] text-[#1c1917] transition-transform duration-200 ease-unslop dark:border-white/[0.08] dark:bg-[#121110] dark:text-[#efede8] ${
           isVisible ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex h-14 items-center justify-between border-b border-black/[0.08] px-4 dark:border-white/[0.08]">
-          <span className="font-mono text-[13px] font-medium tracking-tight">FastLearn</span>
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.08] px-4 dark:border-white/[0.08]">
+          <div className="flex items-center gap-2">
+            <BrandMark className="h-4 w-4" />
+            <span className="text-[15px] font-semibold tracking-[-0.01em]">FastLearn</span>
+          </div>
           <button
             type="button"
             onClick={() => {
               haptic.tap();
               onClose();
             }}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] text-zinc-500 transition-colors duration-150 hover:bg-black/[0.06] hover:text-[#111113] dark:text-zinc-400 dark:hover:bg-white/[0.07] dark:hover:text-zinc-100"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-black/[0.05] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-white/[0.06] dark:hover:text-[#efede8] sm:h-8 sm:w-8"
             aria-label="Закрити меню"
           >
-            <X className="h-4 w-4" strokeWidth={1.75} />
+            <X className="h-4 w-4" strokeWidth={1.5} />
           </button>
         </div>
 
@@ -118,27 +125,27 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
               <div className="flex items-center gap-3">
                 <UserAvatar name={user.name} src={user.avatar} size={36} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-medium">{user.name}</p>
-                  <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
+                  <p className="truncate text-[14px] font-medium">{user.name}</p>
+                  <p className="truncate font-mono text-[12px] text-[#736d65] dark:text-[#8a847c]">
                     {user.email}
                   </p>
                 </div>
               </div>
 
               <div>
-                <div className="mb-1.5 flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400">
+                <div className="mb-2 flex items-center justify-between text-[12px] text-[#57534e] dark:text-[#a8a29a]">
                   <span>Повідомлення</span>
-                  <span className="font-mono tabular-nums text-[#111113] dark:text-zinc-200">
+                  <span className="font-mono tabular-nums text-[#1c1917] dark:text-[#efede8]">
                     {quota.remaining}/{quota.limit}
                   </span>
                 </div>
-                <div className="h-1 w-full bg-black/[0.08] dark:bg-white/[0.1]">
+                <div className="h-1 w-full overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/[0.1]">
                   <div
-                    className={`h-full transition-[width] duration-200 ${quotaColor}`}
-                    style={{ width: `${percentage}%` }}
+                    className={`h-full w-full origin-left transition-transform duration-200 ease-unslop ${quotaColor}`}
+                    style={{ transform: `scaleX(${percentage / 100})` }}
                   />
                 </div>
-                <p className="mt-1.5 text-right font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-500">
+                <p className="mt-2 text-right font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c]">
                   Оновлення через {formatResetAt(quota.resetAt)}
                 </p>
               </div>
@@ -150,7 +157,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
                 haptic.impact();
                 onLogin();
               }}
-              className="h-10 w-full rounded-[4px] bg-[#111113] px-3 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-zinc-800 dark:bg-zinc-100 dark:text-[#111113] dark:hover:bg-white"
+              className="h-10 w-full rounded-lg bg-[#1c1917] px-4 text-[14px] font-medium text-[#f6f5f1] transition-[background-color,transform] duration-150 ease-unslop hover:bg-[#342e2a] active:scale-[0.98] dark:bg-[#efede8] dark:text-[#161513] dark:hover:bg-white"
             >
               Увійти через Google
             </button>
@@ -158,89 +165,128 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
         </div>
 
         {isLoggedIn && (
-          <div className="p-4 pb-2">
+          <div className="px-4 pt-4 pb-2">
             <button
               type="button"
               onClick={handleCreateChat}
-              className="flex h-10 w-full items-center justify-center gap-2 rounded-[4px] border border-black/[0.12] bg-white px-4 text-[13px] font-medium text-[#111113] transition-colors duration-150 hover:border-black/25 hover:bg-zinc-100 dark:border-white/[0.12] dark:bg-[#141416] dark:text-zinc-100 dark:hover:border-white/25 dark:hover:bg-[#1c1c1f]"
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-black/[0.1] bg-white px-4 text-[14px] font-medium text-[#1c1917] transition-[background-color,border-color,transform] duration-150 ease-unslop hover:border-black/20 hover:bg-[#eceae4] active:scale-[0.98] dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:hover:border-white/20 dark:hover:bg-[#262421]"
             >
-              <Plus className="h-4 w-4" strokeWidth={1.75} />
+              <Plus className="h-4 w-4" strokeWidth={1.5} />
               <span>Новий діалог</span>
             </button>
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto overscroll-contain px-3 py-2">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-2">
           {!isLoggedIn ? (
-            <div className="flex h-full flex-col items-center justify-center px-5 pb-10 text-center">
-              <span className="flex h-10 w-10 items-center justify-center rounded-[4px] border border-black/[0.1] bg-white text-zinc-500 dark:border-white/[0.1] dark:bg-[#141416] dark:text-zinc-400">
-                <MessageSquare className="h-4 w-4" strokeWidth={1.75} />
+            <div className="flex h-full flex-col items-center justify-center px-4 pb-8 text-center">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.08] bg-white text-[#736d65] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#a8a29a]">
+                <MessageSquare className="h-4 w-4" strokeWidth={1.5} />
               </span>
-              <p className="mt-3 text-[13px] font-medium text-zinc-800 dark:text-zinc-200">
+              <p className="mt-3 text-[14px] font-medium text-[#1c1917] dark:text-[#efede8]">
                 Історія після входу
               </p>
-              <p className="mt-1 max-w-[220px] text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-500">
+              <p className="mt-1 max-w-[220px] text-[12px] leading-relaxed text-[#736d65] dark:text-[#8a847c]">
                 Увійдіть через Google, щоб синхронізувати діалоги та пам’ять
               </p>
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between px-2 pb-2 pt-1">
-                <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-500">
+              <div className="flex items-center justify-between pb-2 pt-2">
+                <span className="text-[12px] font-medium text-[#736d65] dark:text-[#8a847c]">
                   Діалоги · {currentLanguage === 'da' ? 'Dansk' : 'English'}
                 </span>
-                <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-500">
+                <span className="font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c]">
                   {chats.length}
                 </span>
               </div>
 
               {chats.length === 0 ? (
-                <p className="px-2 py-6 text-center text-[12px] text-zinc-500 dark:text-zinc-500">
+                <p className="py-6 text-center text-[12px] text-[#736d65] dark:text-[#8a847c]">
                   Немає діалогів цією мовою
                 </p>
               ) : (
                 <div className="space-y-1">
                   {chats.map((chat) => {
                     const isActive = chat._id === activeChatId;
+                    const isConfirming = confirmDeleteId === chat._id;
+
                     return (
                       <div
                         key={chat._id}
-                        onClick={() => handleSelect(chat._id)}
-                        className={`group relative flex h-9 cursor-pointer items-center gap-2.5 rounded-[4px] px-2.5 transition-colors duration-150 ${
+                        className={`group relative flex items-center gap-1 rounded-lg transition-colors duration-150 ease-unslop ${
                           isActive
-                            ? 'bg-white text-[#111113] dark:bg-[#1c1c1f] dark:text-zinc-50'
-                            : 'text-zinc-700 hover:bg-black/[0.05] dark:text-zinc-300 dark:hover:bg-white/[0.05]'
+                            ? 'bg-white text-[#1c1917] dark:bg-[#262421] dark:text-[#efede8]'
+                            : 'text-[#57534e] hover:bg-black/[0.04] hover:text-[#1c1917] dark:text-[#a8a29a] dark:hover:bg-white/[0.05] dark:hover:text-[#efede8]'
                         }`}
                       >
                         {isActive && (
                           <span
-                            className="absolute bottom-1.5 left-0 top-1.5 w-[2px] bg-amber-500"
+                            className="absolute bottom-2 left-0 top-2 w-[2px] rounded-full bg-amber-500"
                             aria-hidden="true"
                           />
                         )}
-                        <MessageSquare
-                          className={`h-4 w-4 shrink-0 ${
-                            isActive
-                              ? 'text-[#111113] dark:text-zinc-100'
-                              : 'text-zinc-400 dark:text-zinc-500'
-                          }`}
-                          strokeWidth={1.75}
-                        />
-                        <span className="min-w-0 flex-1 truncate text-[13px]">{chat.title}</span>
 
                         <button
                           type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            haptic.warning();
-                            onDeleteChat(chat._id);
-                          }}
-                          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] text-zinc-400 opacity-100 transition-colors duration-150 hover:bg-red-500/10 hover:text-red-600 focus-visible:opacity-100 dark:text-zinc-500 dark:hover:bg-red-500/15 dark:hover:text-red-400 sm:opacity-0 sm:group-hover:opacity-100"
-                          title="Видалити діалог"
-                          aria-label={`Видалити діалог ${chat.title}`}
+                          onClick={() => handleSelect(chat._id)}
+                          className="flex h-10 min-w-0 flex-1 items-center gap-2.5 pl-3 pr-1 text-left sm:h-9"
                         >
-                          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          <MessageSquare
+                            className={`h-4 w-4 shrink-0 ${
+                              isActive
+                                ? 'text-[#1c1917] dark:text-[#efede8]'
+                                : 'text-[#736d65] dark:text-[#8a847c]'
+                            }`}
+                            strokeWidth={1.5}
+                          />
+                          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                            {chat.title}
+                          </span>
                         </button>
+
+                        {isConfirming ? (
+                          <div className="flex shrink-0 items-center gap-1 pr-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                haptic.warning();
+                                setConfirmDeleteId(null);
+                                onDeleteChat(chat._id);
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-600/15 text-[#dc2626] transition-colors duration-150 ease-unslop hover:bg-red-600/25 dark:bg-red-500/20 dark:text-[#e5484d] dark:hover:bg-red-500/30"
+                              title="Підтвердити видалення"
+                              aria-label={`Підтвердити видалення діалогу ${chat.title}`}
+                            >
+                              <Check className="h-4 w-4" strokeWidth={1.5} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                haptic.tap();
+                                setConfirmDeleteId(null);
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-black/[0.06] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-white/[0.08] dark:hover:text-[#efede8]"
+                              title="Скасувати"
+                              aria-label="Скасувати видалення"
+                            >
+                              <X className="h-4 w-4" strokeWidth={1.5} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              haptic.tap();
+                              setConfirmDeleteId(chat._id);
+                            }}
+                            className="mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#736d65] opacity-100 transition-[background-color,color,opacity] duration-150 ease-unslop hover:bg-red-500/10 hover:text-[#dc2626] focus-visible:opacity-100 dark:text-[#8a847c] dark:hover:bg-red-500/15 dark:hover:text-[#e5484d] sm:opacity-0 sm:group-hover:opacity-100"
+                            title="Видалити діалог"
+                            aria-label={`Видалити діалог ${chat.title}`}
+                          >
+                            <Trash2 className="h-4 w-4" strokeWidth={1.5} />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -250,13 +296,13 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
           )}
         </div>
 
-        <div className="border-t border-black/[0.08] p-3 dark:border-white/[0.08]">
+        <div className="pb-safe border-t border-black/[0.08] px-4 pt-3 dark:border-white/[0.08]">
           <button
             type="button"
             onClick={handleOpenSettings}
-            className="flex h-9 w-full items-center gap-2.5 rounded-[4px] px-2.5 text-left text-[13px] font-medium text-zinc-700 transition-colors duration-150 hover:bg-black/[0.05] hover:text-[#111113] dark:text-zinc-300 dark:hover:bg-white/[0.06] dark:hover:text-zinc-100"
+            className="flex h-10 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-black/[0.05] hover:text-[#1c1917] dark:text-[#a8a29a] dark:hover:bg-white/[0.06] dark:hover:text-[#efede8] sm:h-9"
           >
-            <Settings className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" strokeWidth={1.75} />
+            <Settings className="h-4 w-4 shrink-0 text-[#736d65] dark:text-[#8a847c]" strokeWidth={1.5} />
             <span>Налаштування й пам’ять</span>
           </button>
 
@@ -268,9 +314,9 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
                 onLogout();
                 onClose();
               }}
-              className="mt-1 flex h-9 w-full items-center gap-2.5 rounded-[4px] px-2.5 text-left text-[13px] text-zinc-500 transition-colors duration-150 hover:bg-red-500/10 hover:text-red-600 dark:text-zinc-400 dark:hover:bg-red-500/15 dark:hover:text-red-400"
+              className="mt-1 flex h-10 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] font-medium text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-red-500/10 hover:text-[#dc2626] dark:text-[#8a847c] dark:hover:bg-red-500/15 dark:hover:text-[#e5484d] sm:h-9"
             >
-              <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.5} />
               <span>Вийти</span>
             </button>
           )}

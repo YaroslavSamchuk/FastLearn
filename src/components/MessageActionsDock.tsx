@@ -65,7 +65,7 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
   };
 
   const subtleButton =
-    'text-zinc-500 hover:bg-black/[0.06] hover:text-[#111113] dark:text-zinc-400 dark:hover:bg-white/[0.07] dark:hover:text-zinc-100';
+    'text-[#736d65] hover:bg-black/[0.05] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-white/[0.06] dark:hover:text-[#efede8]';
 
   return (
     <div className="flex items-center gap-1 select-none">
@@ -74,7 +74,7 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
           <button
             type="button"
             onClick={handlePlayAudio}
-            className={`inline-flex h-7 items-center gap-1.5 rounded-[4px] px-1.5 text-[12px] transition-colors duration-150 ${subtleButton} ${
+            className={`inline-flex h-9 min-w-[36px] items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] transition-[background-color,color,transform] duration-150 ease-unslop active:scale-[0.97] sm:h-8 sm:min-w-[32px] ${subtleButton} ${
               isPlaying ? 'text-amber-700 dark:text-amber-400' : ''
             }`}
             title={isPlaying ? 'Зупинити відтворення' : `Прослухати зі швидкістю ${speed}×`}
@@ -83,14 +83,14 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
             {isPlaying ? (
               <AudioVisualizer isPlaying barColor="bg-amber-600 dark:bg-amber-400" />
             ) : (
-              <Volume2 className="h-4 w-4" strokeWidth={1.75} />
+              <Volume2 className="h-4 w-4" strokeWidth={1.5} />
             )}
           </button>
 
           <button
             type="button"
             onClick={handleToggleSpeed}
-            className="h-7 rounded-[4px] px-1.5 font-mono text-[11px] tabular-nums text-zinc-500 transition-colors duration-150 hover:bg-black/[0.06] hover:text-[#111113] dark:text-zinc-400 dark:hover:bg-white/[0.07] dark:hover:text-zinc-100"
+            className={`inline-flex h-9 items-center justify-center rounded-lg px-2 font-mono text-[12px] tabular-nums transition-[background-color,color,transform] duration-150 ease-unslop active:scale-[0.97] sm:h-8 ${subtleButton}`}
             title="Змінити темп мовлення"
             aria-label={`Темп мовлення ${speed}×. Натисніть, щоб змінити`}
           >
@@ -102,14 +102,14 @@ export const MessageActionsDock: React.FC<MessageActionsDockProps> = ({
       <button
         type="button"
         onClick={handleCopy}
-        className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] transition-colors duration-150 ${subtleButton}`}
+        className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition-[background-color,color,transform] duration-150 ease-unslop active:scale-[0.97] sm:h-8 sm:w-8 ${subtleButton}`}
         title="Копіювати текст"
         aria-label="Копіювати текст"
       >
         {copied ? (
-          <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" strokeWidth={1.75} />
+          <Check className="h-4 w-4 text-[#16a34a] dark:text-[#4cc38a]" strokeWidth={1.5} />
         ) : (
-          <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <Copy className="h-4 w-4" strokeWidth={1.5} />
         )}
       </button>
     </div>

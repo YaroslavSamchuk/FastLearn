@@ -12,6 +12,15 @@ import { getPrefetchedSpeechAudio, loadSpeechAudio } from '../lib/speechAudioCac
 
 const CACHE_LIMIT = 30;
 const audioCache = new Map<string, string>();
+let sharedAudioElement: HTMLAudioElement | null = null;
+
+function getSharedAudio(): HTMLAudioElement {
+  if (!sharedAudioElement) {
+    sharedAudioElement = new Audio();
+    sharedAudioElement.preload = 'auto';
+  }
+  return sharedAudioElement;
+}
 
 function rememberUrl(key: string, url: string) {
   audioCache.set(key, url);
@@ -81,7 +90,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
       const targetPrefix = language === 'da' ? 'da' : 'en';
       const matchingVoice = window.speechSynthesis
         .getVoices()
-        .find((voice) => voice.lang.toLowerCase().startsWith(targetPrefix));
+        .find((item) => item.lang.toLowerCase().startsWith(targetPrefix));
       if (matchingVoice) utterance.voice = matchingVoice;
 
       utterance.onend = () => finish(requestId);
@@ -161,13 +170,16 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
         }
 
         if (!url) {
+          const controller = new AbortController();
+          fetchRef.current = controller;
           const downloaded = await loadSpeechAudio(
             language,
             spokenText,
             safeSpeed,
-            () => fetchSpeechAudio(spokenText, language, safeSpeed, undefined, activeVoice || undefined),
+            () => fetchSpeechAudio(spokenText, language, safeSpeed, controller.signal, activeVoice || undefined),
             activeVoice
           );
+          if (requestRef.current !== requestId) return;
           url = URL.createObjectURL(downloaded);
           rememberUrl(cacheKey, url);
 
@@ -189,7 +201,12 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
 
         if (requestRef.current !== requestId) return;
 
-        const audio = new Audio(url);
+        const audio = getSharedAudio();
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+        audio.src = url;
+        audio.currentTime = 0;
         audioRef.current = audio;
         audio.onended = () => finish(requestId);
         audio.onerror = () => {
@@ -203,6 +220,11 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
       } catch (error) {
         if (requestRef.current !== requestId) return;
         if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+          log.info('audio', 'Browser blocked automatic audio playback; tap speed button to play');
+          finish(requestId);
+          return;
+        }
 
         log.warn('audio', 'TTS proxy unavailable, using Web Speech', {
           error: error instanceof Error ? error.message : String(error)
@@ -220,6 +242,8 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
       requestRef.current += 1;
       fetchRef.current?.abort();
       if (audioRef.current) {
+        audioRef.current.onended = null;
+        audioRef.current.onerror = null;
         audioRef.current.pause();
         audioRef.current = null;
       }

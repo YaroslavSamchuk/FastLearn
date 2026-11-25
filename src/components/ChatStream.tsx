@@ -128,101 +128,103 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   const starterCopy =
     language === 'da'
       ? {
-          code: 'DA // Daglig praksis',
+          code: 'Dansk · Щоденна практика',
           title: 'Практика данської',
           subtitle: 'Пишіть данською чи українською, або оберіть сценарій'
         }
       : {
-          code: 'EN // Daily practice',
+          code: 'English · Щоденна практика',
           title: 'Практика англійської',
           subtitle: 'Пишіть англійською чи українською, або оберіть сценарій'
         };
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={handleScroll}
-      className="relative flex-1 overflow-y-auto overscroll-contain px-4 py-6 select-text sm:px-6"
-    >
-      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
-        {messages.length === 0 && !streamingContent ? (
-          <div className="flex flex-1 flex-col justify-center py-8">
-            <div className="border-l-2 border-amber-500 pl-4">
-              <p className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
-                {starterCopy.code}
-              </p>
-              <h2 className="mt-2 text-[28px] font-medium leading-tight text-[#111113] dark:text-zinc-50">
-                {starterCopy.title}
-              </h2>
-              <p className="mt-2 max-w-md text-[14px] leading-6 text-zinc-600 dark:text-zinc-400">
-                {starterCopy.subtitle}
-              </p>
-            </div>
-
-            {onQuickSend && (
-              <div className="mt-8 grid w-full divide-y divide-black/[0.09] overflow-hidden rounded-md border border-black/[0.1] bg-white dark:divide-white/[0.09] dark:border-white/[0.1] dark:bg-[#141416] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                {STARTERS[language].map((item) => (
-                  <button
-                    key={item.index}
-                    type="button"
-                    onClick={() => handleSuggestionClick(item.text)}
-                    className="group flex flex-col items-start justify-between gap-3 p-4 text-left transition-colors duration-150 hover:bg-black/[0.03] dark:hover:bg-white/[0.04]"
-                  >
-                    <span className="font-mono text-[11px] tabular-nums text-amber-700 dark:text-amber-400">
-                      {item.index}
-                    </span>
-                    <div>
-                      <span className="block text-[13px] font-medium leading-snug text-[#111113] dark:text-zinc-100">
-                        {item.label}
-                      </span>
-                      <span className="mt-1 block text-[12px] leading-snug text-zinc-500 dark:text-zinc-400">
-                        {item.translation}
-                      </span>
-                    </div>
-                  </button>
-                ))}
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 select-text sm:px-6 sm:py-6"
+      >
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
+          {messages.length === 0 && !streamingContent ? (
+            <div className="my-auto py-4 sm:py-8">
+              <div className="border-l-2 border-amber-500 pl-4">
+                <p className="font-mono text-[12px] text-[#736d65] dark:text-[#a8a29a]">
+                  {starterCopy.code}
+                </p>
+                <h2 className="mt-2 text-[24px] font-medium leading-tight tracking-[-0.01em] text-[#1c1917] dark:text-[#efede8] sm:text-[28px]">
+                  {starterCopy.title}
+                </h2>
+                <p className="mt-2 max-w-md text-[14px] leading-6 text-[#57534e] dark:text-[#a8a29a]">
+                  {starterCopy.subtitle}
+                </p>
               </div>
-            )}
-          </div>
-        ) : (
-          <div className="flex w-full flex-col gap-6 pb-4">
-            {messages.map((message) => (
-              <ChatMessage
-                key={message._id ?? `${message.createdAt}-${message.role}`}
-                message={message}
-                onPlayFull={onPlayFull}
-                playbackSpeed={playbackSpeed}
-                playbackSpeeds={playbackSpeeds}
-                onPlaybackSpeedChange={onPlaybackSpeedChange}
-                onStopAudio={onStopAudio}
-                isPlaying={isPlaying}
-                playingText={playingText}
-                onShowToast={onShowToast}
-              />
-            ))}
 
-            {streamingContent && (
-              <ChatMessage
-                message={{
-                  chatId: chatId ?? 'streaming',
-                  userId: 'ai',
-                  role: 'assistant',
-                  content: streamingContent,
-                  createdAt: new Date().toISOString()
-                }}
-                onPlayFull={onPlayFull}
-                playbackSpeed={playbackSpeed}
-                playbackSpeeds={playbackSpeeds}
-                onPlaybackSpeedChange={onPlaybackSpeedChange}
-                isPlaying={false}
-                isStreaming
-                onShowToast={onShowToast}
-              />
-            )}
+              {onQuickSend && (
+                <div className="mt-6 grid w-full divide-y divide-black/[0.08] overflow-hidden rounded-xl border border-black/[0.08] bg-white dark:divide-white/[0.08] dark:border-white/[0.08] dark:bg-[#1c1a18] sm:mt-8 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                  {STARTERS[language].map((item) => (
+                    <button
+                      key={item.index}
+                      type="button"
+                      onClick={() => handleSuggestionClick(item.text)}
+                      className="group flex flex-col items-start justify-between gap-2 p-3.5 text-left transition-colors duration-150 ease-unslop hover:bg-[#f6f5f1] dark:hover:bg-[#262421] sm:gap-3 sm:p-4"
+                    >
+                      <span className="font-mono text-[12px] tabular-nums text-amber-700 dark:text-amber-400">
+                        {item.index}
+                      </span>
+                      <div>
+                        <span className="block text-[14px] font-medium leading-snug text-[#1c1917] dark:text-[#efede8]">
+                          {item.label}
+                        </span>
+                        <span className="mt-1 block text-[12px] leading-snug text-[#736d65] dark:text-[#8a847c]">
+                          {item.translation}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex w-full flex-col gap-6 pb-4">
+              {messages.map((message) => (
+                <ChatMessage
+                  key={message._id ?? `${message.createdAt}-${message.role}`}
+                  message={message}
+                  onPlayFull={onPlayFull}
+                  playbackSpeed={playbackSpeed}
+                  playbackSpeeds={playbackSpeeds}
+                  onPlaybackSpeedChange={onPlaybackSpeedChange}
+                  onStopAudio={onStopAudio}
+                  isPlaying={isPlaying}
+                  playingText={playingText}
+                  onShowToast={onShowToast}
+                />
+              ))}
 
-            <div ref={scrollEndRef} className="h-1" />
-          </div>
-        )}
+              {streamingContent && (
+                <ChatMessage
+                  message={{
+                    chatId: chatId ?? 'streaming',
+                    userId: 'ai',
+                    role: 'assistant',
+                    content: streamingContent,
+                    createdAt: new Date().toISOString()
+                  }}
+                  onPlayFull={onPlayFull}
+                  playbackSpeed={playbackSpeed}
+                  playbackSpeeds={playbackSpeeds}
+                  onPlaybackSpeedChange={onPlaybackSpeedChange}
+                  isPlaying={false}
+                  isStreaming
+                  onShowToast={onShowToast}
+                />
+              )}
+
+              <div ref={scrollEndRef} className="h-1" />
+            </div>
+          )}
+        </div>
       </div>
 
       <ScrollToBottomButton

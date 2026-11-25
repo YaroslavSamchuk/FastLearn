@@ -310,20 +310,46 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
     if (!node) return;
 
     const margin = 12;
+    const gap = 8;
     const positionPopover = () => {
       const rect = node.getBoundingClientRect();
-      const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      const maxLeft = Math.max(margin, viewportWidth - rect.width - margin);
-      const left = Math.max(margin, Math.min(selection.x - rect.width / 2, maxLeft));
-      const desiredTop = selection.placement === 'top' ? selection.y - rect.height : selection.y;
-      const maxTop = Math.max(margin, viewportHeight - rect.height - margin);
-      const top = Math.max(margin, Math.min(desiredTop, maxTop));
+      const vv = window.visualViewport;
+      const viewportWidth = vv?.width ?? window.innerWidth;
+      const viewportHeight = vv?.height ?? window.innerHeight;
+      const vvLeft = vv?.offsetLeft ?? 0;
+      const vvTop = vv?.offsetTop ?? 0;
+
+      const minLeft = vvLeft + margin;
+      const maxLeft = Math.max(minLeft, vvLeft + viewportWidth - rect.width - margin);
+      const left = Math.max(minLeft, Math.min(selection.x - rect.width / 2, maxLeft));
+
+      const topSafeMin = vvTop + 64;
+      const bottomSafeMax = vvTop + viewportHeight - margin;
+      const spaceAbove = selection.anchorTop - topSafeMin;
+      const spaceBelow = bottomSafeMax - selection.anchorBottom;
+
+      let desiredTop: number;
+      if (selection.placement === 'top') {
+        if (spaceAbove >= rect.height + gap || spaceAbove >= spaceBelow) {
+          desiredTop = selection.anchorTop - rect.height - gap;
+        } else {
+          desiredTop = selection.anchorBottom + gap;
+        }
+      } else {
+        if (spaceBelow >= rect.height + gap || spaceBelow >= spaceAbove) {
+          desiredTop = selection.anchorBottom + gap;
+        } else {
+          desiredTop = selection.anchorTop - rect.height - gap;
+        }
+      }
+
+      const maxTop = Math.max(vvTop + margin, bottomSafeMax - rect.height);
+      const top = Math.max(vvTop + margin, Math.min(desiredTop, maxTop));
 
       setStyle({
         left,
         top,
-        maxHeight: `${Math.max(1, viewportHeight - margin * 2)}px`,
+        maxHeight: `${Math.max(120, viewportHeight - margin * 2)}px`,
         opacity: 1
       });
     };
@@ -331,10 +357,12 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
     positionPopover();
     window.addEventListener('resize', positionPopover);
     window.visualViewport?.addEventListener('resize', positionPopover);
+    window.visualViewport?.addEventListener('scroll', positionPopover);
 
     return () => {
       window.removeEventListener('resize', positionPopover);
       window.visualViewport?.removeEventListener('resize', positionPopover);
+      window.visualViewport?.removeEventListener('scroll', positionPopover);
     };
   }, [selection, loadingTranslation, loadingPronunciation, data, translationError, pronunciationError]);
 
@@ -355,17 +383,17 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       data-selection-popover
       onPointerDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
-      className="fixed z-50 max-h-[calc(100dvh-24px)] w-[min(350px,calc(100vw-24px))] overflow-y-auto overscroll-contain transition-[opacity,transform] duration-150 ease-out"
+      className="fixed z-50 max-h-[calc(100dvh-24px)] w-[min(350px,calc(100vw-24px))] overflow-y-auto overscroll-contain transition-opacity duration-150 ease-unslop"
       style={style}
     >
-      <div className="animate-popover rounded-md border border-black/[0.14] bg-white text-[#111113] shadow-sm dark:border-white/[0.14] dark:bg-[#141416] dark:text-zinc-100">
+      <div className="animate-popover rounded-xl border border-black/[0.1] bg-white text-[#1c1917] shadow-[0_8px_24px_rgba(0,0,0,0.08)] dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:shadow-none">
         <div className="flex items-start justify-between gap-3 border-b border-black/[0.08] px-4 py-3 dark:border-white/[0.08]">
           <div className="min-w-0 flex-1">
-            <p className="line-clamp-2 text-[14px] font-medium leading-snug text-[#111113] dark:text-zinc-50">
+            <p className="line-clamp-2 text-[14px] font-medium leading-snug text-[#1c1917] dark:text-[#efede8]">
               {selection.text}
             </p>
             {wordCount > 1 && (
-              <p className="mt-1 font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+              <p className="mt-1 font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c]">
                 {wordCount} слів
               </p>
             )}
@@ -377,11 +405,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               haptic.tap();
               onClose();
             }}
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] text-zinc-400 transition-colors duration-150 hover:bg-black/[0.06] hover:text-[#111113] dark:text-zinc-500 dark:hover:bg-white/[0.08] dark:hover:text-zinc-100"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-black/[0.05] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-white/[0.06] dark:hover:text-[#efede8]"
             title="Закрити"
             aria-label="Закрити панель перекладу"
           >
-            <X className="h-4 w-4" strokeWidth={1.75} />
+            <X className="h-4 w-4" strokeWidth={1.5} />
           </button>
         </div>
 
@@ -389,33 +417,33 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
           <div className="space-y-3">
             <section aria-label="Переклад" aria-live="polite">
               {data?.translation ? (
-                <p className="text-[14px] leading-snug text-zinc-800 dark:text-zinc-200">
+                <p className="text-[14px] leading-snug text-[#1c1917] dark:text-[#efede8]">
                   {data.translation}
                 </p>
               ) : loadingTranslation ? (
-                <div className="flex items-center gap-2 py-1 text-[12px] text-zinc-500 dark:text-zinc-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+                <div className="flex items-center gap-2 py-1 text-[13px] text-[#736d65] dark:text-[#8a847c]">
+                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                   Переклад…
                 </div>
               ) : translationError ? (
                 <div className="space-y-2">
-                  <p className="text-[12px] leading-relaxed text-red-600 dark:text-red-400">
+                  <p className="text-[13px] leading-relaxed text-[#dc2626] dark:text-[#e5484d]">
                     Не вдалося отримати переклад
                   </p>
-                  <p className="break-words text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                  <p className="break-words text-[12px] leading-relaxed text-[#736d65] dark:text-[#8a847c]">
                     {translationError}
                   </p>
                   <button
                     type="button"
                     onClick={() => setAttempt((value) => value + 1)}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-[4px] border border-black/[0.12] px-2.5 text-[11px] font-medium text-zinc-700 transition-colors duration-150 hover:bg-black/[0.04] dark:border-white/[0.12] dark:text-zinc-300 dark:hover:bg-white/[0.05]"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-black/[0.1] px-3 text-[12px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-black/[0.04] hover:text-[#1c1917] dark:border-white/[0.1] dark:text-[#a8a29a] dark:hover:bg-white/[0.05] dark:hover:text-[#efede8]"
                   >
-                    <RotateCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    <RotateCw className="h-4 w-4" strokeWidth={1.5} />
                     Повторити переклад
                   </button>
                 </div>
               ) : (
-                <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
+                <p className="text-[13px] text-[#736d65] dark:text-[#8a847c]">
                   Переклад недоступний
                 </p>
               )}
@@ -423,17 +451,17 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
 
             <section aria-label="Транскрипція" aria-live="polite">
               {data?.ipa ? (
-                <p className="font-mono text-[12px] leading-relaxed text-amber-700 dark:text-amber-400">
+                <p className="font-mono text-[13px] leading-relaxed text-amber-700 dark:text-amber-400">
                   {data.ipa}
                 </p>
               ) : loadingPronunciation ? (
-                <div className="flex items-center gap-2 py-1 text-[12px] text-zinc-500 dark:text-zinc-400">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+                <div className="flex items-center gap-2 py-1 text-[13px] text-[#736d65] dark:text-[#8a847c]">
+                  <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                   Транскрипція…
                 </div>
               ) : pronunciationError ? (
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
+                  <p className="text-[12px] text-[#736d65] dark:text-[#8a847c]">
                     {wordCount > MAX_SELECTION_WORDS
                       ? `Виберіть фразу до ${MAX_SELECTION_WORDS} слів`
                       : 'Транскрипція недоступна'}
@@ -442,9 +470,9 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                     <button
                       type="button"
                       onClick={() => setAttempt((value) => value + 1)}
-                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[4px] border border-black/[0.12] px-2 text-[11px] font-medium text-zinc-700 transition-colors duration-150 hover:bg-black/[0.04] dark:border-white/[0.12] dark:text-zinc-300 dark:hover:bg-white/[0.05]"
+                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-black/[0.1] px-2.5 text-[12px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-black/[0.04] hover:text-[#1c1917] dark:border-white/[0.1] dark:text-[#a8a29a] dark:hover:bg-white/[0.05] dark:hover:text-[#efede8]"
                     >
-                      <RotateCw className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      <RotateCw className="h-4 w-4" strokeWidth={1.5} />
                       Повторити
                     </button>
                   )}
@@ -455,7 +483,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         </div>
 
         <div
-          className="grid gap-2 border-t border-black/[0.08] px-4 py-3 dark:border-white/[0.08]"
+          className="grid gap-2 border-t border-black/[0.08] p-2 dark:border-white/[0.08]"
           style={{ gridTemplateColumns: `repeat(${phraseSpeeds.length}, minmax(0, 1fr))` }}
         >
           {phraseSpeeds.map((speed) => {
@@ -465,20 +493,20 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                 key={speed}
                 type="button"
                 onClick={() => handlePlay(speed)}
-                className={`flex h-9 min-w-0 items-center justify-center gap-1.5 rounded-[4px] border px-2 font-mono text-[12px] font-medium tabular-nums transition-colors duration-150 ${
+                className={`flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-lg border px-2 font-mono text-[12px] font-medium tabular-nums transition-[background-color,border-color,color,transform] duration-150 ease-unslop active:scale-[0.98] sm:h-9 ${
                   active
-                    ? 'border-amber-500 bg-amber-400 text-[#111113]'
-                    : 'border-black/[0.1] bg-[#f4f4f2] text-zinc-700 hover:border-black/25 hover:text-[#111113] dark:border-white/[0.1] dark:bg-[#1c1c1f] dark:text-zinc-300 dark:hover:border-white/25 dark:hover:text-zinc-100'
+                    ? 'border-amber-500 bg-amber-500 text-[#1c1917]'
+                    : 'border-black/[0.08] bg-[#f6f5f1] text-[#57534e] hover:border-black/20 hover:text-[#1c1917] dark:border-white/[0.08] dark:bg-[#262421] dark:text-[#a8a29a] dark:hover:border-white/20 dark:hover:text-[#efede8]'
                 }`}
                 aria-label={`Прослухати виділену фразу зі швидкістю ${speed}×`}
                 aria-pressed={active}
               >
                 {active ? (
-                  <AudioVisualizer isPlaying barColor="bg-[#111113]" />
+                  <AudioVisualizer isPlaying barColor="bg-[#1c1917]" />
                 ) : !readyPhraseSpeeds.includes(speed) && !failedPhraseSpeeds.includes(speed) ? (
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" strokeWidth={1.75} />
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" strokeWidth={1.5} />
                 ) : (
-                  <Volume2 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                  <Volume2 className="h-4 w-4 shrink-0" strokeWidth={1.5} />
                 )}
                 <span>{speed}×</span>
               </button>

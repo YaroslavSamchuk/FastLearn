@@ -63,10 +63,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [memoryScope, setMemoryScope] = useState<'global' | 'da' | 'en'>('global');
   const [newFact, setNewFact] = useState('');
+  const [confirmDeleteIndex, setConfirmDeleteIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setShouldRender(true);
+      setConfirmDeleteIndex(null);
       const frameId = requestAnimationFrame(() => {
         requestAnimationFrame(() => setIsVisible(true));
       });
@@ -74,13 +76,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
 
     setIsVisible(false);
-    const timer = window.setTimeout(() => setShouldRender(false), 180);
+    setConfirmDeleteIndex(null);
+    const timer = window.setTimeout(() => setShouldRender(false), 200);
     return () => window.clearTimeout(timer);
   }, [isOpen]);
 
   useEffect(() => {
     if (!isLoggedIn && activeTab === 'memory') setActiveTab('general');
   }, [isLoggedIn, activeTab]);
+
+  useEffect(() => {
+    setConfirmDeleteIndex(null);
+  }, [memoryScope, activeTab]);
 
   if (!shouldRender) return null;
 
@@ -114,18 +121,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setNewFact('');
   };
 
-  const handleDeleteFact = (index: number) => {
-    const fact = currentFactList[index];
-    if (!fact) return;
-    if (!window.confirm(`Видалити факт «${fact.slice(0, 60)}»?`)) return;
-    haptic.warning();
-    onMemoryUpdate(memoryScope, 'delete', index);
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0 select-none sm:items-center sm:p-6">
       <div
-        className={`fixed inset-0 bg-black/45 transition-opacity duration-200 dark:bg-black/75 ${
+        className={`fixed inset-0 bg-black/45 transition-opacity duration-200 ease-unslop dark:bg-black/75 ${
           isVisible ? 'opacity-100' : 'opacity-0'
         }`}
         onClick={() => {
@@ -136,43 +135,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       />
 
       <div
-        className={`relative z-10 flex h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-md border border-black/[0.14] bg-[#f4f4f2] text-[#111113] transition-[opacity,transform] duration-200 dark:border-white/[0.14] dark:bg-[#101012] dark:text-zinc-100 sm:h-auto sm:max-h-[86dvh] sm:rounded-md ${
-          isVisible ? 'translate-y-0 opacity-100 sm:scale-100' : 'translate-y-3 opacity-0 sm:scale-[0.98]'
+        className={`relative z-10 flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-black/[0.08] bg-[#f6f5f1] text-[#1c1917] shadow-[0_8px_24px_rgba(0,0,0,0.08)] transition-[opacity,transform] duration-200 ease-unslop dark:border-white/[0.08] dark:bg-[#121110] dark:text-[#efede8] dark:shadow-none sm:max-h-[85dvh] sm:rounded-xl ${
+          isVisible ? 'translate-y-0 opacity-100 sm:scale-100' : 'translate-y-4 opacity-0 sm:scale-[0.98]'
         }`}
         role="dialog"
         aria-modal="true"
         aria-label="Налаштування"
       >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.09] bg-white px-4 dark:border-white/[0.09] dark:bg-[#141416] sm:px-5">
-          <h2 className="text-[14px] font-medium tracking-[-0.01em]">Налаштування</h2>
+        <div className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.08] bg-white px-4 dark:border-white/[0.08] dark:bg-[#1c1a18] sm:px-5">
+          <h2 className="text-[15px] font-medium tracking-[-0.01em]">Налаштування</h2>
           <button
             type="button"
             onClick={() => {
               haptic.tap();
               onClose();
             }}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-[4px] text-zinc-500 transition-colors hover:bg-[#eaeae7] hover:text-[#111113] dark:text-zinc-400 dark:hover:bg-[#1c1c1f] dark:hover:text-zinc-100"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-[#eceae4] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-[#262421] dark:hover:text-[#efede8] sm:h-8 sm:w-8"
             aria-label="Закрити налаштування"
           >
-            <X className="h-4 w-4" strokeWidth={1.75} />
+            <X className="h-4 w-4" strokeWidth={1.5} />
           </button>
         </div>
 
-        <div className="flex shrink-0 border-b border-black/[0.09] bg-white px-4 dark:border-white/[0.09] dark:bg-[#141416] sm:px-5">
+        <div className="flex shrink-0 border-b border-black/[0.08] bg-white px-4 dark:border-white/[0.08] dark:bg-[#1c1a18] sm:px-5">
           <button
             type="button"
             onClick={() => {
               haptic.tap();
               setActiveTab('general');
             }}
-            className={`relative flex flex-1 items-center justify-center gap-2 border-b-2 py-2.5 text-[12px] font-medium transition-colors ${
+            className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
               activeTab === 'general'
-                ? 'border-amber-500 text-[#111113] dark:text-zinc-100'
-                : 'border-transparent text-zinc-500 hover:text-[#111113] dark:text-zinc-400 dark:hover:text-zinc-200'
+                ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
+                : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
             }`}
             aria-pressed={activeTab === 'general'}
           >
-            <Globe className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <Globe className="h-4 w-4" strokeWidth={1.5} />
             Загальні
           </button>
 
@@ -183,27 +182,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 haptic.tap();
                 setActiveTab('memory');
               }}
-              className={`relative flex flex-1 items-center justify-center gap-2 border-b-2 py-2.5 text-[12px] font-medium transition-colors ${
+              className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
                 activeTab === 'memory'
-                  ? 'border-amber-500 text-[#111113] dark:text-zinc-100'
-                  : 'border-transparent text-zinc-500 hover:text-[#111113] dark:text-zinc-400 dark:hover:text-zinc-200'
+                  ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
+                  : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
               }`}
               aria-pressed={activeTab === 'memory'}
             >
-              <Brain className="h-3.5 w-3.5" strokeWidth={1.75} />
+              <Brain className="h-4 w-4" strokeWidth={1.5} />
               Пам’ять
             </button>
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
+        <div className="pb-safe flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
           {activeTab === 'general' ? (
             <div className="space-y-4">
-              <section className="rounded-md border border-black/[0.1] bg-white p-4 dark:border-white/[0.1] dark:bg-[#141416]">
-                <h3 className="text-[12px] font-medium text-[#111113] dark:text-zinc-100">
+              <section className="rounded-xl border border-black/[0.08] bg-white p-4 dark:border-white/[0.08] dark:bg-[#1c1a18]">
+                <h3 className="text-[13px] font-medium text-[#1c1917] dark:text-[#efede8]">
                   Мова практики
                 </h3>
-                <div className="mt-2.5 grid grid-cols-2 gap-2">
+                <div className="mt-3 grid grid-cols-2 gap-2">
                   {(
                     [
                       { value: 'da', title: 'Dansk', hint: 'Данська' },
@@ -219,23 +218,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           haptic.tap();
                           onUpdateLanguage(option.value);
                         }}
-                        className={`flex items-center justify-between rounded-[4px] border px-3 py-2.5 text-left transition-colors ${
+                        className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors duration-150 ease-unslop ${
                           selected
-                            ? 'border-black/[0.2] border-l-2 border-l-amber-500 bg-[#f4f4f2] text-[#111113] dark:border-white/[0.2] dark:border-l-amber-500 dark:bg-[#1c1c1f] dark:text-zinc-100'
-                            : 'border-black/[0.09] text-zinc-700 hover:border-black/[0.18] hover:bg-[#f4f4f2]/60 dark:border-white/[0.09] dark:text-zinc-300 dark:hover:border-white/[0.16] dark:hover:bg-[#1c1c1f]/50'
+                            ? 'border-black/[0.16] border-l-2 border-l-amber-500 bg-[#f6f5f1] text-[#1c1917] dark:border-white/[0.16] dark:border-l-amber-500 dark:bg-[#262421] dark:text-[#efede8]'
+                            : 'border-black/[0.08] text-[#57534e] hover:border-black/[0.16] hover:bg-[#f6f5f1]/70 dark:border-white/[0.08] dark:text-[#a8a29a] dark:hover:border-white/[0.16] dark:hover:bg-[#262421]/60'
                         }`}
                         aria-pressed={selected}
                       >
                         <span>
-                          <span className="block text-[13px] font-medium">{option.title}</span>
-                          <span className="mt-0.5 block text-[11px] text-zinc-500 dark:text-zinc-500">
+                          <span className="block text-[14px] font-medium">{option.title}</span>
+                          <span className="mt-0.5 block text-[12px] text-[#736d65] dark:text-[#8a847c]">
                             {option.hint}
                           </span>
                         </span>
                         {selected && (
                           <Check
-                            className="h-4 w-4 text-amber-600 dark:text-amber-400"
-                            strokeWidth={1.75}
+                            className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400"
+                            strokeWidth={1.5}
                           />
                         )}
                       </button>
@@ -243,9 +242,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   })}
                 </div>
 
-                <div className="mt-4 border-t border-black/[0.08] pt-3.5 dark:border-white/[0.08]">
+                <div className="mt-4 border-t border-black/[0.08] pt-4 dark:border-white/[0.08]">
                   <div className="flex items-center justify-between gap-2">
-                    <h4 className="text-[12px] font-medium text-[#111113] dark:text-zinc-100">
+                    <h4 className="text-[13px] font-medium text-[#1c1917] dark:text-[#efede8]">
                       Голос озвучки · {currentLanguage === 'da' ? 'Dansk' : 'English'}
                     </h4>
                     {isLoggedIn && onPreviewVoice && (
@@ -255,20 +254,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           haptic.tap();
                           onPreviewVoice(currentLanguage, activeVoice);
                         }}
-                        className="inline-flex items-center gap-1.5 rounded-[4px] border border-black/[0.09] px-2 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-[#f4f4f2] hover:text-[#111113] dark:border-white/[0.09] dark:text-zinc-400 dark:hover:bg-[#1c1c1f] dark:hover:text-zinc-100"
+                        className="inline-flex h-8 items-center gap-2 rounded-lg border border-black/[0.08] px-2.5 text-[12px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-[#f6f5f1] hover:text-[#1c1917] dark:border-white/[0.08] dark:text-[#a8a29a] dark:hover:bg-[#262421] dark:hover:text-[#efede8]"
                         aria-label="Прослухати вибраний голос"
                       >
                         {isPreviewPlaying ? (
                           <AudioVisualizer isPlaying barColor="bg-amber-600 dark:bg-amber-400" />
                         ) : (
-                          <Volume2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          <Volume2 className="h-4 w-4" strokeWidth={1.5} />
                         )}
                         <span>{isPreviewPlaying ? 'Зупинити' : 'Перевірити'}</span>
                       </button>
                     )}
                   </div>
 
-                  <div className="mt-2.5 grid grid-cols-2 gap-2">
+                  <div className="mt-3 grid grid-cols-2 gap-2">
                     {voiceOptions.map((option) => {
                       const selected = activeVoice === option.id;
                       return (
@@ -279,23 +278,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             haptic.tap();
                             onUpdateVoice(currentLanguage, option.id);
                           }}
-                          className={`flex items-center justify-between rounded-[4px] border px-3 py-2 text-left transition-colors ${
+                          className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors duration-150 ease-unslop ${
                             selected
-                              ? 'border-black/[0.2] border-l-2 border-l-amber-500 bg-[#f4f4f2] text-[#111113] dark:border-white/[0.2] dark:border-l-amber-500 dark:bg-[#1c1c1f] dark:text-zinc-100'
-                              : 'border-black/[0.09] text-zinc-700 hover:border-black/[0.18] hover:bg-[#f4f4f2]/60 dark:border-white/[0.09] dark:text-zinc-300 dark:hover:border-white/[0.16] dark:hover:bg-[#1c1c1f]/50'
+                              ? 'border-black/[0.16] border-l-2 border-l-amber-500 bg-[#f6f5f1] text-[#1c1917] dark:border-white/[0.16] dark:border-l-amber-500 dark:bg-[#262421] dark:text-[#efede8]'
+                              : 'border-black/[0.08] text-[#57534e] hover:border-black/[0.16] hover:bg-[#f6f5f1]/70 dark:border-white/[0.08] dark:text-[#a8a29a] dark:hover:border-white/[0.16] dark:hover:bg-[#262421]/60'
                           }`}
                           aria-pressed={selected}
                         >
                           <span className="min-w-0">
-                            <span className="block truncate text-[13px] font-medium">{option.label}</span>
-                            <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-500">
+                            <span className="block truncate text-[14px] font-medium">{option.label}</span>
+                            <span className="mt-0.5 block truncate text-[12px] text-[#736d65] dark:text-[#8a847c]">
                               {option.hint}
                             </span>
                           </span>
                           {selected && (
                             <Check
                               className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400"
-                              strokeWidth={1.75}
+                              strokeWidth={1.5}
                             />
                           )}
                         </button>
@@ -304,13 +303,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
-                <div className="mt-4 border-t border-black/[0.08] pt-3.5 dark:border-white/[0.08]">
+                <div className="mt-4 border-t border-black/[0.08] pt-4 dark:border-white/[0.08]">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <h4 className="text-[12px] font-medium text-[#111113] dark:text-zinc-100">
+                      <h4 className="text-[13px] font-medium text-[#1c1917] dark:text-[#efede8]">
                         Швидкості озвучки · {currentLanguage === 'da' ? 'Dansk' : 'English'}
                       </h4>
-                      <p className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
+                      <p className="mt-0.5 font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c]">
                         Від {MAX_PLAYBACK_SPEED}× до {MIN_PLAYBACK_SPEED}× · перша вмикається одразу
                       </p>
                     </div>
@@ -318,36 +317,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <button
                         type="button"
                         onClick={handleResetSpeeds}
-                        className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-black/[0.09] px-2 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:bg-[#f4f4f2] hover:text-[#111113] dark:border-white/[0.09] dark:text-zinc-400 dark:hover:bg-[#1c1c1f] dark:hover:text-zinc-100"
+                        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-black/[0.08] px-2.5 text-[12px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-[#f6f5f1] hover:text-[#1c1917] dark:border-white/[0.08] dark:text-[#a8a29a] dark:hover:bg-[#262421] dark:hover:text-[#efede8]"
                         aria-label="Скинути швидкості до стандартних"
                       >
-                        <RotateCcw className="h-3 w-3" strokeWidth={1.75} />
+                        <RotateCcw className="h-4 w-4" strokeWidth={1.5} />
                         <span>Скинути</span>
                       </button>
                     )}
                   </div>
 
-                  <div className="mt-2.5 space-y-2">
+                  <div className="mt-3 space-y-2">
                     {([0, 1, 2] as const).map((slotIndex) => {
                       const speed = activeSpeeds[slotIndex];
-                      const slotLabel = slotIndex === 0 ? 'Швидкість 1' : slotIndex === 1 ? 'Швидкість 2' : 'Швидкість 3';
+                      const slotLabel =
+                        slotIndex === 0 ? 'Швидкість 1' : slotIndex === 1 ? 'Швидкість 2' : 'Швидкість 3';
                       const canDecrease = speed > MIN_PLAYBACK_SPEED + 1e-6;
                       const canIncrease = speed < MAX_PLAYBACK_SPEED - 1e-6;
                       return (
                         <div
                           key={slotIndex}
-                          className="rounded-[4px] border border-black/[0.09] bg-[#f4f4f2]/60 px-3 py-2.5 dark:border-white/[0.09] dark:bg-[#101012]"
+                          className="rounded-lg border border-black/[0.08] bg-[#f6f5f1] px-3 py-2.5 dark:border-white/[0.08] dark:bg-[#161513]"
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className="flex items-center gap-2 text-[12px] font-medium text-zinc-800 dark:text-zinc-200">
+                            <span className="flex items-center gap-2 text-[13px] font-medium text-[#1c1917] dark:text-[#efede8]">
                               <span>{slotLabel}</span>
                               {slotIndex === 0 && (
-                                <span className="rounded-[2px] border border-amber-500/35 px-1.5 py-0.5 font-mono text-[10px] font-medium text-amber-700 dark:border-amber-400/30 dark:text-amber-400">
+                                <span className="rounded px-1.5 py-0.5 font-mono text-[12px] font-medium text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-400 dark:ring-amber-400/25">
                                   Авто
                                 </span>
                               )}
                             </span>
-                            <span className="font-mono text-[12px] font-medium tabular-nums text-amber-700 dark:text-amber-400">
+                            <span className="font-mono text-[13px] font-medium tabular-nums text-amber-700 dark:text-amber-400">
                               {speed}×
                             </span>
                           </div>
@@ -360,24 +360,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 haptic.tap();
                                 handleSpeedSlotChange(slotIndex, speed - PLAYBACK_SPEED_STEP);
                               }}
-                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] border border-black/[0.12] bg-white text-zinc-600 transition-colors hover:bg-[#eaeae7] hover:text-[#111113] disabled:opacity-35 dark:border-white/[0.12] dark:bg-[#141416] dark:text-zinc-300 dark:hover:bg-[#1c1c1f] dark:hover:text-zinc-100"
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-black/[0.1] bg-white text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-[#eceae4] hover:text-[#1c1917] disabled:opacity-35 dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#a8a29a] dark:hover:bg-[#262421] dark:hover:text-[#efede8] sm:h-8 sm:w-8"
                               aria-label={`Зменшити ${slotLabel}`}
                             >
-                              <Minus className="h-3.5 w-3.5" strokeWidth={1.75} />
+                              <Minus className="h-4 w-4" strokeWidth={1.5} />
                             </button>
 
-                            <input
-                              type="range"
-                              min={MIN_PLAYBACK_SPEED}
-                              max={MAX_PLAYBACK_SPEED}
-                              step={PLAYBACK_SPEED_STEP}
-                              value={speed}
-                              onChange={(event) =>
-                                handleSpeedSlotChange(slotIndex, Number.parseFloat(event.target.value))
-                              }
-                              className="h-1 w-full cursor-pointer accent-amber-600 dark:accent-amber-500"
-                              aria-label={slotLabel}
-                            />
+                            <div className="flex h-9 flex-1 items-center sm:h-8">
+                              <input
+                                type="range"
+                                min={MIN_PLAYBACK_SPEED}
+                                max={MAX_PLAYBACK_SPEED}
+                                step={PLAYBACK_SPEED_STEP}
+                                value={speed}
+                                onChange={(event) =>
+                                  handleSpeedSlotChange(slotIndex, Number.parseFloat(event.target.value))
+                                }
+                                className="h-2 w-full cursor-pointer accent-amber-600 dark:accent-amber-500"
+                                aria-label={slotLabel}
+                              />
+                            </div>
 
                             <button
                               type="button"
@@ -386,10 +388,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 haptic.tap();
                                 handleSpeedSlotChange(slotIndex, speed + PLAYBACK_SPEED_STEP);
                               }}
-                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] border border-black/[0.12] bg-white text-zinc-600 transition-colors hover:bg-[#eaeae7] hover:text-[#111113] disabled:opacity-35 dark:border-white/[0.12] dark:bg-[#141416] dark:text-zinc-300 dark:hover:bg-[#1c1c1f] dark:hover:text-zinc-100"
+                              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-black/[0.1] bg-white text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-[#eceae4] hover:text-[#1c1917] disabled:opacity-35 dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#a8a29a] dark:hover:bg-[#262421] dark:hover:text-[#efede8] sm:h-8 sm:w-8"
                               aria-label={`Збільшити ${slotLabel}`}
                             >
-                              <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+                              <Plus className="h-4 w-4" strokeWidth={1.5} />
                             </button>
                           </div>
                         </div>
@@ -399,23 +401,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </section>
 
-              <section className="rounded-md border border-black/[0.1] bg-white p-4 dark:border-white/[0.1] dark:bg-[#141416]">
+              <section className="rounded-xl border border-black/[0.08] bg-white p-4 dark:border-white/[0.08] dark:bg-[#1c1a18]">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
                     {isLoggedIn && user ? (
                       <>
-                        <UserAvatar name={user.name} src={user.avatar} size={34} />
+                        <UserAvatar name={user.name} src={user.avatar} size={36} />
                         <div className="min-w-0">
-                          <p className="truncate text-[13px] font-medium">{user.name}</p>
-                          <p className="truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-500">
+                          <p className="truncate text-[14px] font-medium">{user.name}</p>
+                          <p className="truncate font-mono text-[12px] text-[#736d65] dark:text-[#8a847c]">
                             {user.email}
                           </p>
                         </div>
                       </>
                     ) : (
                       <div>
-                        <p className="text-[13px] font-medium">Гість</p>
-                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500">
+                        <p className="text-[14px] font-medium">Гість</p>
+                        <p className="text-[12px] text-[#736d65] dark:text-[#8a847c]">
                           Історія недоступна без входу
                         </p>
                       </div>
@@ -429,9 +431,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         haptic.tap();
                         onLogout();
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-[4px] border border-black/[0.12] px-2.5 py-1.5 text-[11px] font-medium text-zinc-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:border-white/[0.12] dark:text-zinc-400 dark:hover:border-red-900/60 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-black/[0.1] px-3 text-[13px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:border-red-300 hover:bg-red-500/10 hover:text-[#dc2626] dark:border-white/[0.1] dark:text-[#a8a29a] dark:hover:border-red-900/60 dark:hover:bg-red-500/15 dark:hover:text-[#e5484d] sm:h-8"
                     >
-                      <LogOut className="h-3.5 w-3.5" strokeWidth={1.75} />
+                      <LogOut className="h-4 w-4" strokeWidth={1.5} />
                       Вийти
                     </button>
                   ) : (
@@ -441,7 +443,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         haptic.impact();
                         onLogin();
                       }}
-                      className="rounded-[4px] bg-[#111113] px-3 py-1.5 text-[11px] font-medium text-[#f4f4f2] transition-colors hover:bg-zinc-800 dark:bg-zinc-100 dark:text-[#0c0c0e] dark:hover:bg-white"
+                      className="h-9 shrink-0 rounded-lg bg-[#1c1917] px-3.5 text-[13px] font-medium text-[#f6f5f1] transition-colors duration-150 ease-unslop hover:bg-[#342e2a] dark:bg-[#efede8] dark:text-[#161513] dark:hover:bg-white sm:h-8"
                     >
                       Увійти
                     </button>
@@ -449,13 +451,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </section>
 
-              <p className="px-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-500">
-                Діалоги, налаштування та пам’ять зберігаються у вашому акаунті в MongoDB
+              <p className="px-1 text-[12px] leading-relaxed text-[#736d65] dark:text-[#8a847c]">
+                Діалоги, налаштування та пам’ять синхронізуються з вашим акаунтом
               </p>
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-0.5 rounded-[4px] border border-black/[0.1] bg-[#eaeae7] p-0.5 dark:border-white/[0.1] dark:bg-[#141416]">
+              <div className="grid grid-cols-3 gap-1 rounded-xl border border-black/[0.08] bg-[#eceae4] p-1 dark:border-white/[0.08] dark:bg-[#1c1a18]">
                 {(['global', 'da', 'en'] as const).map((scope) => (
                   <button
                     key={scope}
@@ -464,10 +466,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       haptic.tap();
                       setMemoryScope(scope);
                     }}
-                    className={`rounded-[2px] py-1.5 text-[11px] font-medium transition-colors ${
+                    className={`h-8 rounded-lg text-[12px] font-medium transition-colors duration-150 ease-unslop ${
                       memoryScope === scope
-                        ? 'bg-white text-[#111113] dark:bg-[#1c1c1f] dark:text-zinc-100'
-                        : 'text-zinc-500 hover:text-[#111113] dark:text-zinc-400 dark:hover:text-zinc-200'
+                        ? 'bg-white text-[#1c1917] dark:bg-[#262421] dark:text-[#efede8]'
+                        : 'text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
                     }`}
                     aria-pressed={memoryScope === scope}
                   >
@@ -483,42 +485,78 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   onChange={(event) => setNewFact(event.target.value)}
                   placeholder="Факт про вас або вашу мету"
                   maxLength={200}
-                  className="h-10 flex-1 rounded-[4px] border border-black/[0.12] bg-white px-3 text-[16px] text-[#111113] placeholder-zinc-400 focus:border-amber-500 focus:outline-none dark:border-white/[0.12] dark:bg-[#141416] dark:text-zinc-100 dark:placeholder-zinc-500 sm:text-[13px]"
+                  className="h-10 flex-1 rounded-lg border border-black/[0.1] bg-white px-3 text-[16px] text-[#1c1917] placeholder-[#736d65] focus:border-amber-500 focus:outline-none dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:placeholder-[#8a847c] sm:text-[14px]"
                 />
                 <button
                   type="submit"
                   disabled={!newFact.trim()}
-                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[4px] bg-amber-500 text-[#0c0c0e] transition-colors hover:bg-amber-400 disabled:opacity-40"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-[#1c1917] transition-[background-color,transform] duration-150 ease-unslop hover:bg-amber-400 active:scale-[0.97] disabled:opacity-40"
                   aria-label="Додати факт"
                 >
-                  <Plus className="h-4 w-4" strokeWidth={1.75} />
+                  <Plus className="h-4 w-4" strokeWidth={1.5} />
                 </button>
               </form>
 
               {currentFactList.length === 0 ? (
-                <p className="py-8 text-center text-[12px] text-zinc-500 dark:text-zinc-500">
+                <p className="py-8 text-center text-[13px] text-[#736d65] dark:text-[#8a847c]">
                   Немає збережених фактів
                 </p>
               ) : (
-                <div className="space-y-1.5">
-                  {currentFactList.map((fact, index) => (
-                    <div
-                      key={`${fact}-${index}`}
-                      className="flex items-start justify-between gap-2 rounded-[4px] border border-black/[0.09] bg-white p-3 dark:border-white/[0.09] dark:bg-[#141416]"
-                    >
-                      <p className="flex-1 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300">
-                        {fact}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteFact(index)}
-                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-zinc-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-                        aria-label="Видалити факт"
+                <div className="space-y-2">
+                  {currentFactList.map((fact, index) => {
+                    const isConfirming = confirmDeleteIndex === index;
+                    return (
+                      <div
+                        key={`${fact}-${index}`}
+                        className="flex items-start justify-between gap-2 rounded-lg border border-black/[0.08] bg-white p-3 dark:border-white/[0.08] dark:bg-[#1c1a18]"
                       >
-                        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
-                      </button>
-                    </div>
-                  ))}
+                        <p className="flex-1 pt-0.5 text-[13px] leading-relaxed text-[#57534e] dark:text-[#a8a29a]">
+                          {fact}
+                        </p>
+                        {isConfirming ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                haptic.warning();
+                                setConfirmDeleteIndex(null);
+                                onMemoryUpdate(memoryScope, 'delete', index);
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-600/15 text-[#dc2626] transition-colors duration-150 ease-unslop hover:bg-red-600/25 dark:bg-red-500/20 dark:text-[#e5484d] dark:hover:bg-red-500/30"
+                              title="Підтвердити видалення"
+                              aria-label="Підтвердити видалення факту"
+                            >
+                              <Check className="h-4 w-4" strokeWidth={1.5} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                haptic.tap();
+                                setConfirmDeleteIndex(null);
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-black/[0.05] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-white/[0.06] dark:hover:text-[#efede8]"
+                              title="Скасувати"
+                              aria-label="Скасувати видалення факту"
+                            >
+                              <X className="h-4 w-4" strokeWidth={1.5} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              haptic.tap();
+                              setConfirmDeleteIndex(index);
+                            }}
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-red-500/10 hover:text-[#dc2626] dark:text-[#8a847c] dark:hover:bg-red-500/15 dark:hover:text-[#e5484d]"
+                            aria-label="Видалити факт"
+                          >
+                            <Trash2 className="h-4 w-4" strokeWidth={1.5} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

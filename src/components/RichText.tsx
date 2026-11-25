@@ -22,16 +22,12 @@ export const RichText: React.FC<RichTextProps> = ({ text }) => {
         if (index % 2 === 0) return part;
 
         const isBold = part.startsWith('**') || part.startsWith('__');
-        const inner = part.slice(2, -2);
+        const inner = isBold ? part.slice(2, -2) : part.slice(1, -1);
 
-        return isBold ? (
-          <strong key={index} className="font-semibold">
+        return (
+          <strong key={index} className={isBold ? 'font-semibold' : 'font-medium'}>
             {inner}
           </strong>
-        ) : (
-          <em key={index} className="italic">
-            {inner}
-          </em>
         );
       })}
     </>

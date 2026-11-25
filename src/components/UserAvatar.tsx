@@ -1,6 +1,5 @@
-// language: TypeScript, file: src/components/UserAvatar.tsx, target: Web
-
-import React, { useState } from 'react';
+// language: TypeScript (React), file: src/components/UserAvatar.tsx, target: Web
+import React, { useEffect, useState } from 'react';
 
 interface UserAvatarProps {
   name: string;
@@ -20,11 +19,16 @@ function initials(name: string): string {
 
 export const UserAvatar: React.FC<UserAvatarProps> = ({ name, src, size = 36, className = '' }) => {
   const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
   const showImage = Boolean(src) && !failed;
 
   return (
     <span
-      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-black/[0.1] bg-zinc-200 text-zinc-800 dark:border-white/[0.12] dark:bg-zinc-800 dark:text-zinc-200 ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-black/[0.08] bg-[#eceae4] text-[#1c1917] dark:border-white/[0.08] dark:bg-[#262421] dark:text-[#efede8] ${className}`}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
@@ -40,7 +44,7 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ name, src, size = 36, cl
           }}
         />
       ) : (
-        <span className="font-mono text-[11px] font-medium tabular-nums">{initials(name)}</span>
+        <span className="font-mono text-[12px] font-medium tabular-nums">{initials(name)}</span>
       )}
     </span>
   );

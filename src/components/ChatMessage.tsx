@@ -41,8 +41,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       <div
         className={
           isUser
-            ? 'max-w-[85%] rounded-md border border-black/[0.1] bg-white px-4 py-2.5 text-[#111113] dark:border-white/[0.1] dark:bg-[#141416] dark:text-zinc-100 sm:max-w-[72%]'
-            : 'w-full py-1 text-[#111113] dark:text-zinc-100'
+            ? 'max-w-[85%] rounded-xl border border-black/[0.08] bg-white px-4 py-3 text-[#1c1917] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#efede8] sm:max-w-[72%]'
+            : 'w-full py-1 text-[#1c1917] dark:text-[#efede8]'
         }
       >
         <div className={isUser ? 'text-[15px] leading-[1.6]' : 'text-[15px] leading-[1.7]'}>
@@ -62,28 +62,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
       {!isStreaming && (
         <div
-          className={`mt-1.5 flex items-center gap-2 ${
+          className={`mt-2 flex items-center gap-2 ${
             isUser
-              ? 'justify-end opacity-80 transition-opacity duration-150 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100'
+              ? 'justify-end opacity-80 transition-opacity duration-150 ease-unslop sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100'
               : 'w-full justify-between'
           }`}
         >
-          <div className={isUser ? '' : '-ml-1'}>
-            <MessageActionsDock
-              content={message.content}
-              isUser={isUser}
-              isPlaying={isCurrentPlaying}
-              speed={playbackSpeed}
-              speeds={playbackSpeeds}
-              onPlay={(speed) => onPlayFull(message.content, speed)}
-              onStop={onStopAudio}
-              onSpeedChange={onPlaybackSpeedChange}
-              onShowToast={onShowToast}
-            />
-          </div>
+          <MessageActionsDock
+            content={message.content}
+            isUser={isUser}
+            isPlaying={isCurrentPlaying}
+            speed={playbackSpeed}
+            speeds={playbackSpeeds}
+            onPlay={(speed) => onPlayFull(message.content, speed)}
+            onStop={onStopAudio}
+            onSpeedChange={onPlaybackSpeedChange}
+            onShowToast={onShowToast}
+          />
 
           {timeFormatted && (
-            <span className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
+            <span className="shrink-0 font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c]">
               {timeFormatted}
             </span>
           )}

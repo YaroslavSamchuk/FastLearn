@@ -918,7 +918,9 @@ function sseReply(
           send({ token });
           await new Promise((resolve) => setTimeout(resolve, 8));
         }
-        send('[DONE]');
+        if (!cancelled && !signal.aborted) {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        }
       } catch (error) {
         if (keepalive) {
           clearInterval(keepalive);
@@ -929,7 +931,7 @@ function sseReply(
             error: error instanceof Error ? error.message : String(error)
           });
           send({ error: error instanceof Error ? error.message : 'Chat request failed' });
-          send('[DONE]');
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         }
       } finally {
         if (keepalive) {

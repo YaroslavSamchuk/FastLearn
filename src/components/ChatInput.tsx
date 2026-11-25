@@ -1,12 +1,13 @@
 // language: TypeScript (React), file: src/components/ChatInput.tsx, target: Web / Mobile Browser
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Loader2 } from 'lucide-react';
+import { ArrowUp, Square } from 'lucide-react';
 import { Language } from '../types.ts';
 import { haptic } from '../utils/haptics.ts';
 import { formatResetAt } from '../lib/data.ts';
 
 interface ChatInputProps {
   onSend: (text: string) => void;
+  onAbort?: () => void;
   disabled?: boolean;
   language: Language;
   remainingMessages?: number;
@@ -18,6 +19,7 @@ interface ChatInputProps {
 
 export const ChatInput: React.FC<ChatInputProps> = ({
   onSend,
+  onAbort,
   disabled,
   language,
   remainingMessages = 30,
@@ -29,12 +31,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const isSending = Boolean(disabled);
   const isLimitReached = remainingMessages <= 0;
-  const isInputDisabled = Boolean(disabled) || isLimitReached;
+  const isInputBlocked = isSending || isLimitReached;
 
   const handleSubmit = (event?: React.FormEvent) => {
     event?.preventDefault();
-    if (!text.trim() || isInputDisabled) return;
+    if (!text.trim() || isInputBlocked) return;
 
     haptic.send();
     onSend(text.trim());
@@ -59,14 +62,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }, [text]);
 
   const placeholder = isLimitReached
-    ? `Ліміт вичерпано · оновлення через ${resetAt ? formatResetAt(resetAt) : 'кілька годин'}`
+    ? `Ліміт вичерпано · через ${resetAt ? formatResetAt(resetAt) : 'кілька годин'}`
     : language === 'da'
       ? 'Повідомлення данською чи українською'
       : 'Message in English or Ukrainian';
 
   if (!isLoggedIn) {
     return (
-      <div className="shrink-0 border-t border-black/[0.08] bg-[#f4f4f2] px-4 py-4 pb-safe dark:border-white/[0.08] dark:bg-[#101012] sm:px-6">
+      <div className="pb-safe shrink-0 border-t border-black/[0.08] bg-[#f6f5f1] px-4 pt-4 dark:border-white/[0.08] dark:bg-[#121110] sm:px-6">
         <div className="mx-auto max-w-3xl">
           <button
             type="button"
@@ -74,7 +77,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               haptic.impact();
               onLogin?.();
             }}
-            className="flex h-11 w-full items-center justify-center gap-2.5 rounded-md bg-[#111113] px-5 text-[14px] font-medium text-white transition-colors duration-150 hover:bg-zinc-800 dark:bg-zinc-100 dark:text-[#111113] dark:hover:bg-white"
+            className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg bg-[#1c1917] px-5 text-[14px] font-medium text-[#f6f5f1] transition-[background-color,transform] duration-150 ease-unslop hover:bg-[#342e2a] active:scale-[0.98] dark:bg-[#efede8] dark:text-[#161513] dark:hover:bg-white"
           >
             <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -102,13 +105,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }
 
   return (
-    <div className="shrink-0 border-t border-black/[0.08] bg-[#f4f4f2] px-4 py-3 pb-safe dark:border-white/[0.08] dark:bg-[#101012] sm:px-6 sm:py-4">
+    <div className="pb-safe shrink-0 border-t border-black/[0.08] bg-[#f6f5f1] px-4 pt-3 dark:border-white/[0.08] dark:bg-[#121110] sm:px-6 sm:pt-4">
       <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
         <div
-          className={`flex items-end gap-2 rounded-md border bg-white p-2 transition-colors duration-150 dark:bg-[#141416] ${
+          className={`flex items-end gap-2 rounded-xl border bg-white p-1.5 transition-colors duration-150 ease-unslop dark:bg-[#1c1a18] sm:p-2 ${
             isLimitReached
-              ? 'border-red-500/45'
-              : 'border-black/[0.12] focus-within:border-black/40 dark:border-white/[0.12] dark:focus-within:border-white/35'
+              ? 'border-[#dc2626]/45 dark:border-[#e5484d]/45'
+              : 'border-black/[0.1] focus-within:border-black/30 dark:border-white/[0.1] dark:focus-within:border-white/30'
           }`}
         >
           <textarea
@@ -118,44 +121,56 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             rows={1}
-            disabled={isInputDisabled}
+            disabled={isLimitReached}
+            readOnly={isSending}
             enterKeyHint="send"
             autoComplete="off"
             aria-label="Повідомлення"
-            className="max-h-32 min-h-9 flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[16px] leading-relaxed text-[#111113] placeholder-zinc-400 focus:outline-none disabled:opacity-50 dark:text-zinc-100 dark:placeholder-zinc-500 sm:text-[14px]"
+            className="max-h-32 min-h-10 flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-[16px] leading-snug text-[#1c1917] placeholder-[#736d65] focus:outline-none disabled:opacity-50 dark:text-[#efede8] dark:placeholder-[#8a847c] sm:min-h-9 sm:py-1.5 sm:text-[14px]"
           />
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex shrink-0 items-center gap-2">
             <span
-              className={`font-mono text-[11px] tabular-nums ${
+              className={`font-mono text-[12px] tabular-nums ${
                 isLimitReached
-                  ? 'text-red-600 dark:text-red-400'
+                  ? 'text-[#dc2626] dark:text-[#e5484d]'
                   : remainingMessages <= 5
                     ? 'text-amber-700 dark:text-amber-400'
-                    : 'text-zinc-500 dark:text-zinc-500'
+                    : 'text-[#736d65] dark:text-[#8a847c]'
               }`}
               title={`Залишилось ${remainingMessages} з ${dailyLimit} повідомлень`}
             >
               {remainingMessages}/{dailyLimit}
             </span>
 
-            <button
-              type="submit"
-              disabled={!text.trim() || isInputDisabled}
-              className={`flex h-9 w-9 items-center justify-center rounded-[4px] transition-colors duration-150 ${
-                text.trim() && !isInputDisabled
-                  ? 'bg-amber-500 text-[#111113] hover:bg-amber-400'
-                  : 'cursor-not-allowed bg-black/[0.06] text-zinc-400 dark:bg-white/[0.06] dark:text-zinc-600'
-              }`}
-              title={isLimitReached ? 'Ліміт вичерпано' : 'Надіслати'}
-              aria-label="Надіслати повідомлення"
-            >
-              {disabled ? (
-                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
-              ) : (
-                <ArrowUp className="h-4 w-4" strokeWidth={1.75} />
-              )}
-            </button>
+            {isSending && onAbort ? (
+              <button
+                type="button"
+                onClick={() => {
+                  haptic.tap();
+                  onAbort();
+                }}
+                className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#eceae4] text-[#1c1917] transition-[background-color,transform] duration-150 ease-unslop hover:bg-black/[0.12] active:scale-[0.97] dark:bg-[#262421] dark:text-[#efede8] dark:hover:bg-white/[0.14] sm:h-9 sm:w-9"
+                title="Зупинити відповідь"
+                aria-label="Зупинити відповідь"
+              >
+                <Square className="h-3.5 w-3.5 fill-current" strokeWidth={1.5} />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!text.trim() || isInputBlocked}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-[background-color,color,transform] duration-150 ease-unslop sm:h-9 sm:w-9 ${
+                  text.trim() && !isInputBlocked
+                    ? 'bg-amber-500 text-[#1c1917] hover:bg-amber-400 active:scale-[0.97]'
+                    : 'cursor-not-allowed bg-black/[0.06] text-[#736d65] dark:bg-white/[0.06] dark:text-[#8a847c]'
+                }`}
+                title={isLimitReached ? 'Ліміт вичерпано' : 'Надіслати'}
+                aria-label="Надіслати повідомлення"
+              >
+                <ArrowUp className="h-4 w-4" strokeWidth={1.5} />
+              </button>
+            )}
           </div>
         </div>
       </form>

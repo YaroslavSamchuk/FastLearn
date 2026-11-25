@@ -74,6 +74,8 @@ export interface SelectionData {
   text: string;
   x: number;
   y: number;
+  anchorTop: number;
+  anchorBottom: number;
   placement: 'top' | 'bottom';
 }
 
