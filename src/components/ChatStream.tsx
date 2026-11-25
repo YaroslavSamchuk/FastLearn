@@ -143,40 +143,40 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overscroll-contain px-4 py-4 select-text sm:px-6 sm:py-6"
+        className="flex-1 overflow-y-auto overscroll-contain px-3 py-3 select-text sm:px-6 sm:py-6"
       >
         <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
           {messages.length === 0 && !streamingContent ? (
-            <div className="my-auto py-4 sm:py-8">
-              <div className="border-l-2 border-amber-500 pl-4">
+            <div className="my-auto py-2 sm:py-8">
+              <div className="border-l-2 border-amber-500 pl-3.5 sm:pl-4">
                 <p className="font-mono text-[12px] text-[#736d65] dark:text-[#a8a29a]">
                   {starterCopy.code}
                 </p>
-                <h2 className="mt-2 text-[24px] font-medium leading-tight tracking-[-0.01em] text-[#1c1917] dark:text-[#efede8] sm:text-[28px]">
+                <h2 className="mt-1.5 text-[22px] font-medium leading-tight tracking-[-0.01em] text-[#1c1917] dark:text-[#efede8] sm:mt-2 sm:text-[28px]">
                   {starterCopy.title}
                 </h2>
-                <p className="mt-2 max-w-md text-[14px] leading-6 text-[#57534e] dark:text-[#a8a29a]">
+                <p className="mt-1.5 max-w-md text-[13px] leading-snug text-[#57534e] dark:text-[#a8a29a] sm:mt-2 sm:text-[14px] sm:leading-6">
                   {starterCopy.subtitle}
                 </p>
               </div>
 
               {onQuickSend && (
-                <div className="mt-6 grid w-full divide-y divide-black/[0.08] overflow-hidden rounded-xl border border-black/[0.08] bg-white dark:divide-white/[0.08] dark:border-white/[0.08] dark:bg-[#1c1a18] sm:mt-8 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                <div className="mt-4 grid w-full divide-y divide-black/[0.08] overflow-hidden rounded-xl border border-black/[0.08] bg-white dark:divide-white/[0.08] dark:border-white/[0.08] dark:bg-[#1c1a18] sm:mt-8 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                   {STARTERS[language].map((item) => (
                     <button
                       key={item.index}
                       type="button"
                       onClick={() => handleSuggestionClick(item.text)}
-                      className="group flex flex-col items-start justify-between gap-2 p-3.5 text-left transition-colors duration-150 ease-unslop hover:bg-[#f6f5f1] dark:hover:bg-[#262421] sm:gap-3 sm:p-4"
+                      className="group flex flex-row items-baseline gap-3 px-3.5 py-2.5 text-left transition-colors duration-150 ease-unslop hover:bg-[#f6f5f1] dark:hover:bg-[#262421] sm:flex-col sm:items-start sm:justify-between sm:gap-3 sm:p-4"
                     >
-                      <span className="font-mono text-[12px] tabular-nums text-amber-700 dark:text-amber-400">
+                      <span className="w-5 shrink-0 font-mono text-[12px] tabular-nums text-amber-700 dark:text-amber-400 sm:w-auto">
                         {item.index}
                       </span>
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <span className="block text-[14px] font-medium leading-snug text-[#1c1917] dark:text-[#efede8]">
                           {item.label}
                         </span>
-                        <span className="mt-1 block text-[12px] leading-snug text-[#736d65] dark:text-[#8a847c]">
+                        <span className="mt-0.5 block text-[12px] leading-snug text-[#736d65] dark:text-[#8a847c] sm:mt-1">
                           {item.translation}
                         </span>
                       </div>
@@ -186,7 +186,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex w-full flex-col gap-6 pb-4">
+            <div className="flex w-full flex-col gap-4 pb-2 sm:gap-6 sm:pb-4">
               {messages.map((message) => (
                 <ChatMessage
                   key={message._id ?? `${message.createdAt}-${message.role}`}

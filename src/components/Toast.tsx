@@ -30,7 +30,7 @@ export const Toast: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
 
   return (
     <div
-      className="pointer-events-none fixed left-1/2 top-[calc(3.5rem+0.75rem+env(safe-area-inset-top,0px))] z-[60] flex w-full max-w-sm -translate-x-1/2 flex-col items-stretch gap-2 px-4"
+      className="pointer-events-none fixed left-1/2 top-[calc(3rem+0.5rem+env(safe-area-inset-top,0px))] z-[60] flex w-full max-w-sm -translate-x-1/2 flex-col items-stretch gap-2 px-3 sm:top-[calc(3.5rem+0.75rem+env(safe-area-inset-top,0px))] sm:px-4"
       aria-live="polite"
       aria-atomic="false"
     >
@@ -41,7 +41,7 @@ export const Toast: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
         return (
           <div
             key={toast.id}
-            className="pointer-events-auto flex animate-toast-in items-center gap-2.5 rounded-xl border border-black/[0.08] bg-white px-3 py-2.5 text-[#1c1917] shadow-[0_8px_24px_rgba(0,0,0,0.06)] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#efede8] dark:shadow-none"
+            className="pointer-events-auto flex animate-toast-in items-center gap-2.5 rounded-xl border border-black/[0.08] bg-white px-3 py-2 text-[#1c1917] shadow-[0_8px_24px_rgba(0,0,0,0.06)] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#efede8] dark:shadow-none sm:py-2.5"
             role="status"
           >
             <Icon className={`h-4 w-4 shrink-0 ${TONES[type]}`} strokeWidth={1.5} />

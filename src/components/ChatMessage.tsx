@@ -41,11 +41,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
       <div
         className={
           isUser
-            ? 'max-w-[85%] rounded-xl border border-black/[0.08] bg-white px-4 py-3 text-[#1c1917] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#efede8] sm:max-w-[72%]'
-            : 'w-full py-1 text-[#1c1917] dark:text-[#efede8]'
+            ? 'max-w-[88%] rounded-xl border border-black/[0.08] bg-white px-3.5 py-2.5 text-[#1c1917] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#efede8] sm:max-w-[72%] sm:px-4 sm:py-3'
+            : 'w-full py-0.5 text-[#1c1917] dark:text-[#efede8] sm:py-1'
         }
       >
-        <div className={isUser ? 'text-[15px] leading-[1.6]' : 'text-[15px] leading-[1.7]'}>
+        <div
+          className={
+            isUser
+              ? 'text-[15px] leading-[1.55] sm:leading-[1.6]'
+              : 'text-[15px] leading-[1.6] sm:leading-[1.7]'
+          }
+        >
           <SelectableText
             text={message.content}
             messageId={message._id ?? `${message.createdAt}-${message.role}`}
@@ -62,7 +68,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
 
       {!isStreaming && (
         <div
-          className={`mt-2 flex items-center gap-2 ${
+          className={`mt-1.5 flex items-center gap-2 sm:mt-2 ${
             isUser
               ? 'justify-end opacity-80 transition-opacity duration-150 ease-unslop sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100'
               : 'w-full justify-between'

@@ -259,14 +259,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       />
 
       <div
-        className={`relative z-10 flex max-h-[88dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-black/[0.08] bg-[#f6f5f1] text-[#1c1917] shadow-[0_8px_24px_rgba(0,0,0,0.08)] transition-[opacity,transform] duration-200 ease-unslop dark:border-white/[0.08] dark:bg-[#121110] dark:text-[#efede8] dark:shadow-none sm:max-h-[85dvh] sm:rounded-xl ${
+        className={`relative z-10 flex max-h-[calc(var(--app-height,100dvh)-12px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-black/[0.08] bg-[#f6f5f1] text-[#1c1917] shadow-[0_8px_24px_rgba(0,0,0,0.08)] transition-[opacity,transform] duration-200 ease-unslop dark:border-white/[0.08] dark:bg-[#121110] dark:text-[#efede8] dark:shadow-none sm:max-h-[85dvh] sm:rounded-xl ${
           isVisible ? 'translate-y-0 opacity-100 sm:scale-100' : 'translate-y-4 opacity-0 sm:scale-[0.98]'
         }`}
         role="dialog"
         aria-modal="true"
         aria-label="Налаштування"
       >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.08] bg-white px-4 dark:border-white/[0.08] dark:bg-[#1c1a18] sm:px-5">
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.08] bg-white px-3.5 dark:border-white/[0.08] dark:bg-[#1c1a18] sm:h-14 sm:px-5">
           <h2 className="text-[15px] font-medium tracking-[-0.01em]">Налаштування</h2>
           <button
             type="button"
@@ -274,28 +274,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               haptic.tap();
               onClose();
             }}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-[#eceae4] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-[#262421] dark:hover:text-[#efede8] sm:h-8 sm:w-8"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-[#eceae4] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:bg-[#262421] dark:hover:text-[#efede8]"
             aria-label="Закрити налаштування"
           >
             <X className="h-4 w-4" strokeWidth={1.5} />
           </button>
         </div>
 
-        <div className="flex shrink-0 border-b border-black/[0.08] bg-white px-4 dark:border-white/[0.08] dark:bg-[#1c1a18] sm:px-5">
+        <div className="flex shrink-0 border-b border-black/[0.08] bg-white px-2 dark:border-white/[0.08] dark:bg-[#1c1a18] sm:px-5">
           <button
             type="button"
             onClick={() => {
               haptic.tap();
               setActiveTab('general');
             }}
-            className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
+            className={`relative flex h-10 flex-1 items-center justify-center gap-1.5 whitespace-nowrap border-b-2 px-1 text-[12px] font-medium transition-colors duration-150 ease-unslop sm:gap-2 sm:text-[13px] ${
               activeTab === 'general'
                 ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
                 : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
             }`}
             aria-pressed={activeTab === 'general'}
           >
-            <Globe className="h-4 w-4" strokeWidth={1.5} />
+            <Globe className="h-4 w-4 shrink-0" strokeWidth={1.5} />
             Загальні
           </button>
 
@@ -307,14 +307,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   haptic.tap();
                   setActiveTab('memory');
                 }}
-                className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
+                className={`relative flex h-10 flex-1 items-center justify-center gap-1.5 whitespace-nowrap border-b-2 px-1 text-[12px] font-medium transition-colors duration-150 ease-unslop sm:gap-2 sm:text-[13px] ${
                   activeTab === 'memory'
                     ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
                     : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
                 }`}
                 aria-pressed={activeTab === 'memory'}
               >
-                <Brain className="h-4 w-4" strokeWidth={1.5} />
+                <Brain className="h-4 w-4 shrink-0" strokeWidth={1.5} />
                 Пам’ять
               </button>
 
@@ -324,28 +324,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   haptic.tap();
                   setActiveTab('history');
                 }}
-                className={`relative flex h-10 flex-1 items-center justify-center gap-2 border-b-2 text-[13px] font-medium transition-colors duration-150 ease-unslop ${
+                className={`relative flex h-10 flex-1 items-center justify-center gap-1.5 whitespace-nowrap border-b-2 px-1 text-[12px] font-medium transition-colors duration-150 ease-unslop sm:gap-2 sm:text-[13px] ${
                   activeTab === 'history'
                     ? 'border-amber-500 text-[#1c1917] dark:text-[#efede8]'
                     : 'border-transparent text-[#736d65] hover:text-[#1c1917] dark:text-[#8a847c] dark:hover:text-[#efede8]'
                 }`}
                 aria-pressed={activeTab === 'history'}
               >
-                <History className="h-4 w-4" strokeWidth={1.5} />
+                <History className="h-4 w-4 shrink-0" strokeWidth={1.5} />
                 Історія
               </button>
             </>
           )}
         </div>
 
-        <div className="pb-safe flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
+        <div className="pb-safe flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
           {activeTab === 'general' ? (
-            <div className="space-y-4">
-              <section className="rounded-xl border border-black/[0.08] bg-white p-4 dark:border-white/[0.08] dark:bg-[#1c1a18]">
+            <div className="space-y-3 sm:space-y-4">
+              <section className="rounded-xl border border-black/[0.08] bg-white p-3.5 dark:border-white/[0.08] dark:bg-[#1c1a18] sm:p-4">
                 <h3 className="text-[13px] font-medium text-[#1c1917] dark:text-[#efede8]">
                   Мова практики
                 </h3>
-                <div className="mt-3 grid grid-cols-2 gap-2">
+                <div className="mt-2.5 grid grid-cols-2 gap-2 sm:mt-3">
                   {(
                     [
                       { value: 'da', title: 'Dansk', hint: 'Данська' },
@@ -361,7 +361,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           haptic.tap();
                           onUpdateLanguage(option.value);
                         }}
-                        className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors duration-150 ease-unslop ${
+                        className={`flex items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors duration-150 ease-unslop sm:px-3 sm:py-2.5 ${
                           selected
                             ? 'border-black/[0.16] border-l-2 border-l-amber-500 bg-[#f6f5f1] text-[#1c1917] dark:border-white/[0.16] dark:border-l-amber-500 dark:bg-[#262421] dark:text-[#efede8]'
                             : 'border-black/[0.08] text-[#57534e] hover:border-black/[0.16] hover:bg-[#f6f5f1]/70 dark:border-white/[0.08] dark:text-[#a8a29a] dark:hover:border-white/[0.16] dark:hover:bg-[#262421]/60'
@@ -421,7 +421,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             haptic.tap();
                             onUpdateVoice(currentLanguage, option.id);
                           }}
-                          className={`flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-colors duration-150 ease-unslop ${
+                          className={`flex items-center justify-between rounded-lg border px-2.5 py-2 text-left transition-colors duration-150 ease-unslop sm:px-3 sm:py-2.5 ${
                             selected
                               ? 'border-black/[0.16] border-l-2 border-l-amber-500 bg-[#f6f5f1] text-[#1c1917] dark:border-white/[0.16] dark:border-l-amber-500 dark:bg-[#262421] dark:text-[#efede8]'
                               : 'border-black/[0.08] text-[#57534e] hover:border-black/[0.16] hover:bg-[#f6f5f1]/70 dark:border-white/[0.08] dark:text-[#a8a29a] dark:hover:border-white/[0.16] dark:hover:bg-[#262421]/60'
@@ -479,7 +479,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       return (
                         <div
                           key={slotIndex}
-                          className="rounded-lg border border-black/[0.08] bg-[#f6f5f1] px-3 py-2.5 dark:border-white/[0.08] dark:bg-[#161513]"
+                          className="rounded-lg border border-black/[0.08] bg-[#f6f5f1] px-2.5 py-2 dark:border-white/[0.08] dark:bg-[#161513] sm:px-3 sm:py-2.5"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="flex items-center gap-2 text-[13px] font-medium text-[#1c1917] dark:text-[#efede8]">

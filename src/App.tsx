@@ -1,5 +1,5 @@
 // language: TypeScript (React), file: src/App.tsx, target: Web / Mobile Browser
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Chat,
   Language,
@@ -11,13 +11,18 @@ import {
   UserMemories
 } from './types.ts';
 import { Header } from './components/Header.tsx';
-import { BurgerDrawer } from './components/BurgerDrawer.tsx';
-import { SettingsModal } from './components/SettingsModal.tsx';
 import { ChatStream } from './components/ChatStream.tsx';
 import { ChatInput } from './components/ChatInput.tsx';
 import { SelectionPopover } from './components/SelectionPopover.tsx';
 import { Toast } from './components/Toast.tsx';
 import { BrandMark } from './components/BrandMark.tsx';
+
+const BurgerDrawer = lazy(() =>
+  import('./components/BurgerDrawer.tsx').then((module) => ({ default: module.BurgerDrawer }))
+);
+const SettingsModal = lazy(() =>
+  import('./components/SettingsModal.tsx').then((module) => ({ default: module.SettingsModal }))
+);
 import { SelectionProvider, useWordSelection } from './context/SelectionContext.tsx';
 import { useAudio } from './hooks/useAudio.ts';
 import { useToast } from './hooks/useToast.ts';
@@ -894,26 +899,26 @@ const AppContent: React.FC = () => {
     return (
       <>
         <Toast toasts={toasts} onDismiss={dismissToast} />
-        <main className="pt-safe pb-safe flex h-[var(--app-height,100dvh)] items-center justify-center bg-[#f6f5f1] px-6 text-[#1c1917] dark:bg-[#161513] dark:text-[#efede8]">
+        <main className="pt-safe pb-safe flex h-[var(--app-height,100dvh)] items-center justify-center bg-[#f6f5f1] px-5 py-4 text-[#1c1917] dark:bg-[#161513] dark:text-[#efede8] sm:px-6">
           <section className="w-full max-w-sm" aria-labelledby="login-title">
-            <div className="border-l-2 border-amber-500 pl-4">
+            <div className="border-l-2 border-amber-500 pl-3.5 sm:pl-4">
               <div className="flex items-center gap-2">
                 <BrandMark className="h-4 w-4" />
                 <p className="text-[13px] font-semibold tracking-[-0.01em] text-amber-700 dark:text-amber-400">
                   FastLearn
                 </p>
               </div>
-              <h1 id="login-title" className="mt-3 text-[28px] font-medium leading-tight tracking-[-0.02em]">
+              <h1 id="login-title" className="mt-2.5 text-[24px] font-medium leading-snug tracking-[-0.02em] sm:mt-3 sm:text-[28px] sm:leading-tight">
                 Увійдіть, щоб продовжити практику
               </h1>
-              <p className="mt-3 text-[14px] leading-6 text-[#57534e] dark:text-[#a8a29a]">
+              <p className="mt-2.5 text-[14px] leading-relaxed text-[#57534e] dark:text-[#a8a29a] sm:mt-3 sm:leading-6">
                 Діалоги, налаштування та пам’ять зберігаються у вашому акаунті
               </p>
             </div>
             <button
               type="button"
               onClick={handleGoogleLogin}
-              className="mt-8 flex h-11 w-full items-center justify-center gap-3 rounded-lg border border-black/[0.1] bg-white px-5 text-[14px] font-medium text-[#1c1917] transition-[background-color,transform] duration-150 ease-unslop hover:bg-[#eceae4] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:hover:bg-[#262421]"
+              className="mt-6 flex h-10 w-full items-center justify-center gap-3 rounded-lg border border-black/[0.1] bg-white px-4 text-[14px] font-medium text-[#1c1917] transition-[background-color,transform] duration-150 ease-unslop hover:bg-[#eceae4] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:hover:bg-[#262421] sm:mt-8 sm:h-11 sm:px-5"
             >
               <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -946,56 +951,58 @@ const AppContent: React.FC = () => {
         onRenameChat={handleRenameChat}
       />
 
-      <BurgerDrawer
-        isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
-        user={user}
-        isLoggedIn={Boolean(user)}
-        onLogin={handleGoogleLogin}
-        onLogout={handleLogout}
-        currentLanguage={currentLanguage}
-        chats={visibleChats}
-        activeChatId={activeChatId}
-        onSelectChat={handleSelectChat}
-        onCreateNewChat={handleCreateNewChat}
-        onDeleteChat={handleDeleteChat}
-        onOpenSettings={handleOpenSettings}
-        quota={visibleQuota}
-      />
+      <Suspense fallback={null}>
+        <BurgerDrawer
+          isOpen={isDrawerOpen}
+          onClose={() => setIsDrawerOpen(false)}
+          user={user}
+          isLoggedIn={Boolean(user)}
+          onLogin={handleGoogleLogin}
+          onLogout={handleLogout}
+          currentLanguage={currentLanguage}
+          chats={visibleChats}
+          activeChatId={activeChatId}
+          onSelectChat={handleSelectChat}
+          onCreateNewChat={handleCreateNewChat}
+          onDeleteChat={handleDeleteChat}
+          onOpenSettings={handleOpenSettings}
+          quota={visibleQuota}
+        />
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => {
-          if (playingPhrase === VOICE_PREVIEW_TEXT.da || playingPhrase === VOICE_PREVIEW_TEXT.en) {
-            handleStopAudio();
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => {
+            if (playingPhrase === VOICE_PREVIEW_TEXT.da || playingPhrase === VOICE_PREVIEW_TEXT.en) {
+              handleStopAudio();
+            }
+            setIsSettingsOpen(false);
+          }}
+          user={user}
+          isLoggedIn={Boolean(user)}
+          onLogin={handleGoogleLogin}
+          currentLanguage={currentLanguage}
+          onUpdateLanguage={handleSelectLanguage}
+          voices={data.voices}
+          onUpdateVoice={handleUpdateVoice}
+          playbackSpeeds={data.playbackSpeeds}
+          onUpdatePlaybackSpeeds={handleUpdatePlaybackSpeeds}
+          onPreviewVoice={handlePreviewVoice}
+          isPreviewPlaying={
+            isPlaying &&
+            (playingPhrase === VOICE_PREVIEW_TEXT.da || playingPhrase === VOICE_PREVIEW_TEXT.en)
           }
-          setIsSettingsOpen(false);
-        }}
-        user={user}
-        isLoggedIn={Boolean(user)}
-        onLogin={handleGoogleLogin}
-        currentLanguage={currentLanguage}
-        onUpdateLanguage={handleSelectLanguage}
-        voices={data.voices}
-        onUpdateVoice={handleUpdateVoice}
-        playbackSpeeds={data.playbackSpeeds}
-        onUpdatePlaybackSpeeds={handleUpdatePlaybackSpeeds}
-        onPreviewVoice={handlePreviewVoice}
-        isPreviewPlaying={
-          isPlaying &&
-          (playingPhrase === VOICE_PREVIEW_TEXT.da || playingPhrase === VOICE_PREVIEW_TEXT.en)
-        }
-        onPlayHistoryAudio={(phrase, lang, speed) =>
-          handlePlayAudio(phrase, speed, true, lang === 'da', phrase, lang)
-        }
-        onStopAudio={handleStopAudio}
-        isPlaying={isPlaying}
-        playingText={playingPhrase}
-        playingSpeed={currentSpeed}
-        onLogout={handleLogout}
-        memories={visibleMemories}
-        onMemoryUpdate={handleMemoryUpdate}
-      />
+          onPlayHistoryAudio={(phrase, lang, speed) =>
+            handlePlayAudio(phrase, speed, true, lang === 'da', phrase, lang)
+          }
+          onStopAudio={handleStopAudio}
+          isPlaying={isPlaying}
+          playingText={playingPhrase}
+          playingSpeed={currentSpeed}
+          onLogout={handleLogout}
+          memories={visibleMemories}
+          onMemoryUpdate={handleMemoryUpdate}
+        />
+      </Suspense>
 
       <ChatStream
         containerRef={chatStreamRef}

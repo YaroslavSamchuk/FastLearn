@@ -102,14 +102,16 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const vv = window.visualViewport;
       const viewportWidth = vv?.width ?? window.innerWidth;
       const viewportLeft = vv?.offsetLeft ?? 0;
-      const popoverWidth = Math.min(350, viewportWidth - 24);
+      const margin = viewportWidth < 400 ? 10 : 12;
+      const popoverWidth = Math.min(340, viewportWidth - margin * 2);
       const halfWidth = popoverWidth / 2;
 
       let x = (minX + maxX) / 2;
-      x = Math.max(viewportLeft + 12 + halfWidth, Math.min(x, viewportLeft + viewportWidth - 12 - halfWidth));
+      x = Math.max(viewportLeft + margin + halfWidth, Math.min(x, viewportLeft + viewportWidth - margin - halfWidth));
 
-      const estimatedHeight = 200;
-      const topRoom = minY - (vv?.offsetTop ?? 0) - 68;
+      const headerBottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? (vv?.offsetTop ?? 0) + 56;
+      const estimatedHeight = 180;
+      const topRoom = minY - Math.max((vv?.offsetTop ?? 0) + 48, headerBottom) - 8;
       const placement: 'top' | 'bottom' = topRoom >= estimatedHeight ? 'top' : 'bottom';
       const y = placement === 'top' ? minY - 8 : maxY + 8;
 

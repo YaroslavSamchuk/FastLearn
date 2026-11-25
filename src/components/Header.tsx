@@ -70,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="pt-safe shrink-0 border-b border-black/[0.08] bg-[#f6f5f1] dark:border-white/[0.08] dark:bg-[#121110]">
-      <div className="flex h-14 items-center justify-between gap-2 px-4 sm:gap-3 sm:px-6">
+      <div className="flex h-12 items-center justify-between gap-2 px-3 sm:h-14 sm:gap-3 sm:px-6">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <button
             type="button"
@@ -155,7 +155,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {chatTitle || (language === 'da' ? 'Ny samtale' : 'New conversation')}
                 </span>
                 <Pencil
-                  className="h-4 w-4 shrink-0 text-[#736d65] opacity-60 transition-opacity duration-150 ease-unslop group-hover:opacity-100 dark:text-[#8a847c] sm:opacity-0"
+                  className="hidden h-4 w-4 shrink-0 text-[#736d65] opacity-60 transition-opacity duration-150 ease-unslop group-hover:opacity-100 dark:text-[#8a847c] min-[360px]:inline-block sm:opacity-0"
                   strokeWidth={1.5}
                 />
               </button>
@@ -163,7 +163,11 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div
+          className={`shrink-0 items-center gap-1 ${
+            isEditingTitle ? 'hidden sm:flex' : 'flex'
+          }`}
+        >
           <button
             type="button"
             onClick={() => {

@@ -57,19 +57,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   useEffect(() => {
     const node = textareaRef.current;
     if (!node) return;
+    if (!text) {
+      node.style.height = '';
+      return;
+    }
     node.style.height = 'auto';
     node.style.height = `${Math.min(node.scrollHeight, 128)}px`;
   }, [text]);
 
   const placeholder = isLimitReached
-    ? `Ліміт вичерпано · через ${resetAt ? formatResetAt(resetAt) : 'кілька годин'}`
+    ? `Ліміт · ${resetAt ? formatResetAt(resetAt) : 'скоро'}`
     : language === 'da'
-      ? 'Повідомлення данською чи українською'
-      : 'Message in English or Ukrainian';
+      ? 'Пишіть данською'
+      : 'Пишіть англійською';
 
   if (!isLoggedIn) {
     return (
-      <div className="pb-safe shrink-0 border-t border-black/[0.08] bg-[#f6f5f1] px-4 pt-4 dark:border-white/[0.08] dark:bg-[#121110] sm:px-6">
+      <div className="shrink-0 border-t border-black/[0.08] bg-[#f6f5f1] px-3 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] dark:border-white/[0.08] dark:bg-[#121110] sm:px-6 sm:pt-4 sm:pb-safe">
         <div className="mx-auto max-w-3xl">
           <button
             type="button"
@@ -77,7 +81,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               haptic.impact();
               onLogin?.();
             }}
-            className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg bg-[#1c1917] px-5 text-[14px] font-medium text-[#f6f5f1] transition-[background-color,transform] duration-150 ease-unslop hover:bg-[#342e2a] active:scale-[0.98] dark:bg-[#efede8] dark:text-[#161513] dark:hover:bg-white"
+            className="flex h-10 w-full items-center justify-center gap-2.5 rounded-lg bg-[#1c1917] px-5 text-[14px] font-medium text-[#f6f5f1] transition-[background-color,transform] duration-150 ease-unslop hover:bg-[#342e2a] active:scale-[0.98] dark:bg-[#efede8] dark:text-[#161513] dark:hover:bg-white sm:h-11"
           >
             <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -105,10 +109,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   }
 
   return (
-    <div className="pb-safe shrink-0 border-t border-black/[0.08] bg-[#f6f5f1] px-4 pt-3 dark:border-white/[0.08] dark:bg-[#121110] sm:px-6 sm:pt-4">
+    <div className="shrink-0 border-t border-black/[0.08] bg-[#f6f5f1] px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] dark:border-white/[0.08] dark:bg-[#121110] sm:px-6 sm:pt-4 sm:pb-safe">
       <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
         <div
-          className={`flex items-end gap-2 rounded-xl border bg-white p-1.5 transition-colors duration-150 ease-unslop dark:bg-[#1c1a18] sm:p-2 ${
+          className={`flex items-end gap-1.5 rounded-xl border bg-white p-1.5 transition-colors duration-150 ease-unslop dark:bg-[#1c1a18] sm:gap-2 sm:p-2 ${
             isLimitReached
               ? 'border-[#dc2626]/45 dark:border-[#e5484d]/45'
               : 'border-black/[0.1] focus-within:border-black/30 dark:border-white/[0.1] dark:focus-within:border-white/30'
@@ -126,10 +130,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             enterKeyHint="send"
             autoComplete="off"
             aria-label="Повідомлення"
-            className="max-h-32 min-h-10 flex-1 resize-none border-0 bg-transparent px-2.5 py-2 text-[16px] leading-snug text-[#1c1917] placeholder-[#736d65] focus:outline-none disabled:opacity-50 dark:text-[#efede8] dark:placeholder-[#8a847c] sm:min-h-9 sm:py-1.5 sm:text-[14px]"
+            className="max-h-28 min-h-[38px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-[16px] leading-snug text-[#1c1917] placeholder-[#736d65] focus:outline-none disabled:opacity-50 dark:text-[#efede8] dark:placeholder-[#8a847c] sm:max-h-32 sm:min-h-[36px] sm:px-2.5 sm:py-1.5 sm:text-[14px]"
           />
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <span
               className={`font-mono text-[12px] tabular-nums ${
                 isLimitReached
@@ -150,7 +154,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   haptic.tap();
                   onAbort();
                 }}
-                className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#eceae4] text-[#1c1917] transition-[background-color,transform] duration-150 ease-unslop hover:bg-black/[0.12] active:scale-[0.97] dark:bg-[#262421] dark:text-[#efede8] dark:hover:bg-white/[0.14] sm:h-9 sm:w-9"
+                className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#eceae4] text-[#1c1917] transition-[background-color,transform] duration-150 ease-unslop hover:bg-black/[0.12] active:scale-[0.97] dark:bg-[#262421] dark:text-[#efede8] dark:hover:bg-white/[0.14]"
                 title="Зупинити відповідь"
                 aria-label="Зупинити відповідь"
               >
@@ -160,7 +164,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="submit"
                 disabled={!text.trim() || isInputBlocked}
-                className={`flex h-10 w-10 items-center justify-center rounded-lg transition-[background-color,color,transform] duration-150 ease-unslop sm:h-9 sm:w-9 ${
+                className={`flex h-9 w-9 items-center justify-center rounded-lg transition-[background-color,color,transform] duration-150 ease-unslop ${
                   text.trim() && !isInputBlocked
                     ? 'bg-amber-500 text-[#1c1917] hover:bg-amber-400 active:scale-[0.97]'
                     : 'cursor-not-allowed bg-black/[0.06] text-[#736d65] dark:bg-white/[0.06] dark:text-[#8a847c]'

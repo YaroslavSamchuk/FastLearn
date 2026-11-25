@@ -338,7 +338,6 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
     const node = popoverRef.current;
     if (!node) return;
 
-    const margin = 12;
     const gap = 8;
     const positionPopover = () => {
       const rect = node.getBoundingClientRect();
@@ -347,12 +346,14 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       const viewportHeight = vv?.height ?? window.innerHeight;
       const vvLeft = vv?.offsetLeft ?? 0;
       const vvTop = vv?.offsetTop ?? 0;
+      const margin = viewportWidth < 400 ? 10 : 12;
 
       const minLeft = vvLeft + margin;
       const maxLeft = Math.max(minLeft, vvLeft + viewportWidth - rect.width - margin);
       const left = Math.max(minLeft, Math.min(selection.x - rect.width / 2, maxLeft));
 
-      const topSafeMin = vvTop + 64;
+      const headerBottom = document.querySelector('header')?.getBoundingClientRect().bottom ?? vvTop + 48;
+      const topSafeMin = Math.max(vvTop + margin, headerBottom + 6);
       const bottomSafeMax = vvTop + viewportHeight - margin;
       const spaceAbove = selection.anchorTop - topSafeMin;
       const spaceBelow = bottomSafeMax - selection.anchorBottom;
@@ -372,13 +373,13 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         }
       }
 
-      const maxTop = Math.max(vvTop + margin, bottomSafeMax - rect.height);
-      const top = Math.max(vvTop + margin, Math.min(desiredTop, maxTop));
+      const maxTop = Math.max(topSafeMin, bottomSafeMax - rect.height);
+      const top = Math.max(topSafeMin, Math.min(desiredTop, maxTop));
 
       setStyle({
         left,
         top,
-        maxHeight: `${Math.max(120, viewportHeight - margin * 2)}px`,
+        maxHeight: `${Math.max(120, bottomSafeMax - top)}px`,
         opacity: 1
       });
     };
@@ -412,11 +413,11 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       data-selection-popover
       onPointerDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
-      className="fixed z-50 max-h-[calc(100dvh-24px)] w-[min(350px,calc(100vw-24px))] overflow-y-auto overscroll-contain transition-opacity duration-150 ease-unslop"
+      className="fixed z-50 max-h-[calc(var(--app-height,100dvh)-20px)] w-[min(340px,calc(100vw-20px))] overflow-y-auto overscroll-contain transition-opacity duration-150 ease-unslop sm:max-h-[calc(var(--app-height,100dvh)-24px)] sm:w-[min(350px,calc(100vw-24px))]"
       style={style}
     >
       <div className="animate-popover rounded-xl border border-black/[0.1] bg-white text-[#1c1917] shadow-[0_8px_24px_rgba(0,0,0,0.08)] dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:shadow-none">
-        <div className="flex items-start justify-between gap-3 border-b border-black/[0.08] px-4 py-3 dark:border-white/[0.08]">
+        <div className="flex items-start justify-between gap-2.5 border-b border-black/[0.08] px-3.5 py-2.5 dark:border-white/[0.08] sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0 flex-1">
             <p className="line-clamp-2 text-[14px] font-medium leading-snug text-[#1c1917] dark:text-[#efede8]">
               {selection.text}
@@ -442,7 +443,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
           </button>
         </div>
 
-        <div className="px-4 py-3">
+        <div className="px-3.5 py-2.5 sm:px-4 sm:py-3">
           <div className="space-y-3">
             <section aria-label="Переклад" aria-live="polite">
               {data?.translation ? (

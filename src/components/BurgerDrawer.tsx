@@ -97,11 +97,11 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
       />
 
       <div
-        className={`pt-safe relative z-10 flex h-full w-[min(304px,86vw)] flex-col border-r border-black/[0.08] bg-[#f6f5f1] text-[#1c1917] transition-transform duration-200 ease-unslop dark:border-white/[0.08] dark:bg-[#121110] dark:text-[#efede8] ${
+        className={`pt-safe relative z-10 flex h-full w-[min(296px,85vw)] flex-col border-r border-black/[0.08] bg-[#f6f5f1] text-[#1c1917] transition-transform duration-200 ease-unslop dark:border-white/[0.08] dark:bg-[#121110] dark:text-[#efede8] sm:w-[min(304px,86vw)] ${
           isVisible ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.08] px-4 dark:border-white/[0.08]">
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.08] px-3.5 dark:border-white/[0.08] sm:h-14 sm:px-4">
           <div className="flex items-center gap-2">
             <BrandMark className="h-4 w-4" />
             <span className="text-[15px] font-semibold tracking-[-0.01em]">FastLearn</span>
@@ -119,9 +119,9 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
           </button>
         </div>
 
-        <div className="border-b border-black/[0.08] p-4 dark:border-white/[0.08]">
+        <div className="border-b border-black/[0.08] p-3.5 dark:border-white/[0.08] sm:p-4">
           {isLoggedIn && user ? (
-            <div className="space-y-3">
+            <div className="space-y-2.5 sm:space-y-3">
               <div className="flex items-center gap-3">
                 <UserAvatar name={user.name} src={user.avatar} size={36} />
                 <div className="min-w-0 flex-1">
@@ -133,7 +133,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
               </div>
 
               <div>
-                <div className="mb-2 flex items-center justify-between text-[12px] text-[#57534e] dark:text-[#a8a29a]">
+                <div className="mb-1.5 flex items-center justify-between text-[12px] text-[#57534e] dark:text-[#a8a29a] sm:mb-2">
                   <span>Повідомлення</span>
                   <span className="font-mono tabular-nums text-[#1c1917] dark:text-[#efede8]">
                     {quota.remaining}/{quota.limit}
@@ -145,7 +145,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
                     style={{ transform: `scaleX(${percentage / 100})` }}
                   />
                 </div>
-                <p className="mt-2 text-right font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c]">
+                <p className="mt-1.5 text-right font-mono text-[12px] tabular-nums text-[#736d65] dark:text-[#8a847c] sm:mt-2">
                   Оновлення через {formatResetAt(quota.resetAt)}
                 </p>
               </div>
@@ -165,7 +165,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
         </div>
 
         {isLoggedIn && (
-          <div className="px-4 pt-4 pb-2">
+          <div className="px-3.5 pb-1.5 pt-3 sm:px-4 sm:pb-2 sm:pt-4">
             <button
               type="button"
               onClick={handleCreateChat}
@@ -177,7 +177,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-2">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-3.5 py-2 sm:px-4">
           {!isLoggedIn ? (
             <div className="flex h-full flex-col items-center justify-center px-4 pb-8 text-center">
               <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.08] bg-white text-[#736d65] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#a8a29a]">
