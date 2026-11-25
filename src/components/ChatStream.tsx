@@ -1,6 +1,7 @@
 // language: TypeScript (React), file: src/components/ChatStream.tsx, target: Web / Mobile Browser
 import React, { useEffect, useRef, useState } from 'react';
 import { Message, Language } from '../types.ts';
+import { BrandMark } from './BrandMark.tsx';
 import { ChatMessage } from './ChatMessage.tsx';
 import { ScrollToBottomButton } from './ScrollToBottomButton.tsx';
 import { haptic } from '../utils/haptics.ts';
@@ -15,62 +16,11 @@ interface ChatStreamProps {
   onStopAudio: () => void;
   streamingContent?: string;
   containerRef: React.RefObject<HTMLDivElement | null>;
-  onQuickSend?: (text: string) => void;
   isPlaying?: boolean;
   playingText?: string;
   chatId?: string;
   onShowToast: (msg: string, type?: 'success' | 'info' | 'warning') => void;
 }
-
-interface Starter {
-  index: string;
-  text: string;
-  label: string;
-  translation: string;
-}
-
-const STARTERS: Record<Language, Starter[]> = {
-  da: [
-    {
-      index: '01',
-      text: 'Hej! Hvordan går det i dag?',
-      label: 'Hej, hvordan går det?',
-      translation: 'Коротка розмова про день'
-    },
-    {
-      index: '02',
-      text: 'Lad os bestille mad på en hyggelig café i København',
-      label: 'Bestil på en café',
-      translation: 'Замовлення у кав’ярні в Копенгагені'
-    },
-    {
-      index: '03',
-      text: 'Fortæl mig 3 typiske danske udtryk og deres betydning',
-      label: '3 danske udtryk',
-      translation: 'Живі ідіоми зі значенням і вимовою'
-    }
-  ],
-  en: [
-    {
-      index: '01',
-      text: 'Hello! How is your day going?',
-      label: 'Hello, how are you?',
-      translation: 'Невимушений вступний діалог'
-    },
-    {
-      index: '02',
-      text: 'Let’s simulate a natural job interview conversation',
-      label: 'Job interview practice',
-      translation: 'Симуляція співбесіди англійською'
-    },
-    {
-      index: '03',
-      text: 'Explain 3 natural English idioms used in daily life',
-      label: '3 daily idioms',
-      translation: 'Три повсякденні вирази з прикладами'
-    }
-  ]
-};
 
 export const ChatStream: React.FC<ChatStreamProps> = ({
   messages,
@@ -82,7 +32,6 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   onStopAudio,
   streamingContent,
   containerRef,
-  onQuickSend,
   isPlaying = false,
   playingText,
   chatId,
@@ -120,24 +69,6 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
     scrollEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   };
 
-  const handleSuggestionClick = (text: string) => {
-    haptic.send();
-    onQuickSend?.(text);
-  };
-
-  const starterCopy =
-    language === 'da'
-      ? {
-          code: 'Dansk · Щоденна практика',
-          title: 'Практика данської',
-          subtitle: 'Пишіть данською чи українською, або оберіть сценарій'
-        }
-      : {
-          code: 'English · Щоденна практика',
-          title: 'Практика англійської',
-          subtitle: 'Пишіть англійською чи українською, або оберіть сценарій'
-        };
-
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
@@ -147,43 +78,14 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       >
         <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
           {messages.length === 0 && !streamingContent ? (
-            <div className="my-auto py-2 sm:py-8">
-              <div className="border-l-2 border-amber-500 pl-3.5 sm:pl-4">
-                <p className="font-mono text-[12px] text-[#736d65] dark:text-[#a8a29a]">
-                  {starterCopy.code}
-                </p>
-                <h2 className="mt-1.5 text-[22px] font-medium leading-tight tracking-[-0.01em] text-[#1c1917] dark:text-[#efede8] sm:mt-2 sm:text-[28px]">
-                  {starterCopy.title}
-                </h2>
-                <p className="mt-1.5 max-w-md text-[13px] leading-snug text-[#57534e] dark:text-[#a8a29a] sm:mt-2 sm:text-[14px] sm:leading-6">
-                  {starterCopy.subtitle}
-                </p>
-              </div>
-
-              {onQuickSend && (
-                <div className="mt-4 grid w-full divide-y divide-black/[0.08] overflow-hidden rounded-xl border border-black/[0.08] bg-white dark:divide-white/[0.08] dark:border-white/[0.08] dark:bg-[#1c1a18] sm:mt-8 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                  {STARTERS[language].map((item) => (
-                    <button
-                      key={item.index}
-                      type="button"
-                      onClick={() => handleSuggestionClick(item.text)}
-                      className="group flex flex-row items-baseline gap-3 px-3.5 py-2.5 text-left transition-colors duration-150 ease-unslop hover:bg-[#f6f5f1] dark:hover:bg-[#262421] sm:flex-col sm:items-start sm:justify-between sm:gap-3 sm:p-4"
-                    >
-                      <span className="w-5 shrink-0 font-mono text-[12px] tabular-nums text-amber-700 dark:text-amber-400 sm:w-auto">
-                        {item.index}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-[14px] font-medium leading-snug text-[#1c1917] dark:text-[#efede8]">
-                          {item.label}
-                        </span>
-                        <span className="mt-0.5 block text-[12px] leading-snug text-[#736d65] dark:text-[#8a847c] sm:mt-1">
-                          {item.translation}
-                        </span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
+            <div className="my-auto flex flex-col items-center px-4 py-8 text-center">
+              <BrandMark className="h-7 w-7 sm:h-8 sm:w-8" />
+              <p className="mt-3.5 text-[15px] font-medium tracking-[-0.01em] text-[#1c1917] dark:text-[#efede8] sm:mt-4 sm:text-[17px]">
+                Почніть писати, і ШІ вас підтримає
+              </p>
+              <p className="mt-1 text-[12px] text-[#736d65] dark:text-[#8a847c] sm:text-[13px]">
+                {language === 'da' ? 'Dansk · діалог і виправлення' : 'English · діалог і виправлення'}
+              </p>
             </div>
           ) : (
             <div className="flex w-full flex-col gap-4 pb-2 sm:gap-6 sm:pb-4">

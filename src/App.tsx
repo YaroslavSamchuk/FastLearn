@@ -1014,7 +1014,6 @@ const AppContent: React.FC = () => {
         onPlaybackSpeedChange={handlePlaybackSpeedChange}
         onStopAudio={handleStopAudio}
         streamingContent={activeChatId === streamingChatId ? streamingContent : ''}
-        onQuickSend={handleSendMessage}
         isPlaying={isPlaying}
         playingText={playingPhrase}
         chatId={activeChatId ?? undefined}
