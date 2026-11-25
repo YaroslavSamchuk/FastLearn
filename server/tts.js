@@ -96,7 +96,7 @@ async function synthesizeViaApimBatch(text, voice, speeds, onSpeedReady) {
 
     try {
       const results = await new Promise((resolve, reject) => {
-        const ws = new WebSocket(url, { headers, handshakeTimeout: 5_000 });
+        const ws = new WebSocket(url, { headers, handshakeTimeout: 3_000 });
         ws.binaryType = 'arraybuffer';
 
         const pending = new Map();
@@ -163,24 +163,26 @@ async function synthesizeViaApimBatch(text, voice, speeds, onSpeedReady) {
         ws.on('open', async () => {
           try {
             ws.send(buildSpeechConfigMessage());
-            for (const speed of speeds) {
-              const buffer = await new Promise((resSpeed, rejSpeed) => {
-                const requestId = generateRequestId();
-                const timer = setTimeout(() => {
-                  pending.delete(requestId);
-                  rejSpeed(new Error('Edge APIM synthesis timed out'));
-                }, 9_000);
-                pending.set(requestId, {
-                  speed,
-                  chunks: [],
-                  timer,
-                  resolve: resSpeed,
-                  reject: rejSpeed
+            await Promise.all(
+              speeds.map(async (speed) => {
+                const buffer = await new Promise((resSpeed, rejSpeed) => {
+                  const requestId = generateRequestId();
+                  const timer = setTimeout(() => {
+                    pending.delete(requestId);
+                    rejSpeed(new Error('Edge APIM synthesis timed out'));
+                  }, 5_500);
+                  pending.set(requestId, {
+                    speed,
+                    chunks: [],
+                    timer,
+                    resolve: resSpeed,
+                    reject: rejSpeed
+                  });
+                  ws.send(buildEdgeSsmlMessage(requestId, text, voice, speed));
                 });
-                ws.send(buildEdgeSsmlMessage(requestId, text, voice, speed));
-              });
-              await onSpeedReady?.(speed, buffer);
-            }
+                await onSpeedReady?.(speed, buffer);
+              })
+            );
             settled = true;
             try {
               ws.close(1000, 'done');
@@ -210,14 +212,14 @@ async function synthesizeViaApimBatch(text, voice, speeds, onSpeedReady) {
 }
 
 async function synthesizeEdgeSingleSocket(text, voice, speed) {
-  const tts = new MsEdgeTTS({ connectionTimeoutMs: 5_000, synthesisTimeoutMs: 9_000 });
+  const tts = new MsEdgeTTS({ connectionTimeoutMs: 3_000, synthesisTimeoutMs: 5_500 });
   try {
     await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
     const stream = await tts.toStream(escapeSsmlText(text), {
       rate: mapSpeedToRate(speed),
       pitch: '+0Hz'
     });
-    const buffer = await collectStream(stream.audioStream, 9_000);
+    const buffer = await collectStream(stream.audioStream, 5_500);
     if (buffer.byteLength === 0) throw new Error('Empty Edge TTS stream');
     markEdgeSuccess();
     return buffer;

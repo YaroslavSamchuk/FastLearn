@@ -8,7 +8,6 @@ import { MAX_SELECTION_WORDS } from '../utils/textTokens.ts';
 import { log } from '../lib/logger.ts';
 import type { TranscribeResult } from '../lib/api.ts';
 import {
-  createSpeechBatchLoader,
   fetchSpeechAudio,
   getPronunciation,
   isCacheableSpeechAudio,
@@ -21,7 +20,6 @@ import {
 } from '../lib/speech.ts';
 import {
   getPrefetchedSpeechAudio,
-  hasPendingSpeechAudio,
   loadSpeechAudioVariants,
   seedPrefetchedSpeechAudio
 } from '../lib/speechAudioCache.ts';
@@ -30,6 +28,7 @@ import {
   getEntryAudioForSpeed,
   getTranslationHistoryEntry,
   matchesEntryVoice,
+  peekCachedTranslationHistoryEntry,
   saveCachedSpeech,
   updateTranslationHistoryEntry
 } from '../lib/translationHistory.ts';
@@ -121,27 +120,34 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       const readCacheWithTimeout = <T,>(promise: Promise<T | null>): Promise<T | null> =>
         Promise.race([
           promise,
-          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 450))
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 60))
         ]);
 
-      const [cached, legacySpeechCached] = await Promise.all([
-        readCacheWithTimeout(
-          getTranslationHistoryEntry(userId, language, selection.text, { touch: true }).catch(
-            (reason: unknown) => {
-              log.warn('translation-history', 'Could not read translation cache', {
-                error: reason instanceof Error ? reason.message : String(reason)
-              });
-              return null;
-            }
-          )
-        ),
-        speechText && speechText !== selection.text
-          ? readCacheWithTimeout(
-              getTranslationHistoryEntry(userId, language, speechText).catch(() => null)
-            )
-          : Promise.resolve(null)
-      ]);
+      const syncCached = peekCachedTranslationHistoryEntry(userId, language, selection.text);
+      const [cached, legacySpeechCached] = syncCached
+        ? [syncCached, null]
+        : await Promise.all([
+            readCacheWithTimeout(
+              getTranslationHistoryEntry(userId, language, selection.text, { touch: true }).catch(
+                (reason: unknown) => {
+                  log.warn('translation-history', 'Could not read translation cache', {
+                    error: reason instanceof Error ? reason.message : String(reason)
+                  });
+                  return null;
+                }
+              )
+            ),
+            speechText && speechText !== selection.text
+              ? readCacheWithTimeout(
+                  getTranslationHistoryEntry(userId, language, speechText).catch(() => null)
+                )
+              : Promise.resolve(null)
+          ]);
       if (!active) return;
+
+      if (syncCached) {
+        void getTranslationHistoryEntry(userId, language, selection.text, { touch: true }).catch(() => {});
+      }
 
       const hasFreshIpa =
         Boolean(cached?.ipa) &&
@@ -258,17 +264,8 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         }
 
         if (missingSpeeds.length > 0) {
-          const unrequestedSpeeds = missingSpeeds.filter(
-            (speed) => !hasPendingSpeechAudio(language, speechText, speed, voice)
-          );
-          const batchFetch =
-            unrequestedSpeeds.length > 1
-              ? createSpeechBatchLoader(speechText, language, unrequestedSpeeds, voice || undefined)
-              : null;
           const loadVariant = (speed: number) =>
-            batchFetch && unrequestedSpeeds.includes(speed)
-              ? batchFetch(speed)
-              : fetchSpeechAudio(speechText, language, speed, undefined, voice || undefined);
+            fetchSpeechAudio(speechText, language, speed, controller.signal, voice || undefined);
 
           tasks.push(
             loadSpeechAudioVariants(

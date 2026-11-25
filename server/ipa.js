@@ -197,7 +197,7 @@ async function lookupEnglishWiktionary(cleanWord) {
     `https://en.wiktionary.org/w/api.php?action=query&prop=revisions&rvprop=content&titles=${encodeURIComponent(
       cleanWord
     )}&format=json&origin=*`,
-    4_000
+    2_800
   );
   if (!raw) return '';
   try {
@@ -221,7 +221,7 @@ async function lookupDanishWiktionary(cleanWord) {
     `https://en.wiktionary.org/w/api.php?action=query&prop=revisions&rvprop=content&titles=${encodeURIComponent(
       cleanWord
     )}&format=json&origin=*`,
-    4_000
+    2_800
   );
   if (!raw) return '';
   try {
@@ -237,47 +237,64 @@ async function lookupDanishWiktionary(cleanWord) {
 }
 
 /**
- * Looks up pronunciation for an out-of-vocabulary word using free real dictionaries only (never LLMs).
+ * Looks up pronunciation for an out-of-vocabulary word using free real dictionaries in parallel (never LLMs).
  */
 export async function lookupWordFallbackFromDictionaries(word, language) {
+  const firstNonEmpty = async (tasks) => {
+    try {
+      return await Promise.any(
+        tasks.map(async (run) => {
+          const result = await run();
+          if (!result) throw new Error('Empty dictionary pronunciation');
+          return result;
+        })
+      );
+    } catch {
+      return '';
+    }
+  };
+
   if (language === 'da') {
     const clean = word.toLowerCase().replace(/[^a-zæøå-]/g, '');
     if (!clean) return '';
 
-    const udtaleHtml = await fetchWithTimeoutText(
-      `https://udtaleordbog.dk/search.php?s=${encodeURIComponent(clean)}&std=DDO`,
-      3_500
-    );
-    const udtaleDdo = extractUdtaleordbogDdo(udtaleHtml);
-    if (udtaleDdo) return udtaleDdo;
-
-    const ordnetHtml = await fetchWithTimeoutText(
-      `https://ordnet.dk/ddo/ordbog?query=${encodeURIComponent(clean)}`,
-      3_500
-    );
-    const ordnetDdo = extractOrdnetDdo(ordnetHtml);
-    if (ordnetDdo) return ordnetDdo;
-
-    return lookupDanishWiktionary(clean);
+    return firstNonEmpty([
+      async () => {
+        const html = await fetchWithTimeoutText(
+          `https://udtaleordbog.dk/search.php?s=${encodeURIComponent(clean)}&std=DDO`,
+          2_800
+        );
+        return extractUdtaleordbogDdo(html);
+      },
+      async () => {
+        const html = await fetchWithTimeoutText(
+          `https://ordnet.dk/ddo/ordbog?query=${encodeURIComponent(clean)}`,
+          2_800
+        );
+        return extractOrdnetDdo(html);
+      },
+      () => lookupDanishWiktionary(clean)
+    ]);
   }
 
   const clean = word.toLowerCase().replace(/[^a-z']/g, '');
   if (!clean) return '';
 
-  const rawDict = await fetchWithTimeoutText(
-    `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`,
-    3_500
-  );
-  if (rawDict) {
-    try {
-      const phonetic = extractDictionaryApiPhonetic(JSON.parse(rawDict));
-      if (phonetic) return phonetic;
-    } catch {
-      // ignore malformed JSON
-    }
-  }
-
-  return lookupEnglishWiktionary(clean);
+  return firstNonEmpty([
+    async () => {
+      const rawDict = await fetchWithTimeoutText(
+        `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`,
+        2_800
+      );
+      if (!rawDict) return '';
+      try {
+        return extractDictionaryApiPhonetic(JSON.parse(rawDict));
+      } catch {
+        return '';
+      }
+    },
+    () => lookupEnglishWiktionary(clean)
+  ]);
 }
 
 async function resolveMissingWordsInShards(words, language, readShard, shardCache) {

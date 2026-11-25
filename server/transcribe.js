@@ -46,7 +46,7 @@ async function translateWithMyMemory(text, sourceLang, targetLang, signal) {
       },
       signal
     },
-    7_000
+    3_500
   );
 
   if (!response.ok) throw new Error(`MyMemory returned HTTP ${response.status}`);
@@ -74,7 +74,7 @@ async function translateWithGoogle(text, sourceLang, targetLang, signal) {
       },
       signal
     },
-    8_000
+    4_000
   );
 
   if (!response.ok) throw new Error(`Google Translate returned HTTP ${response.status}`);

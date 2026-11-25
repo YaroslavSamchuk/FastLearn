@@ -54,7 +54,19 @@ const DATABASE_NAME = 'fastlearn_translation_history';
 const STORE_NAME = 'entries';
 const DATABASE_VERSION = 6;
 const INDEXEDDB_TIMEOUT_MS = 1_500;
+const MEMORY_CACHE_LIMIT = 60;
 let databasePromise: Promise<IDBDatabase> | null = null;
+const memoryHistoryCache = new Map<string, TranslationHistoryEntry>();
+
+function rememberInMemory(entry: TranslationHistoryEntry): void {
+  memoryHistoryCache.delete(entry.key);
+  memoryHistoryCache.set(entry.key, entry);
+  while (memoryHistoryCache.size > MEMORY_CACHE_LIMIT) {
+    const oldestKey = memoryHistoryCache.keys().next().value;
+    if (!oldestKey) break;
+    memoryHistoryCache.delete(oldestKey);
+  }
+}
 
 export function makeTranslationHistoryKey(
   userId: string,
@@ -274,19 +286,36 @@ export async function touchTranslationHistoryEntry(
 ): Promise<void> {
   if (!userId || !text.trim()) return;
 
+  const key = makeTranslationHistoryKey(userId, language, text);
+  const mem = memoryHistoryCache.get(key);
+  if (mem) {
+    rememberInMemory({ ...mem, lastUsedAt: Date.now() });
+  }
+
   const database = await openDatabase();
   const transaction = database.transaction(STORE_NAME, 'readwrite');
   const done = transactionDone(transaction);
   const store = transaction.objectStore(STORE_NAME);
-  const key = makeTranslationHistoryKey(userId, language, text);
   const existing = (await requestResult(store.get(key))) as TranslationHistoryEntry | undefined;
   if (existing) {
-    store.put({
+    const promoted: TranslationHistoryEntry = {
       ...existing,
       lastUsedAt: Date.now()
-    });
+    };
+    store.put(promoted);
+    rememberInMemory(promoted);
   }
   await done;
+}
+
+export function peekCachedTranslationHistoryEntry(
+  userId: string,
+  language: 'da' | 'en',
+  text: string
+): TranslationHistoryEntry | null {
+  if (!userId || !text.trim()) return null;
+  const key = makeTranslationHistoryKey(userId, language, text);
+  return memoryHistoryCache.get(key) ?? null;
 }
 
 export async function getTranslationHistoryEntry(
@@ -297,24 +326,37 @@ export async function getTranslationHistoryEntry(
 ): Promise<TranslationHistoryEntry | null> {
   if (!userId || !text.trim()) return null;
 
-  const database = await openDatabase();
-  const mode = options?.touch ? 'readwrite' : 'readonly';
-  const transaction = database.transaction(STORE_NAME, mode);
-  const store = transaction.objectStore(STORE_NAME);
   const key = makeTranslationHistoryKey(userId, language, text);
+  const cachedMem = memoryHistoryCache.get(key);
+  if (cachedMem) {
+    if (options?.touch) {
+      const promoted: TranslationHistoryEntry = { ...cachedMem, lastUsedAt: Date.now() };
+      rememberInMemory(promoted);
+      void touchTranslationHistoryEntry(userId, language, text).catch(() => {});
+      return promoted;
+    }
+    return cachedMem;
+  }
+
+  const database = await openDatabase();
+  const transaction = database.transaction(STORE_NAME, 'readonly');
+  const store = transaction.objectStore(STORE_NAME);
   const entry = (await requestResult(store.get(key))) as TranslationHistoryEntry | undefined;
 
-  if (entry && options?.touch) {
+  if (!entry) return null;
+
+  if (options?.touch) {
     const promoted: TranslationHistoryEntry = {
       ...entry,
       lastUsedAt: Date.now()
     };
-    store.put(promoted);
-    await transactionDone(transaction);
+    rememberInMemory(promoted);
+    void touchTranslationHistoryEntry(userId, language, text).catch(() => {});
     return promoted;
   }
 
-  return entry ?? null;
+  rememberInMemory(entry);
+  return entry;
 }
 
 export async function updateTranslationHistoryEntry(
@@ -368,15 +410,18 @@ export async function updateTranslationHistoryEntry(
 
   for (const evictKey of plan.evictKeys) {
     store.delete(evictKey);
+    memoryHistoryCache.delete(evictKey);
     log.info('translation-history', 'Evicted least-recently-used entry', { key: evictKey });
   }
 
   if (plan.oversized) {
+    memoryHistoryCache.delete(key);
     await done;
     throw new Error('This translation cache entry exceeds the 500 MB storage limit');
   }
 
   store.put(next);
+  rememberInMemory(next);
   await done;
 }
 
@@ -444,6 +489,7 @@ export function saveCachedSpeech(
 
 export async function deleteTranslationHistoryEntryByKey(key: string): Promise<void> {
   if (!key) return;
+  memoryHistoryCache.delete(key);
   const database = await openDatabase();
   const transaction = database.transaction(STORE_NAME, 'readwrite');
   const done = transactionDone(transaction);
@@ -488,6 +534,11 @@ export async function getHistoryStorageStats(userId: string): Promise<HistorySto
 
 export async function clearSelectionHistory(userId: string): Promise<void> {
   if (!userId) return;
+  for (const [key, entry] of memoryHistoryCache.entries()) {
+    if (entry.userId === userId && isSelectionHistoryEntry(entry)) {
+      memoryHistoryCache.delete(key);
+    }
+  }
   const database = await openDatabase();
   const transaction = database.transaction(STORE_NAME, 'readwrite');
   const done = transactionDone(transaction);

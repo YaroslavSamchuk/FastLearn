@@ -50,9 +50,9 @@ function isChristelVoice(voice: string): boolean {
   return voice === 'da-DK-ChristelNeural';
 }
 
-async function openEdgeWebSocket(endpoint: EdgeEndpoint, timeoutMs = 4_500): Promise<WebSocket> {
+async function openEdgeWebSocket(endpoint: EdgeEndpoint, timeoutMs = 2_800): Promise<WebSocket> {
   const triedAgents = new Set<string>();
-  const maxAttempts = endpoint === 'apim' ? 4 : 3;
+  const maxAttempts = 2;
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -124,7 +124,7 @@ async function synthesizeViaWebSocket(
   mode: 'concurrent' | 'sequential',
   onSpeedReady?: (speed: number, audio: Uint8Array) => void | Promise<void>
 ): Promise<Map<number, Uint8Array>> {
-  const socket = await openEdgeWebSocket(endpoint, 4_500);
+  const socket = await openEdgeWebSocket(endpoint, 2_800);
   const pending = new Map<string, PendingTurn>();
   const completed = new Map<number, Uint8Array>();
 
@@ -179,7 +179,7 @@ async function synthesizeViaWebSocket(
       const timer = setTimeout(() => {
         pending.delete(requestId);
         reject(new Error(`Edge TTS (${endpoint}) timed out waiting for audio`));
-      }, 9_000);
+      }, 5_500);
 
       pending.set(requestId, {
         speed,

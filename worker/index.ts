@@ -971,7 +971,7 @@ async function translateWithMyMemory(
 ): Promise<string> {
   const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 7_000);
+  const timer = setTimeout(() => controller.abort(), 3_500);
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
 
@@ -1011,7 +1011,7 @@ async function translateWithGoogle(
   url.searchParams.set('q', text);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9_000);
+  const timer = setTimeout(() => controller.abort(), 4_000);
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
 
