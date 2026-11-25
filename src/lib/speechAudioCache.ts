@@ -4,8 +4,8 @@ const CACHE_LIMIT = 30;
 const audioCache = new Map<string, Blob>();
 const pendingAudio = new Map<string, Promise<Blob>>();
 
-function makeKey(language: SpeechLanguage, text: string, speed: number): string {
-  return `${language}:${speed}:${text}`;
+function makeKey(language: SpeechLanguage, text: string, speed: number, voice = ''): string {
+  return `${language}:${voice}:${speed}:${text}`;
 }
 
 function rememberAudio(key: string, audio: Blob): void {
@@ -20,9 +20,10 @@ function rememberAudio(key: string, audio: Blob): void {
 export function getPrefetchedSpeechAudio(
   language: SpeechLanguage,
   text: string,
-  speed: number
+  speed: number,
+  voice = ''
 ): Blob | null {
-  const key = makeKey(language, text, speed);
+  const key = makeKey(language, text, speed, voice);
   const audio = audioCache.get(key);
   if (!audio) return null;
 
@@ -35,9 +36,10 @@ export function seedPrefetchedSpeechAudio(
   language: SpeechLanguage,
   text: string,
   speed: number,
-  audio: Blob
+  audio: Blob,
+  voice = ''
 ): void {
-  rememberAudio(makeKey(language, text, speed), audio);
+  rememberAudio(makeKey(language, text, speed, voice), audio);
 }
 
 export async function loadSpeechAudioVariants(
@@ -48,11 +50,12 @@ export async function loadSpeechAudioVariants(
   callbacks?: {
     onSpeedReady?: (speed: number, audio: Blob) => void;
     onSpeedError?: (speed: number, error: unknown) => void;
-  }
+  },
+  voice = ''
 ): Promise<Blob[]> {
   return Promise.all(
     speeds.map((speed) =>
-      loadSpeechAudio(language, text, speed, () => load(speed))
+      loadSpeechAudio(language, text, speed, () => load(speed), voice)
         .then((audio) => {
           callbacks?.onSpeedReady?.(speed, audio);
           return audio;
@@ -69,10 +72,11 @@ export function loadSpeechAudio(
   language: SpeechLanguage,
   text: string,
   speed: number,
-  load: () => Promise<Blob>
+  load: () => Promise<Blob>,
+  voice = ''
 ): Promise<Blob> {
-  const key = makeKey(language, text, speed);
-  const cached = getPrefetchedSpeechAudio(language, text, speed);
+  const key = makeKey(language, text, speed, voice);
+  const cached = getPrefetchedSpeechAudio(language, text, speed, voice);
   if (cached) return Promise.resolve(cached);
 
   const pending = pendingAudio.get(key);

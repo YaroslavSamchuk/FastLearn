@@ -1,8 +1,10 @@
 // language: TypeScript (React), file: src/components/SettingsModal.tsx, target: Web / Mobile Browser
 import React, { useEffect, useState } from 'react';
-import { User, Language, UserMemories } from '../types.ts';
-import { X, LogOut, Globe, Brain, Plus, Trash2, Check } from 'lucide-react';
+import { User, Language, UserMemories, VoiceMap } from '../types.ts';
+import { X, LogOut, Globe, Brain, Plus, Trash2, Check, Volume2 } from 'lucide-react';
+import { TTS_VOICES, resolveVoice } from '../../server/ttsConfig.js';
 import { haptic } from '../utils/haptics.ts';
+import { AudioVisualizer } from './AudioVisualizer.tsx';
 import { UserAvatar } from './UserAvatar.tsx';
 
 interface SettingsModalProps {
@@ -13,6 +15,10 @@ interface SettingsModalProps {
   onLogin: () => void;
   currentLanguage: Language;
   onUpdateLanguage: (lang: Language) => void;
+  voices: VoiceMap;
+  onUpdateVoice: (lang: Language, voice: string) => void;
+  onPreviewVoice?: (lang: Language, voice: string) => void;
+  isPreviewPlaying?: boolean;
   onLogout: () => void;
   memories: UserMemories;
   onMemoryUpdate: (
@@ -32,6 +38,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onLogin,
   currentLanguage,
   onUpdateLanguage,
+  voices,
+  onUpdateVoice,
+  onPreviewVoice,
+  isPreviewPlaying = false,
   onLogout,
   memories,
   onMemoryUpdate
@@ -63,6 +73,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   if (!shouldRender) return null;
 
   const currentFactList = memories[memoryScope] ?? [];
+  const voiceOptions = TTS_VOICES[currentLanguage];
+  const activeVoice = resolveVoice(currentLanguage, voices[currentLanguage]);
 
   const handleAddFact = (event: React.FormEvent) => {
     event.preventDefault();
@@ -200,6 +212,67 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </button>
                     );
                   })}
+                </div>
+
+                <div className="mt-4 border-t border-stone-200/70 pt-3.5 dark:border-white/[0.07]">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-[12px] font-medium text-stone-900 dark:text-stone-100">
+                      Голос озвучки · {currentLanguage === 'da' ? 'Dansk' : 'English'}
+                    </h4>
+                    {isLoggedIn && onPreviewVoice && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          haptic.tap();
+                          onPreviewVoice(currentLanguage, activeVoice);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-white/[0.06] dark:hover:text-stone-100"
+                        aria-label="Прослухати вибраний голос"
+                      >
+                        {isPreviewPlaying ? (
+                          <AudioVisualizer isPlaying barColor="bg-amber-600 dark:bg-amber-400" />
+                        ) : (
+                          <Volume2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                        )}
+                        <span>{isPreviewPlaying ? 'Зупинити' : 'Перевірити'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mt-2.5 grid grid-cols-2 gap-2">
+                    {voiceOptions.map((option) => {
+                      const selected = activeVoice === option.id;
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => {
+                            haptic.tap();
+                            onUpdateVoice(currentLanguage, option.id);
+                          }}
+                          className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                            selected
+                              ? 'border-amber-500/50 bg-amber-50 text-stone-950 dark:border-amber-400/30 dark:bg-amber-400/[0.08] dark:text-stone-50'
+                              : 'border-stone-200 text-stone-700 hover:border-stone-300 hover:bg-stone-50 dark:border-white/[0.08] dark:text-stone-300 dark:hover:border-white/[0.14] dark:hover:bg-white/[0.03]'
+                          }`}
+                          aria-pressed={selected}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-medium">{option.label}</span>
+                            <span className="mt-0.5 block truncate text-[11px] text-stone-500 dark:text-stone-500">
+                              {option.hint}
+                            </span>
+                          </span>
+                          {selected && (
+                            <Check
+                              className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400"
+                              strokeWidth={2}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </section>
 

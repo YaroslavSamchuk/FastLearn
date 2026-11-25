@@ -1,4 +1,5 @@
 export type Language = 'da' | 'en';
+export type VoiceMap = Record<Language, string>;
 
 export interface UserMemories {
   global: string[];
@@ -62,6 +63,7 @@ export interface AppData {
   memories: UserMemories;
   quota: Quota;
   activeChatId: Record<Language, string | null>;
+  voices: VoiceMap;
 }
 
 export interface SelectionData {

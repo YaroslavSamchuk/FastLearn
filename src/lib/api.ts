@@ -367,9 +367,10 @@ export async function fetchSpeechAudio(
   text: string,
   language: Language,
   speed: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  voice?: string
 ): Promise<Blob> {
-  const response = await fetch(ttsUrl(text, language, speed), { signal });
+  const response = await fetch(ttsUrl(text, language, speed, voice), { signal });
   const contentType = response.headers.get('content-type') ?? '';
   if (!response.ok || !contentType.includes('audio')) {
     throw new ApiError(
@@ -383,12 +384,13 @@ export async function fetchSpeechAudio(
   return audio;
 }
 
-export function ttsUrl(text: string, language: Language, speed: number): string {
+export function ttsUrl(text: string, language: Language, speed: number, voice?: string): string {
   const query = new URLSearchParams({
     text,
     lang: language,
     speed: String(speed)
   });
+  if (voice) query.set('voice', voice);
   return `/api/tts?${query.toString()}`;
 }
 

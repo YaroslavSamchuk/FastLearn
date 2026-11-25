@@ -23,6 +23,7 @@ import {
 } from '../lib/speechAudioCache.ts';
 import {
   getTranslationHistoryEntry,
+  matchesEntryVoice,
   saveCachedSpeech,
   updateTranslationHistoryEntry
 } from '../lib/translationHistory.ts';
@@ -30,6 +31,7 @@ import {
 interface SelectionPopoverProps {
   selection: SelectionData;
   language: Language;
+  voice: string;
   userId: string;
   onClose: () => void;
   onPlayAudio: (speed: number) => void;
@@ -43,6 +45,7 @@ interface SelectionPopoverProps {
 export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
   selection,
   language,
+  voice,
   userId,
   onClose,
   onPlayAudio,
@@ -96,7 +99,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
 
       const memoryReadySpeeds = speechText
         ? PHRASE_PLAYBACK_SPEEDS.filter((speed) =>
-            Boolean(getPrefetchedSpeechAudio(language, speechText, speed))
+            Boolean(getPrefetchedSpeechAudio(language, speechText, speed, voice))
           )
         : [];
       if (memoryReadySpeeds.length > 0) {
@@ -181,15 +184,16 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       }
 
       if (speechText) {
+        const validAudioEntry = matchesEntryVoice(audioEntry, language, voice) ? audioEntry : null;
         const storedSpeedMap: Record<number, Blob | undefined> = {
-          1: audioEntry?.normalAudio,
-          0.7: audioEntry?.slowAudio07,
-          0.5: audioEntry?.slowAudio05
+          1: validAudioEntry?.normalAudio,
+          0.7: validAudioEntry?.slowAudio07,
+          0.5: validAudioEntry?.slowAudio05
         };
         const missingSpeeds: number[] = [];
 
         for (const speed of PHRASE_PLAYBACK_SPEEDS) {
-          if (getPrefetchedSpeechAudio(language, speechText, speed)) {
+          if (getPrefetchedSpeechAudio(language, speechText, speed, voice)) {
             setReadyPhraseSpeeds((previous) =>
               previous.includes(speed) ? previous : [...previous, speed]
             );
@@ -197,7 +201,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
           }
           const storedAudio = storedSpeedMap[speed];
           if (storedAudio) {
-            seedPrefetchedSpeechAudio(language, speechText, speed, storedAudio);
+            seedPrefetchedSpeechAudio(language, speechText, speed, storedAudio, voice);
             setReadyPhraseSpeeds((previous) =>
               previous.includes(speed) ? previous : [...previous, speed]
             );
@@ -212,7 +216,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               language,
               speechText,
               missingSpeeds,
-              (speed) => fetchSpeechAudio(speechText, language, speed),
+              (speed) => fetchSpeechAudio(speechText, language, speed, undefined, voice || undefined),
               {
                 onSpeedReady: (speed, audio) => {
                   if (active) {
@@ -221,9 +225,14 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                     );
                   }
                   if (userId) {
-                    void saveCachedSpeech(userId, language, historyAudioText, speed, audio).catch(
-                      () => {}
-                    );
+                    void saveCachedSpeech(
+                      userId,
+                      language,
+                      historyAudioText,
+                      speed,
+                      audio,
+                      voice
+                    ).catch(() => {});
                   }
                 },
                 onSpeedError: (speed, reason) => {
@@ -238,7 +247,8 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
                     error: reason instanceof Error ? reason.message : String(reason)
                   });
                 }
-              }
+              },
+              voice
             )
           );
         }
@@ -253,7 +263,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       active = false;
       controller.abort();
     };
-  }, [selection.text, language, userId, attempt]);
+  }, [selection.text, language, voice, userId, attempt]);
 
   useEffect(() => {
     const handleOutsidePointerDown = (event: PointerEvent) => {

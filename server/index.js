@@ -11,6 +11,7 @@ import {
   synthesizeSpeechStream,
   VOICES
 } from './tts.js';
+import { DEFAULT_VOICES, isValidVoice } from './ttsConfig.js';
 import {
   resolveIpaOnly,
   resolveTranslation,
@@ -190,6 +191,7 @@ async function ensureWorkspace(ownerId) {
     ownerId,
     theme: 'dark',
     currentLanguage: 'da',
+    voices: { ...DEFAULT_VOICES },
     chats: [],
     messages: {},
     memories: {
@@ -350,7 +352,7 @@ app.get('/api/workspace', requireAuth, async (req, res, next) => {
 
 app.put('/api/workspace', requireAuth, async (req, res, next) => {
   try {
-    const allowed = ['theme', 'currentLanguage', 'chats', 'messages', 'memories', 'quota', 'activeChatId'];
+    const allowed = ['theme', 'currentLanguage', 'voices', 'chats', 'messages', 'memories', 'quota', 'activeChatId'];
     const update = {};
     for (const key of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) update[key] = req.body[key];
@@ -491,8 +493,7 @@ app.get('/api/tts', requireAuth, async (req, res) => {
   const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1.4, rawSpeed)) : 1;
   const voice = typeof req.query.voice === 'string' ? req.query.voice : null;
 
-  const allowedVoices = new Set(Object.values(VOICES[language] || {}));
-  if (voice && !allowedVoices.has(voice)) {
+  if (voice && !isValidVoice(language, voice)) {
     res.status(400).json({ error: 'Unknown voice for this language' });
     return;
   }
@@ -522,7 +523,7 @@ app.get('/api/tts', requireAuth, async (req, res) => {
 
       if (res.destroyed) return;
       res.end();
-      if (bytes > 0 && !synthesis.cached) {
+      if (bytes > 0 && !synthesis.cached && synthesis.source === 'edge') {
         cacheSpeechResult(synthesis.cacheKey, Buffer.concat(chunks), synthesis.source);
       }
 

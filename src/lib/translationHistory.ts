@@ -1,3 +1,4 @@
+import { DEFAULT_VOICES } from '../../server/ttsConfig.js';
 import { log } from './logger.ts';
 
 export const TRANSLATION_CACHE_LIMIT_BYTES = 300 * 1024 * 1024;
@@ -9,6 +10,7 @@ export interface TranslationHistoryEntry {
   text: string;
   translation?: string;
   ipa?: string;
+  audioVoice?: string;
   normalAudio?: Blob;
   slowAudio07?: Blob;
   slowAudio05?: Blob;
@@ -17,7 +19,10 @@ export interface TranslationHistoryEntry {
 }
 
 type TranslationHistoryUpdate = Partial<
-  Pick<TranslationHistoryEntry, 'translation' | 'ipa' | 'normalAudio' | 'slowAudio07' | 'slowAudio05'>
+  Pick<
+    TranslationHistoryEntry,
+    'translation' | 'ipa' | 'audioVoice' | 'normalAudio' | 'slowAudio07' | 'slowAudio05'
+  >
 >;
 
 const DATABASE_NAME = 'fastlearn_translation_history';
@@ -148,6 +153,8 @@ export async function updateTranslationHistoryEntry(
   const store = transaction.objectStore(STORE_NAME);
   const key = makeKey(userId, language, text);
   const existing = await requestResult(store.get(key)) as TranslationHistoryEntry | undefined;
+  const existingVoice = existing?.audioVoice ?? DEFAULT_VOICES[language];
+  const voiceChanged = Boolean(update.audioVoice && existing && existingVoice !== update.audioVoice);
   const nextBase = {
     key,
     userId,
@@ -155,9 +162,10 @@ export async function updateTranslationHistoryEntry(
     text: text.trim().replace(/\s+/g, ' '),
     translation: update.translation ?? existing?.translation,
     ipa: update.ipa ?? existing?.ipa,
-    normalAudio: update.normalAudio ?? existing?.normalAudio,
-    slowAudio07: update.slowAudio07 ?? existing?.slowAudio07,
-    slowAudio05: update.slowAudio05 ?? existing?.slowAudio05,
+    audioVoice: update.audioVoice ?? existing?.audioVoice,
+    normalAudio: update.normalAudio ?? (voiceChanged ? undefined : existing?.normalAudio),
+    slowAudio07: update.slowAudio07 ?? (voiceChanged ? undefined : existing?.slowAudio07),
+    slowAudio05: update.slowAudio05 ?? (voiceChanged ? undefined : existing?.slowAudio05),
     lastUsedAt: Date.now()
   };
   const next: TranslationHistoryEntry = {
@@ -192,13 +200,26 @@ export async function updateTranslationHistoryEntry(
   await done;
 }
 
+export function matchesEntryVoice(
+  entry: TranslationHistoryEntry | null | undefined,
+  language: 'da' | 'en',
+  voice?: string
+): boolean {
+  if (!entry) return false;
+  const expected = voice || DEFAULT_VOICES[language];
+  const stored = entry.audioVoice ?? DEFAULT_VOICES[language];
+  return stored === expected;
+}
+
 export function getCachedSpeech(
   userId: string,
   language: 'da' | 'en',
   text: string,
-  speed: number
+  speed: number,
+  voice?: string
 ): Promise<Blob | null> {
   return getTranslationHistoryEntry(userId, language, text).then((entry) => {
+    if (!matchesEntryVoice(entry, language, voice)) return null;
     if (speed === 1) return entry?.normalAudio ?? null;
     if (speed === 0.7) return entry?.slowAudio07 ?? null;
     if (speed === 0.5) return entry?.slowAudio05 ?? null;
@@ -211,15 +232,17 @@ export function saveCachedSpeech(
   language: 'da' | 'en',
   text: string,
   speed: number,
-  audio: Blob
+  audio: Blob,
+  voice?: string
 ): Promise<void> {
+  const audioVoice = voice || DEFAULT_VOICES[language];
   const update =
     speed === 1
-      ? { normalAudio: audio }
+      ? { audioVoice, normalAudio: audio }
       : speed === 0.7
-        ? { slowAudio07: audio }
+        ? { audioVoice, slowAudio07: audio }
         : speed === 0.5
-          ? { slowAudio05: audio }
+          ? { audioVoice, slowAudio05: audio }
           : null;
   if (!update) return Promise.reject(new RangeError(`Unsupported speech speed: ${speed}`));
 

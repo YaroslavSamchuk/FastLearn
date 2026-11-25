@@ -37,6 +37,12 @@ import { readString, storageKeys, writeString } from './lib/storage.ts';
 import { loadSpeechAudio } from './lib/speechAudioCache.ts';
 import { SPEECH_PLAYBACK_SPEEDS, toSpeechText } from './lib/speech.ts';
 import { getCachedSpeech, saveCachedSpeech } from './lib/translationHistory.ts';
+import { normalizeVoices } from '../server/ttsConfig.js';
+
+const VOICE_PREVIEW_TEXT: Record<Language, string> = {
+  da: 'Hej, hvordan går det i dag?',
+  en: 'Hello, how is your day going?'
+};
 
 const GOOGLE_CLIENT_ID =
   (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ||
@@ -48,12 +54,12 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
-function preloadAssistantAudio(text: string, userId: string, language: Language): void {
+function preloadAssistantAudio(text: string, userId: string, language: Language, voice: string): void {
   const spokenText = toSpeechText(text);
   if (!spokenText) return;
 
   const preloadSpeed = async (speed: number) => {
-    const cachedAudio = await getCachedSpeech(userId, language, text, speed).catch((error: unknown) => {
+    const cachedAudio = await getCachedSpeech(userId, language, text, speed, voice).catch((error: unknown) => {
       log.warn('audio', 'Could not check the assistant audio cache', {
         language,
         speed,
@@ -66,9 +72,10 @@ function preloadAssistantAudio(text: string, userId: string, language: Language)
       language,
       spokenText,
       speed,
-      () => fetchSpeechAudio(spokenText, language, speed)
+      () => fetchSpeechAudio(spokenText, language, speed, undefined, voice || undefined),
+      voice
     );
-    await saveCachedSpeech(userId, language, text, speed, audio);
+    await saveCachedSpeech(userId, language, text, speed, audio, voice);
   };
 
   const [primarySpeed, ...secondarySpeeds] = SPEECH_PLAYBACK_SPEEDS;
@@ -122,7 +129,8 @@ const AppContent: React.FC = () => {
 
   const { toasts, showToast, dismissToast } = useToast();
 
-  const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage, user?.id ?? '');
+  const currentVoice = data.voices[currentLanguage];
+  const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage, user?.id ?? '', currentVoice);
   const { selection, clearSelection } = useWordSelection();
 
   const currentChats = useMemo(
@@ -153,6 +161,7 @@ const AppContent: React.FC = () => {
       void saveWorkspace({
         theme,
         currentLanguage,
+        voices: data.voices,
         chats: data.chats,
         messages: data.messages,
         memories: data.memories,
@@ -244,7 +253,8 @@ const AppContent: React.FC = () => {
           words: [],
           memories,
           quota,
-          activeChatId: activeChatIdValue
+          activeChatId: activeChatIdValue,
+          voices: normalizeVoices(workspace.voices)
         });
         setCurrentLanguage(workspace.currentLanguage === 'en' ? 'en' : 'da');
         setUser({
@@ -420,6 +430,28 @@ const AppContent: React.FC = () => {
     setCurrentLanguage(language);
     showToast(language === 'da' ? 'Мова практики: данська' : 'Мова практики: англійська', 'info');
     log.info('language', 'Practice language changed', { language });
+  };
+
+  const handleUpdateVoice = (language: Language, voice: string) => {
+    if (data.voices[language] === voice) return;
+    stop();
+    setPlayingPhrase(undefined);
+    setData((previous) => ({
+      ...previous,
+      voices: { ...previous.voices, [language]: voice }
+    }));
+    log.info('audio', 'Practice voice changed', { language, voice });
+  };
+
+  const handlePreviewVoice = (language: Language, voice: string) => {
+    const sample = VOICE_PREVIEW_TEXT[language];
+    if (isPlaying && playingPhrase === sample) {
+      handleStopAudio();
+      return;
+    }
+    setPlayingPhrase(sample);
+    setPlayingPhraseWithPauses(false);
+    void play(sample, 1, false, false, voice);
   };
 
   const handleSelectChat = (chatId: string) => {
@@ -667,7 +699,7 @@ const AppContent: React.FC = () => {
       });
 
       const assistantMessage = createAssistantMessage(chatId, result.text);
-      preloadAssistantAudio(result.text, user.id, currentLanguage);
+      preloadAssistantAudio(result.text, user.id, currentLanguage, currentVoice);
       setData((previous) => ({
         ...previous,
         messages: {
@@ -825,12 +857,24 @@ const AppContent: React.FC = () => {
 
       <SettingsModal
         isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
+        onClose={() => {
+          if (playingPhrase === VOICE_PREVIEW_TEXT.da || playingPhrase === VOICE_PREVIEW_TEXT.en) {
+            handleStopAudio();
+          }
+          setIsSettingsOpen(false);
+        }}
         user={user}
         isLoggedIn={Boolean(user)}
         onLogin={handleGoogleLogin}
         currentLanguage={currentLanguage}
         onUpdateLanguage={handleSelectLanguage}
+        voices={data.voices}
+        onUpdateVoice={handleUpdateVoice}
+        onPreviewVoice={handlePreviewVoice}
+        isPreviewPlaying={
+          isPlaying &&
+          (playingPhrase === VOICE_PREVIEW_TEXT.da || playingPhrase === VOICE_PREVIEW_TEXT.en)
+        }
         onLogout={handleLogout}
         memories={visibleMemories}
         onMemoryUpdate={handleMemoryUpdate}
@@ -856,6 +900,7 @@ const AppContent: React.FC = () => {
         <SelectionPopover
           selection={selection}
           language={currentLanguage}
+          voice={currentVoice}
           userId={user?.id ?? ''}
           onClose={clearSelection}
           onPlayAudio={(speed) =>

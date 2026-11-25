@@ -24,7 +24,7 @@ function rememberUrl(key: string, url: string) {
   }
 }
 
-export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
+export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -104,7 +104,13 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
   );
 
   const play = useCallback(
-    async (text: string, speed = 1, cacheForHistory = false, addPhrasePauses = false) => {
+    async (
+      text: string,
+      speed = 1,
+      cacheForHistory = false,
+      addPhrasePauses = false,
+      overrideVoice?: string
+    ) => {
       const speechInput =
         addPhrasePauses && language === 'da' ? addDanishPhrasePauses(text) : text;
       const spokenText = toSpeechText(speechInput);
@@ -113,7 +119,8 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
       stop();
       const requestId = requestRef.current;
       const safeSpeed = clampPlaybackSpeed(speed);
-      const cacheKey = `${userId}:${language}:${safeSpeed}:${spokenText}`;
+      const activeVoice = overrideVoice ?? voice;
+      const cacheKey = `${userId}:${language}:${activeVoice}:${safeSpeed}:${spokenText}`;
       const historyKeyText = addPhrasePauses ? spokenText : text;
 
       setIsPlaying(true);
@@ -121,6 +128,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
 
       log.info('audio', 'Playback requested', {
         language,
+        voice: activeVoice || undefined,
         chars: spokenText.length,
         speed: safeSpeed,
         cached: audioCache.has(cacheKey)
@@ -130,7 +138,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         let url = audioCache.get(cacheKey);
 
         if (!url) {
-          const prefetched = getPrefetchedSpeechAudio(language, spokenText, safeSpeed);
+          const prefetched = getPrefetchedSpeechAudio(language, spokenText, safeSpeed, activeVoice);
           if (prefetched) {
             url = URL.createObjectURL(prefetched);
             rememberUrl(cacheKey, url);
@@ -140,7 +148,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         if (!url && userId) {
           let blob: Blob | null = null;
           try {
-            blob = await getCachedSpeech(userId, language, historyKeyText, safeSpeed);
+            blob = await getCachedSpeech(userId, language, historyKeyText, safeSpeed, activeVoice);
           } catch (error) {
             log.warn('audio', 'Could not read persistent speech cache', {
               error: error instanceof Error ? error.message : String(error)
@@ -157,19 +165,25 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
             language,
             spokenText,
             safeSpeed,
-            () => fetchSpeechAudio(spokenText, language, safeSpeed)
+            () => fetchSpeechAudio(spokenText, language, safeSpeed, undefined, activeVoice || undefined),
+            activeVoice
           );
           url = URL.createObjectURL(downloaded);
           rememberUrl(cacheKey, url);
 
           if (cacheForHistory && userId) {
-            void saveCachedSpeech(userId, language, historyKeyText, safeSpeed, downloaded).catch(
-              (error: unknown) => {
-                log.warn('audio', 'Could not save persistent speech cache', {
-                  error: error instanceof Error ? error.message : String(error)
-                });
-              }
-            );
+            void saveCachedSpeech(
+              userId,
+              language,
+              historyKeyText,
+              safeSpeed,
+              downloaded,
+              activeVoice
+            ).catch((error: unknown) => {
+              log.warn('audio', 'Could not save persistent speech cache', {
+                error: error instanceof Error ? error.message : String(error)
+              });
+            });
           }
         }
 
@@ -198,7 +212,7 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '') {
         if (fetchRef.current && requestRef.current === requestId) fetchRef.current = null;
       }
     },
-    [finish, language, playWithWebSpeech, stop, userId]
+    [finish, language, playWithWebSpeech, stop, userId, voice]
   );
 
   useEffect(() => {

@@ -1,3 +1,5 @@
+import { resolveVoice } from '../server/ttsConfig.js';
+
 type SocketEvent = Event | MessageEvent | CloseEvent | { error?: unknown; code?: number };
 type SocketHandler = ((event: SocketEvent) => void) | null;
 type SocketListener = (...args: unknown[]) => void;
@@ -116,17 +118,22 @@ async function loadEdgeTts(): Promise<typeof import('msedge-tts')> {
   return edgeTtsModule;
 }
 
+function escapeSsmlText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function synthesizeEdgeSpeechOnce(
   text: string,
   language: 'da' | 'en',
-  speed: number
+  speed: number,
+  voiceName?: string | null
 ): Promise<Uint8Array> {
   const { MsEdgeTTS, OUTPUT_FORMAT } = await loadEdgeTts();
   const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 14_000 });
   try {
-    const voice = language === 'da' ? 'da-DK-JeppeNeural' : 'en-US-JennyNeural';
+    const voice = resolveVoice(language, voiceName);
     await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-    const { audioStream } = tts.toStream(text, { rate: speed, pitch: '+0Hz' });
+    const { audioStream } = tts.toStream(escapeSsmlText(text), { rate: speed, pitch: '+0Hz' });
     const chunks: Uint8Array[] = [];
     for await (const chunk of audioStream) chunks.push(new Uint8Array(chunk));
     const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
@@ -147,12 +154,13 @@ async function synthesizeEdgeSpeechOnce(
 export async function synthesizeEdgeSpeech(
   text: string,
   language: 'da' | 'en',
-  speed: number
+  speed: number,
+  voiceName?: string | null
 ): Promise<Uint8Array> {
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      return await synthesizeEdgeSpeechOnce(text, language, speed);
+      return await synthesizeEdgeSpeechOnce(text, language, speed, voiceName);
     } catch (error) {
       lastError = error;
     }

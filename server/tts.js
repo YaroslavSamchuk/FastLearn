@@ -1,17 +1,18 @@
 // language: JavaScript, file: server/tts.js, target: Node.js / Local dev proxy
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { Readable } from 'node:stream';
+import { DEFAULT_VOICES, resolveVoice } from './ttsConfig.js';
 
 export const VOICES = {
   da: {
     female: 'da-DK-ChristelNeural',
     male: 'da-DK-JeppeNeural',
-    default: 'da-DK-JeppeNeural'
+    default: DEFAULT_VOICES.da
   },
   en: {
     female: 'en-US-JennyNeural',
     male: 'en-US-GuyNeural',
-    default: 'en-US-JennyNeural'
+    default: DEFAULT_VOICES.en
   }
 };
 
@@ -65,6 +66,10 @@ function collectStream(stream, timeoutMs) {
   });
 }
 
+function escapeSsmlText(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 async function synthesizeEdge(text, language, speed, voiceName) {
   if (Date.now() < edgeCooldownUntil) return null;
 
@@ -73,13 +78,14 @@ async function synthesizeEdge(text, language, speed, voiceName) {
   if (language === 'da' && primaryVoice === 'da-DK-ChristelNeural') {
     voicesToTry.push('da-DK-JeppeNeural');
   }
+  const safeText = escapeSsmlText(text);
 
   for (const voice of voicesToTry) {
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 14_000 });
       try {
         await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-        const stream = await tts.toStream(text, {
+        const stream = await tts.toStream(safeText, {
           rate: mapSpeedToRate(speed),
           pitch: '+0Hz'
         });
@@ -206,7 +212,7 @@ export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceNa
   const cleanText = text.trim();
   const parsedSpeed = Number.parseFloat(speed);
   const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.4, parsedSpeed)) : 1;
-  const voice = voiceName || VOICES[language]?.default || VOICES.en.default;
+  const voice = resolveVoice(language, voiceName);
   const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
   const cached = readCache(cacheKey);
   if (cached) return { ...cached, cached: true };
@@ -223,7 +229,7 @@ export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceNa
   }
 
   const result = { buffer, source };
-  writeCache(cacheKey, result);
+  if (source === 'edge') writeCache(cacheKey, result);
   return { ...result, cached: false };
 }
 
@@ -231,7 +237,7 @@ export async function synthesizeSpeechStream(text, language = 'da', speed = 1, v
   const cleanText = text.trim();
   const parsedSpeed = Number.parseFloat(speed);
   const safeSpeed = Number.isFinite(parsedSpeed) ? Math.max(0.4, Math.min(1.4, parsedSpeed)) : 1;
-  const voice = voiceName || VOICES[language]?.default || VOICES.en.default;
+  const voice = resolveVoice(language, voiceName);
   const cacheKey = `${language}:${safeSpeed}:${voice}:${cleanText}`;
   const cached = readCache(cacheKey);
   if (cached) {
@@ -253,7 +259,7 @@ export async function synthesizeSpeechStream(text, language = 'da', speed = 1, v
       const tts = new MsEdgeTTS({ connectionTimeoutMs: 8_000, synthesisTimeoutMs: 15_000 });
       try {
         await tts.setMetadata(voiceNameToTry, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-        const { audioStream } = await tts.toStream(cleanText, {
+        const { audioStream } = await tts.toStream(escapeSsmlText(cleanText), {
           rate: mapSpeedToRate(safeSpeed),
           pitch: '+0Hz'
         });

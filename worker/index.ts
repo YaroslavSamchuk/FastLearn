@@ -6,6 +6,7 @@ import {
   type MemoryToolEvent
 } from '../server/memory.js';
 import { getChatLanguageInstruction, getThinkingConfig, lockLatestUserMessage } from '../server/modelConfig.js';
+import { DEFAULT_VOICES, isValidVoice, normalizeVoices, resolveVoice } from '../server/ttsConfig.js';
 import { synthesizeEdgeSpeech } from './edgeTts';
 
 export interface Env {
@@ -350,6 +351,7 @@ interface Workspace {
   ownerId: string;
   theme: 'dark' | 'light';
   currentLanguage: 'da' | 'en';
+  voices?: Record<'da' | 'en', string>;
   chats: unknown[];
   messages: Record<string, unknown[]>;
   memories: UserMemories;
@@ -433,6 +435,7 @@ function emptyWorkspace(ownerId: string): Workspace {
     ownerId,
     theme: 'dark',
     currentLanguage: 'da',
+    voices: { ...DEFAULT_VOICES },
     chats: [],
     messages: {},
     memories: {
@@ -1279,47 +1282,12 @@ function splitTtsText(text: string, maxChars: number): string[] {
   return chunks.filter(Boolean);
 }
 
-async function googleTtsChunk(text: string, language: 'da' | 'en'): Promise<Uint8Array> {
-  const url = new URL('https://translate.google.com/translate_tts');
-  url.searchParams.set('ie', 'UTF-8');
-  url.searchParams.set('client', 'tw-ob');
-  url.searchParams.set('tl', language);
-  url.searchParams.set('ttsspeed', '1');
-  url.searchParams.set('total', '1');
-  url.searchParams.set('idx', '0');
-  url.searchParams.set('textlen', String(text.length));
-  url.searchParams.set('q', text);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8_000);
-  try {
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: 'audio/mpeg,audio/*;q=0.9,*/*;q=0.5',
-        Referer: 'https://translate.google.com/',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-      },
-      signal: controller.signal
-    });
-    if (!response.ok) throw new Error(`Google TTS returned HTTP ${response.status}`);
-    const contentType = response.headers.get('content-type') ?? '';
-    if (!contentType.includes('audio')) {
-      throw new Error(`Google TTS returned ${contentType || 'an unknown content type'}`);
-    }
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) throw new Error('Google TTS returned an empty audio file');
-    return new Uint8Array(buffer);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function synthesizeSpeech(
   text: string,
   language: 'da' | 'en',
   speed: number,
-  id: string
+  id: string,
+  voice: string
 ): Promise<Uint8Array> {
   const clipped = text.length > MAX_TTS_CHARS ? text.slice(0, MAX_TTS_CHARS) : text;
   if (clipped.length !== text.length) {
@@ -1330,7 +1298,7 @@ async function synthesizeSpeech(
   const buffers = await Promise.all(chunks.map(async (chunk, index) => {
     const started = Date.now();
     try {
-      const buffer = await synthesizeEdgeSpeech(chunk, language, speed);
+      const buffer = await synthesizeEdgeSpeech(chunk, language, speed, voice);
       logEvent('tts_chunk_ok', {
         id,
         chunk: index + 1,
@@ -1347,21 +1315,6 @@ async function synthesizeSpeech(
         ms: Date.now() - started,
         error: error instanceof Error ? error.message : String(error)
       });
-      if (speed === 1) {
-        try {
-          const fallback = await googleTtsChunk(chunk, language);
-          logEvent('tts_chunk_fallback_ok', {
-            id,
-            chunk: index + 1,
-            of: chunks.length,
-            chars: chunk.length,
-            ms: Date.now() - started
-          });
-          return fallback;
-        } catch {
-          // fall through to 502
-        }
-      }
       throw new HttpError(502, 'Speech synthesis is unavailable right now');
     }
   }));
@@ -1374,7 +1327,7 @@ async function synthesizeSpeech(
     offset += buffer.byteLength;
   }
 
-  logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed });
+  logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice });
   return merged;
 }
 
@@ -1495,23 +1448,28 @@ async function handleTts(url: URL, id: string): Promise<Response> {
   const language = url.searchParams.get('lang') === 'en' ? 'en' : 'da';
   const rawSpeed = Number.parseFloat(url.searchParams.get('speed') ?? '1');
   const speed = Number.isFinite(rawSpeed) ? Math.max(0.4, Math.min(1, rawSpeed)) : 1;
+  const requestedVoice = url.searchParams.get('voice');
+  if (requestedVoice && !isValidVoice(language, requestedVoice)) {
+    throw new HttpError(400, 'Unknown voice for this language');
+  }
+  const voice = resolveVoice(language, requestedVoice);
 
   const cacheKey = new Request(
-    `https://fastlearn-cache.internal/tts?lang=${language}&speed=${speed}&text=${encodeURIComponent(text)}`,
+    `https://fastlearn-cache.internal/tts?lang=${language}&voice=${encodeURIComponent(voice)}&speed=${speed}&text=${encodeURIComponent(text)}`,
     { method: 'GET' }
   );
 
   try {
     const cached = await caches.default.match(cacheKey);
     if (cached) {
-      logEvent('tts_cache_hit', { id, language, chars: text.length });
+      logEvent('tts_cache_hit', { id, language, voice, chars: text.length });
       return cached;
     }
   } catch {
     // Edge cache is an optimization only.
   }
 
-  const audio = await synthesizeSpeech(text, language, speed, id);
+  const audio = await synthesizeSpeech(text, language, speed, id, voice);
   const response = new Response(audio, {
     headers: {
       ...CORS_HEADERS,
@@ -1780,6 +1738,9 @@ async function handleWorkspace(request: Request, env: Env, user: StoredUser): Pr
   if (body.theme === 'dark' || body.theme === 'light') update.theme = body.theme;
   if (body.currentLanguage === 'da' || body.currentLanguage === 'en') {
     update.currentLanguage = body.currentLanguage;
+  }
+  if (body.voices && typeof body.voices === 'object') {
+    update.voices = normalizeVoices(body.voices);
   }
   if (Array.isArray(body.chats)) {
     update.chats = body.chats.slice(0, 60).flatMap((chat) => {
