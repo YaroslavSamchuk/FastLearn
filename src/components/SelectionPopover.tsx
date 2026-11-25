@@ -114,21 +114,34 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         setReadyPhraseSpeeds(memoryReadySpeeds);
       }
 
+      const readCacheWithTimeout = <T,>(promise: Promise<T | null>): Promise<T | null> =>
+        Promise.race([
+          promise,
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 450))
+        ]);
+
       const [cached, speechCached] = await Promise.all([
-        getTranslationHistoryEntry(userId, language, selection.text).catch((reason: unknown) => {
-          log.warn('translation-history', 'Could not read translation cache', {
-            error: reason instanceof Error ? reason.message : String(reason)
-          });
-          return null;
-        }),
+        readCacheWithTimeout(
+          getTranslationHistoryEntry(userId, language, selection.text).catch((reason: unknown) => {
+            log.warn('translation-history', 'Could not read translation cache', {
+              error: reason instanceof Error ? reason.message : String(reason)
+            });
+            return null;
+          })
+        ),
         speechText && historyAudioText !== selection.text
-          ? getTranslationHistoryEntry(userId, language, historyAudioText).catch(() => null)
+          ? readCacheWithTimeout(
+              getTranslationHistoryEntry(userId, language, historyAudioText).catch(() => null)
+            )
           : Promise.resolve(null)
       ]);
       if (!active) return;
 
       const audioEntry = speechCached ?? cached;
-      const hasFreshIpa = Boolean(cached?.ipa) && !(language === 'da' && cached!.ipa!.startsWith('/'));
+      const hasFreshIpa =
+        Boolean(cached?.ipa) &&
+        cached?.ipaVersion === 2 &&
+        !(language === 'da' && cached!.ipa!.startsWith('/'));
       const base: TranscribeResult = {
         original: selection.text,
         translation: cached?.translation ?? '',
@@ -181,7 +194,7 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
               }
               setData((previous) => ({ ...(previous ?? base), ipa }));
               setLoadingPronunciation(false);
-              void saveHistory({ ipa });
+              void saveHistory({ ipa, ipaVersion: 2 });
             })
             .catch((reason: unknown) => {
               if (reason instanceof DOMException && reason.name === 'AbortError') return;

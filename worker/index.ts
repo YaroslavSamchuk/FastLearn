@@ -84,7 +84,10 @@ export class MongoDatabase extends DurableObject<Env> {
           db.collection('workspaces').createIndex({ ownerId: 1 }, { unique: true })
         ]);
         return client;
-      })();
+      })().catch((error: unknown) => {
+        this.clientPromise = undefined;
+        throw error;
+      });
     }
     return (await this.clientPromise).db(this.env.DB_NAME || 'fastlearn');
   }
@@ -712,7 +715,7 @@ async function generateReply(
 
   const models = getModels(env);
   const contents = buildContents(messages, language, memories);
-  const deadline = Date.now() + 65_000;
+  const deadline = Date.now() + 45_000;
   let lastError = 'No model responded';
 
   for (const model of models) {
@@ -742,7 +745,7 @@ async function generateReply(
               }
             })
           },
-          22_000,
+          14_000,
           signal
         );
 
@@ -883,6 +886,7 @@ function sseReply(
 ): Response {
   const encoder = new TextEncoder();
   let cancelled = false;
+  let keepalive: ReturnType<typeof setInterval> | undefined;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -890,9 +894,25 @@ function sseReply(
         if (cancelled || signal.aborted) return;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
+      const ping = () => {
+        if (cancelled || signal.aborted) return;
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch {
+          // ignore closed stream
+        }
+      };
+
+      // Flush initial comment immediately so mobile browsers & carrier proxies do not buffer an empty stream.
+      ping();
+      keepalive = setInterval(ping, 4_000);
 
       try {
         const reply = await generate((event) => send({ memory: event }));
+        if (keepalive) {
+          clearInterval(keepalive);
+          keepalive = undefined;
+        }
         for (const token of tokenize(reply.text)) {
           if (signal.aborted || cancelled) break;
           send({ token });
@@ -900,6 +920,10 @@ function sseReply(
         }
         send('[DONE]');
       } catch (error) {
+        if (keepalive) {
+          clearInterval(keepalive);
+          keepalive = undefined;
+        }
         if (!signal.aborted && !cancelled) {
           logEvent('chat_stream_error', {
             error: error instanceof Error ? error.message : String(error)
@@ -908,6 +932,10 @@ function sseReply(
           send('[DONE]');
         }
       } finally {
+        if (keepalive) {
+          clearInterval(keepalive);
+          keepalive = undefined;
+        }
         try {
           controller.close();
         } catch {
@@ -917,6 +945,10 @@ function sseReply(
     },
     cancel() {
       cancelled = true;
+      if (keepalive) {
+        clearInterval(keepalive);
+        keepalive = undefined;
+      }
     }
   });
 

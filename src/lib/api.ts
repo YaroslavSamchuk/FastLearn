@@ -176,7 +176,7 @@ export async function streamChat({
   const id = requestId();
   const startedAt = performance.now();
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), 90_000);
+  const timeout = window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), 50_000);
 
   const forwardAbort = () => controller.abort(new DOMException('Request cancelled', 'AbortError'));
   signal?.addEventListener('abort', forwardAbort, { once: true });
@@ -191,6 +191,7 @@ export async function streamChat({
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages, language, memories }),
       signal: controller.signal
@@ -326,24 +327,54 @@ export async function transcribe(text: string, language: Language): Promise<Tran
   }
 }
 
+function createScopedAbort(parentSignal: AbortSignal | undefined, timeoutMs: number): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timer = window.setTimeout(
+    () => controller.abort(new DOMException('Request timed out', 'TimeoutError')),
+    timeoutMs
+  );
+  const forwardAbort = () => controller.abort(parentSignal?.reason ?? new DOMException('Aborted', 'AbortError'));
+  if (parentSignal?.aborted) {
+    forwardAbort();
+  } else {
+    parentSignal?.addEventListener('abort', forwardAbort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timer);
+      parentSignal?.removeEventListener('abort', forwardAbort);
+    }
+  };
+}
+
 export async function translateSelection(
   text: string,
   language: Language,
   signal?: AbortSignal
 ): Promise<string> {
-  const response = await fetch('/api/translate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, lang: language, userLang: 'uk' }),
-    signal
-  });
-  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const scoped = createScopedAbort(signal, 18_000);
+  try {
+    const response = await fetch('/api/translate', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, lang: language, userLang: 'uk' }),
+      signal: scoped.signal
+    });
+    if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
 
-  const data = await response.json() as { translation?: unknown };
-  if (typeof data.translation !== 'string' || !data.translation.trim()) {
-    throw new ApiError('Translation service returned an empty result', response.status);
+    const data = await response.json() as { translation?: unknown };
+    if (typeof data.translation !== 'string' || !data.translation.trim()) {
+      throw new ApiError('Translation service returned an empty result', response.status);
+    }
+    return data.translation.trim();
+  } finally {
+    scoped.cleanup();
   }
-  return data.translation.trim();
 }
 
 export async function getPronunciation(
@@ -351,16 +382,22 @@ export async function getPronunciation(
   language: Language,
   signal?: AbortSignal
 ): Promise<string> {
-  const response = await fetch('/api/ipa', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, lang: language }),
-    signal
-  });
-  if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
+  const scoped = createScopedAbort(signal, 12_000);
+  try {
+    const response = await fetch('/api/ipa', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, lang: language }),
+      signal: scoped.signal
+    });
+    if (!response.ok) throw new ApiError(await readErrorMessage(response), response.status);
 
-  const data = await response.json() as { ipa?: unknown };
-  return typeof data.ipa === 'string' ? data.ipa : '';
+    const data = await response.json() as { ipa?: unknown };
+    return typeof data.ipa === 'string' ? data.ipa : '';
+  } finally {
+    scoped.cleanup();
+  }
 }
 
 const transientSpeechBlobs = new WeakSet<Blob>();
@@ -376,21 +413,29 @@ export async function fetchSpeechAudio(
   signal?: AbortSignal,
   voice?: string
 ): Promise<Blob> {
-  const response = await fetch(ttsUrl(text, language, speed, voice), { signal });
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!response.ok || !contentType.includes('audio')) {
-    throw new ApiError(
-      `TTS returned HTTP ${response.status} (${contentType || 'no content type'})`,
-      response.status
-    );
-  }
+  const scoped = createScopedAbort(signal, 20_000);
+  try {
+    const response = await fetch(ttsUrl(text, language, speed, voice), {
+      credentials: 'same-origin',
+      signal: scoped.signal
+    });
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!response.ok || !contentType.includes('audio')) {
+      throw new ApiError(
+        `TTS returned HTTP ${response.status} (${contentType || 'no content type'})`,
+        response.status
+      );
+    }
 
-  const audio = await response.blob();
-  if (audio.size === 0) throw new ApiError('TTS returned an empty audio file', response.status);
-  if (response.headers.get('x-fastlearn-tts-source') === 'bing-http') {
-    transientSpeechBlobs.add(audio);
+    const audio = await response.blob();
+    if (audio.size === 0) throw new ApiError('TTS returned an empty audio file', response.status);
+    if (response.headers.get('x-fastlearn-tts-source') === 'bing-http') {
+      transientSpeechBlobs.add(audio);
+    }
+    return audio;
+  } finally {
+    scoped.cleanup();
   }
-  return audio;
 }
 
 export function ttsUrl(text: string, language: Language, speed: number, voice?: string): string {
@@ -442,16 +487,19 @@ export function createSpeechBatchLoader(
   };
 
   void (async () => {
+    const batchScoped = createScopedAbort(undefined, 28_000);
     try {
       const response = await fetch('/api/tts/batch', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text,
           lang: language,
           speeds,
           ...(voice ? { voice } : {})
-        })
+        }),
+        signal: batchScoped.signal
       });
 
       const contentType = response.headers.get('content-type') ?? '';
@@ -509,6 +557,8 @@ export function createSpeechBatchLoader(
       fallbackRemaining();
     } catch {
       fallbackRemaining();
+    } finally {
+      batchScoped.cleanup();
     }
   })();
 
@@ -529,6 +579,7 @@ export async function generateChatTitle(message: string, language: Language): Pr
     const timeout = window.setTimeout(() => controller.abort(), 10_000);
     const response = await fetch('/api/title', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, language }),
       signal: controller.signal

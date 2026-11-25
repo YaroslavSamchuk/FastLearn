@@ -10,6 +10,7 @@ export interface TranslationHistoryEntry {
   text: string;
   translation?: string;
   ipa?: string;
+  ipaVersion?: number;
   audioVoice?: string;
   normalAudio?: Blob;
   slowAudio07?: Blob;
@@ -22,7 +23,7 @@ export interface TranslationHistoryEntry {
 type TranslationHistoryUpdate = Partial<
   Pick<
     TranslationHistoryEntry,
-    'translation' | 'ipa' | 'audioVoice' | 'normalAudio' | 'slowAudio07' | 'slowAudio05' | 'audioBySpeed'
+    'translation' | 'ipa' | 'ipaVersion' | 'audioVoice' | 'normalAudio' | 'slowAudio07' | 'slowAudio05' | 'audioBySpeed'
   >
 >;
 
@@ -33,7 +34,8 @@ function formatSpeedKey(speed: number): string {
 
 const DATABASE_NAME = 'fastlearn_translation_history';
 const STORE_NAME = 'entries';
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 5;
+const INDEXEDDB_TIMEOUT_MS = 1_500;
 let databasePromise: Promise<IDBDatabase> | null = null;
 
 function makeKey(userId: string, language: 'da' | 'en', text: string): string {
@@ -47,17 +49,40 @@ function openDatabase(): Promise<IDBDatabase> {
 
   if (databasePromise) return databasePromise;
 
-  databasePromise = new Promise<IDBDatabase>((resolve, reject) => {
+  const pending = new Promise<IDBDatabase>((resolve, reject) => {
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (databasePromise === pending) databasePromise = null;
+      reject(new Error('Timed out opening translation history database'));
+    }, INDEXEDDB_TIMEOUT_MS);
+
+    const finishResolve = (database: IDBDatabase) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve(database);
+    };
+
+    const finishReject = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      if (databasePromise === pending) databasePromise = null;
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
     const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
     request.onupgradeneeded = (event) => {
       const database = request.result;
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         const store = database.createObjectStore(STORE_NAME, { keyPath: 'key' });
         store.createIndex('lastUsedAt', 'lastUsedAt');
-      } else if (event.oldVersion < 4) {
+      } else if (event.oldVersion < 3) {
         const store = request.transaction?.objectStore(STORE_NAME);
         if (!store) {
-          reject(new Error('Could not access translation history during its upgrade'));
+          finishReject(new Error('Could not access translation history during its upgrade'));
           return;
         }
 
@@ -70,14 +95,11 @@ function openDatabase(): Promise<IDBDatabase> {
             slowAudio?: Blob;
             slowAudio06?: Blob;
           };
-          if (event.oldVersion < 3) {
-            delete entry.slowAudio;
-            delete entry.slowAudio06;
-            delete entry.normalAudio;
-            delete entry.slowAudio07;
-            delete entry.slowAudio05;
-          }
-          delete entry.ipa;
+          delete entry.slowAudio;
+          delete entry.slowAudio06;
+          delete entry.normalAudio;
+          delete entry.slowAudio07;
+          delete entry.slowAudio05;
           entry.sizeBytes = entrySize(entry);
           cursor.update(entry);
           cursor.continue();
@@ -87,31 +109,47 @@ function openDatabase(): Promise<IDBDatabase> {
     request.onsuccess = () => {
       const database = request.result;
       database.onclose = () => {
-        databasePromise = null;
+        if (databasePromise === pending) databasePromise = null;
       };
       database.onversionchange = () => {
         database.close();
-        databasePromise = null;
+        if (databasePromise === pending) databasePromise = null;
       };
-      resolve(database);
+      finishResolve(database);
     };
     request.onerror = () => {
-      databasePromise = null;
-      reject(request.error ?? new Error('Could not open translation history'));
+      finishReject(request.error ?? new Error('Could not open translation history'));
     };
     request.onblocked = () => {
-      databasePromise = null;
-      reject(new Error('Translation history database upgrade is blocked'));
+      finishReject(new Error('Translation history database upgrade is blocked'));
     };
   });
 
-  return databasePromise;
+  databasePromise = pending;
+  return pending;
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error('Translation history request failed'));
+    let settled = false;
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('Translation history read timed out'));
+    }, INDEXEDDB_TIMEOUT_MS);
+
+    request.onsuccess = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      reject(request.error ?? new Error('Translation history request failed'));
+    };
   });
 }
 
@@ -179,6 +217,7 @@ export async function updateTranslationHistoryEntry(
     text: text.trim().replace(/\s+/g, ' '),
     translation: update.translation ?? existing?.translation,
     ipa: update.ipa ?? existing?.ipa,
+    ipaVersion: update.ipaVersion ?? existing?.ipaVersion,
     audioVoice: update.audioVoice ?? existing?.audioVoice,
     normalAudio: update.normalAudio ?? (voiceChanged ? undefined : existing?.normalAudio),
     slowAudio07: update.slowAudio07 ?? (voiceChanged ? undefined : existing?.slowAudio07),

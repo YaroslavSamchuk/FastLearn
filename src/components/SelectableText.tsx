@@ -83,7 +83,11 @@ export const SelectableText: React.FC<SelectableTextProps> = ({
       touchState.timer = window.setTimeout(() => {
         if (touchStateRef.current !== touchState) return;
         touchState.dragStarted = true;
-        touchState.tokenElement.setPointerCapture(touchState.pointerId);
+        try {
+          touchState.tokenElement.setPointerCapture(touchState.pointerId);
+        } catch {
+          // Ignore Android browsers rejecting capture when pointer already settled
+        }
         startWordDrag(messageId, tokenIndex, tokens, container, true);
       }, 350);
 
