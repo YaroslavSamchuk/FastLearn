@@ -145,6 +145,7 @@ const AppContent: React.FC = () => {
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingChatId, setStreamingChatId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [waitingMemoryUpdated, setWaitingMemoryUpdated] = useState(false);
   const [playingPhrase, setPlayingPhrase] = useState<string | undefined>();
   const [playingPhraseWithPauses, setPlayingPhraseWithPauses] = useState(false);
 
@@ -698,6 +699,7 @@ const AppContent: React.FC = () => {
     setPlayingPhrase(undefined);
     sendingRef.current = true;
     setIsSending(true);
+    setWaitingMemoryUpdated(false);
     setStreamingContent('');
     setStreamingChatId(chatId);
 
@@ -765,6 +767,7 @@ const AppContent: React.FC = () => {
         signal: controller.signal,
         onText: setStreamingContent,
         onMemory: (event: MemoryToolEvent) => {
+          setWaitingMemoryUpdated(true);
           setData((previous) => {
             const currentFacts = previous.memories[event.scope];
             let nextFacts: string[];
@@ -836,6 +839,7 @@ const AppContent: React.FC = () => {
       setStreamingContent('');
       setStreamingChatId(null);
       setIsSending(false);
+      setWaitingMemoryUpdated(false);
       sendingRef.current = false;
       abortRef.current = null;
     }
@@ -888,7 +892,7 @@ const AppContent: React.FC = () => {
     return (
       <div className="flex h-[var(--app-height,100dvh)] items-center justify-center bg-[#f6f5f1] text-[#736d65] dark:bg-[#161513] dark:text-[#8a847c]">
         <div className="flex items-center gap-2">
-          <BrandMark className="h-4 w-4" />
+          <BrandMark animated className="h-4 w-4" />
           <p className="text-[14px] font-medium">FastLearn</p>
         </div>
       </div>
@@ -1014,6 +1018,8 @@ const AppContent: React.FC = () => {
         onPlaybackSpeedChange={handlePlaybackSpeedChange}
         onStopAudio={handleStopAudio}
         streamingContent={activeChatId === streamingChatId ? streamingContent : ''}
+        isWaiting={isSending && activeChatId === streamingChatId && !streamingContent.trim()}
+        waitingPhase={waitingMemoryUpdated ? 'memory' : 'thinking'}
         isPlaying={isPlaying}
         playingText={playingPhrase}
         chatId={activeChatId ?? undefined}

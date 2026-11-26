@@ -152,6 +152,85 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
   animation: popoverIn 180ms var(--ease-unslop);
 }
 
+/* Assistant response waiting placeholder */
+@keyframes placeholderIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-placeholder-in {
+  animation: placeholderIn 240ms var(--ease-unslop);
+}
+
+@keyframes skeletonSweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton-sweep {
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  will-change: transform;
+  animation: skeletonSweep 1.65s var(--ease-unslop) infinite;
+}
+html.light .skeleton-sweep,
+html:not(.dark) .skeleton-sweep {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.72) 50%,
+    transparent 100%
+  );
+}
+html.dark .skeleton-sweep {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(239, 237, 232, 0.08) 50%,
+    transparent 100%
+  );
+}
+.skeleton-delay-0 {
+  animation-delay: 0ms;
+}
+.skeleton-delay-1 {
+  animation-delay: 140ms;
+}
+.skeleton-delay-2 {
+  animation-delay: 280ms;
+}
+
+@keyframes brandLinePulse {
+  0%,
+  100% {
+    opacity: 0.32;
+  }
+  45% {
+    opacity: 1;
+  }
+}
+.animate-brand-line-1 {
+  animation: brandLinePulse 1.5s var(--ease-unslop) infinite;
+  animation-delay: 0ms;
+}
+.animate-brand-line-2 {
+  animation: brandLinePulse 1.5s var(--ease-unslop) infinite;
+  animation-delay: 160ms;
+}
+.animate-brand-line-3 {
+  animation: brandLinePulse 1.5s var(--ease-unslop) infinite;
+  animation-delay: 320ms;
+}
+
 /* Audio waveform using GPU scaleY transforms (no layout height animation) */
 @keyframes eqScale1 {
   0%,
@@ -204,8 +283,19 @@ html:not(.dark) ::-webkit-scrollbar-thumb:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-toast-in,
-  .animate-popover {
+  .animate-popover,
+  .animate-placeholder-in {
     animation: none;
+  }
+  .skeleton-sweep {
+    display: none;
+    animation: none;
+  }
+  .animate-brand-line-1,
+  .animate-brand-line-2,
+  .animate-brand-line-3 {
+    animation: none;
+    opacity: 1;
   }
   .animate-eq-1,
   .animate-eq-2,
