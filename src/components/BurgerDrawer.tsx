@@ -223,20 +223,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
           )}
         </div>
 
-        {isLoggedIn && (
-          <div className="px-3.5 pb-1.5 pt-3 sm:px-4 sm:pb-2 sm:pt-4">
-            <button
-              type="button"
-              onClick={handleCreateChat}
-              className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-black/[0.1] bg-white px-4 text-[14px] font-medium text-[#1c1917] transition-[background-color,border-color,transform] duration-150 ease-unslop hover:border-black/20 hover:bg-[#eceae4] active:scale-[0.98] dark:border-white/[0.1] dark:bg-[#1c1a18] dark:text-[#efede8] dark:hover:border-white/20 dark:hover:bg-[#262421]"
-            >
-              <Plus className="h-4 w-4" strokeWidth={1.5} />
-              <span>Новий діалог</span>
-            </button>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto overscroll-contain px-3.5 py-2 sm:px-4">
+        <div className="flex-1 overflow-y-auto overscroll-contain px-3.5 py-3 sm:px-4">
           {!isLoggedIn ? (
             <div className="flex h-full flex-col items-center justify-center px-4 pb-8 text-center">
               <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-black/[0.08] bg-white text-[#736d65] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:text-[#a8a29a]">
@@ -251,7 +238,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between pb-2 pt-2">
+              <div className="flex items-center justify-between pb-2 pt-1">
                 <span className="text-[12px] font-medium text-[#736d65] dark:text-[#8a847c]">
                   Діалоги · {currentLanguage === 'da' ? 'Dansk' : 'English'}
                 </span>
@@ -260,13 +247,27 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
                 </span>
               </div>
 
-              {chats.length === 0 ? (
-                <p className="py-6 text-center text-[12px] text-[#736d65] dark:text-[#8a847c]">
-                  Немає діалогів цією мовою
-                </p>
-              ) : (
-                <div className="space-y-1">
-                  {chats.map((chat) => {
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={handleCreateChat}
+                  className="flex h-10 w-full items-center gap-2.5 rounded-lg pl-3 pr-2 text-left text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-black/[0.04] hover:text-[#1c1917] dark:text-[#a8a29a] dark:hover:bg-white/[0.05] dark:hover:text-[#efede8] sm:h-9"
+                >
+                  <Plus
+                    className="h-4 w-4 shrink-0 text-[#736d65] dark:text-[#8a847c]"
+                    strokeWidth={1.5}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                    Новий діалог
+                  </span>
+                </button>
+
+                {chats.length === 0 ? (
+                  <p className="py-6 text-center text-[12px] text-[#736d65] dark:text-[#8a847c]">
+                    Немає діалогів цією мовою
+                  </p>
+                ) : (
+                  chats.map((chat) => {
                     const isActive = chat._id === activeChatId;
                     const isConfirming = confirmDeleteId === chat._id;
 
@@ -348,9 +349,9 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
                         )}
                       </div>
                     );
-                  })}
-                </div>
-              )}
+                  })
+                )}
+              </div>
             </>
           )}
         </div>
