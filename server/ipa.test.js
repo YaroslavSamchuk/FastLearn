@@ -143,3 +143,9 @@ test('resolves Danish and English closed compound words (direct and with -s- lin
   assert.equal(fallbackCalls, 0);
   assert.match(englishCompound, /^\/[^/]+ˌ[^/]+\/$/);
 });
+
+test('ignores redirected ordnet.dk headwords when expectedWord differs', () => {
+  const redirectedHtml =
+    '<span class="match">bagpå</span><span class="lydskrift"><span class="kilde-group"><button>[ˈbæˀpɔ]</button></span></span>';
+  assert.equal(extractOrdnetDdo(redirectedHtml, 'på'), '');
+});

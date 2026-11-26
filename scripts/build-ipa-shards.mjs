@@ -43,12 +43,16 @@ function ensureSources() {
   return { nstLexiconPath, enUsPath };
 }
 
-function getDanishPosPriority(pos, word) {
-  if (!pos) return 1;
-  if (pos.startsWith('PM|person')) return 3;
-  if (pos.startsWith('PM')) return word[0] === word[0].toLowerCase() ? 1 : 2;
-  if (/^(VB|NN|AB|PN|PP|IN|DT|CS|RG|RO|IE)\b/.test(pos)) return 0;
-  return 1;
+function getDanishPosPriority(pos, rawWord) {
+  const isLowercase = rawWord === rawWord.toLowerCase();
+  const casePenalty = isLowercase ? 0 : 10;
+
+  if (!pos) return casePenalty + 3;
+  if (pos.startsWith('PM|person')) return casePenalty + 5;
+  if (pos.startsWith('PM')) return casePenalty + 4;
+  if (/^(PN|PP|KN|DT|AB|IN|IE|CS)\b/.test(pos)) return casePenalty + 0;
+  if (/^(VB|NN)\b/.test(pos)) return casePenalty + 1;
+  return casePenalty + 2;
 }
 
 function writeLanguageShards(language, entriesMap) {
@@ -81,8 +85,9 @@ function writeLanguageShards(language, entriesMap) {
   };
 }
 
-// Modern Copenhagen DDO forms (verified against udtaleordbog.dk DDO) for core high-frequency
-// Danish words whose 2003 NST entries retain older vowel symbols or formal citation endings.
+// Standard Den Danske Ordbog (ordnet.dk) citation forms for high-frequency Danish words
+// where 2003 NST entries retain older vowel notation or ambiguous POS homographs.
+// Contextual reductions (e.g. infinitive at -> [ʌ], unstressed tryktab) are handled per phrase in server/ipa.js.
 const MODERN_DANISH_DDO_OVERRIDES = {
   hej: '[ˈhɑj]',
   hvordan: '[vʌˈdan]',
@@ -91,19 +96,19 @@ const MODERN_DANISH_DDO_OVERRIDES = {
   i: '[ˈiˀ]',
   dag: '[ˈdæˀ]',
   morgen: '[ˈmɒːɒn]',
-  aften: '[ˈɑfdn̩]',
+  aften: '[ˈɑfdən]',
   nat: '[ˈnad]',
   hvad: '[ˈva]',
   hvor: '[ˈvɒˀ]',
   hvorfor: '[vʌˈfʌ]',
   hvem: '[ˈvɛmˀ]',
   'hvornår': '[vʌˈnɒˀ]',
-  hvilken: '[ˈvelgŋ̩]',
+  hvilken: '[ˈvelɡən]',
   jeg: '[ˈjɑj]',
   du: '[ˈdu]',
   han: '[ˈhan]',
   hun: '[ˈhun]',
-  den: '[dn̩]',
+  den: '[ˈdɛnˀ]',
   vi: '[ˈviˀ]',
   jer: '[ˈjæɐ̯]',
   de: '[ˈdi]',
@@ -112,49 +117,50 @@ const MODERN_DANISH_DDO_OVERRIDES = {
   sig: '[ˈsɑj]',
   os: '[ˈoˀs]',
   dem: '[ˈdɛm]',
-  er: '[a]',
+  at: '[ad]',
+  er: '[ˈɛɐ̯]',
   var: '[ˈvɑˀ]',
   'være': '[ˈvɛːɐ]',
-  har: '[ˈhɒˀ]',
-  havde: '[ˈhæːð̩]',
-  have: '[ˈhæːʊ]',
-  kan: '[ˈka]',
-  kunne: '[ˈku]',
+  har: '[ˈhɑːˀ]',
+  havde: '[ˈhæːðə]',
+  have: '[ˈhæːvə]',
+  kan: '[ˈkænˀ]',
+  kunne: '[ˈkunə]',
   skal: '[ˈsgalˀ]',
-  skulle: '[ˈsgu]',
-  vil: '[ve]',
-  ville: '[ˈvill̩]',
+  skulle: '[ˈsgulə]',
+  vil: '[ˈvel]',
+  ville: '[ˈvilə]',
   'må': '[ˈmɔˀ]',
-  'måtte': '[ˈmʌɾə]',
+  'måtte': '[ˈmʌdə]',
   'gør': '[ˈgøɐ̯ˀ]',
-  gjorde: '[ˈgjoɐ̯ɾə]',
-  siger: '[ˈsiɐ̯]',
-  sagde: '[ˈsæːæ]',
-  ved: '[ˈveð]',
+  gjorde: '[ˈgjoɐ̯]',
+  siger: '[ˈsiːɐ]',
+  sagde: '[ˈsaːə]',
+  ved: '[ˈveðˀ]',
   vidste: '[ˈvesdə]',
-  vide: '[ˈviːð̩]',
-  bliver: '[bliɐ̯]',
+  vide: '[ˈviːðə]',
+  bliver: '[ˈbliɐ̯]',
   blev: '[ˈblewˀ]',
-  blive: '[ˈbliːi]',
+  blive: '[ˈbliːə]',
   med: '[ˈmɛð]',
-  til: '[ˈte]',
-  'på': '[pɔ]',
-  af: '[a]',
-  fra: '[fʁɑ]',
-  for: '[ˈfoɐ̯ˀ]',
+  til: '[ˈtel]',
+  'på': '[ˈpɔːˀ]',
+  af: '[ˈaːˀ]',
+  fra: '[ˈfʁɑːˀ]',
+  for: '[ˈfɒ]',
   om: '[ˈʌmˀ]',
   over: '[ˈɒwɐ]',
   under: '[ˈɔnɐ]',
-  ikke: '[ˈeg]',
+  ikke: '[ˈegə]',
   'også': '[ˈʌs]',
   godt: '[ˈgʌd]',
   god: '[ˈgoˀ]',
-  meget: '[ˈmɑːð̩]',
-  mange: '[ˈmɑŋŋ̩]',
-  noget: '[ˈnɔːð̩]',
-  nogen: '[ˈnoːon]',
+  meget: '[ˈmɑjəð]',
+  mange: '[ˈmɑŋə]',
+  noget: '[ˈnɔːəð]',
+  nogen: '[ˈnoːən]',
   her: '[ˈheɐ̯ˀ]',
-  der: '[dɐ]',
+  der: '[ˈdeɐ̯ˀ]',
   nu: '[ˈnu]',
   ja: '[ˈja]',
   nej: '[ˈnɑjˀ]',

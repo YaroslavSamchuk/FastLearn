@@ -101,9 +101,23 @@ export function lookupWordInTsvShard(shardText, word) {
 
 /**
  * Parses Den Danske Ordbog (ordnet.dk) `<span class="lydskrift">` button text.
+ * When expectedWord is provided, ignores fuzzy-redirected articles whose headword differs.
  */
-export function extractOrdnetDdo(html) {
+export function extractOrdnetDdo(html, expectedWord = '') {
   if (typeof html !== 'string' || !html) return '';
+  if (expectedWord) {
+    const headwordMatch = html.match(/<span class="match"[^>]*>([\s\S]*?)<\/span>/i);
+    if (headwordMatch?.[1]) {
+      const headword = headwordMatch[1]
+        .replace(/<[^>]+>/g, '')
+        .replace(/^[0-9.\s*]+|[0-9.\s*]+$/g, '')
+        .trim()
+        .toLowerCase();
+      if (headword && headword !== expectedWord.toLowerCase()) {
+        return '';
+      }
+    }
+  }
   const match = html.match(
     /class="lydskrift"[^>]*>\s*<span class="kilde-group[^"]*">\s*<button[^>]*>([\s\S]*?)<\/button>/i
   );
@@ -271,7 +285,7 @@ export async function lookupWordFallbackFromDictionaries(word, language) {
           `https://ordnet.dk/ddo/ordbog?query=${encodeURIComponent(clean)}`,
           2_800
         );
-        return extractOrdnetDdo(html);
+        return extractOrdnetDdo(html, clean);
       },
       () => lookupDanishWiktionary(clean)
     ]);
@@ -489,11 +503,8 @@ export async function resolveWordListPronunciation(
     .filter(Boolean);
   if (parts.length === 0) return '';
 
-  if (language === 'da') {
-    const inner = parts.map((item) => item.replace(/^\[|\]$/g, '').trim()).filter(Boolean);
-    return inner.length > 0 ? `[${inner.join(' ')}]` : '';
-  }
+  const inner = parts.map((item) => stripIpaDelimiters(item)).filter(Boolean);
+  if (inner.length === 0) return '';
 
-  const inner = parts.map((item) => item.replace(/^\/|\/$/g, '').trim()).filter(Boolean);
-  return inner.length > 0 ? `/${inner.join(' ')}/` : '';
+  return language === 'da' ? `[${inner.join(' ')}]` : `/${inner.join(' ')}/`;
 }

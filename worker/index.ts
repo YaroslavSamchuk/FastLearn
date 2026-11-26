@@ -1105,7 +1105,7 @@ async function fetchEdgeCachedWordFallback(
   language: 'da' | 'en',
   ctx?: ExecutionContext
 ): Promise<string> {
-  const edgeCacheUrl = `https://ipa-fallback.fastlearn.internal/v2/${language}/${encodeURIComponent(word)}`;
+  const edgeCacheUrl = `https://ipa-fallback.fastlearn.internal/v3/${language}/${encodeURIComponent(word)}`;
   let edgeCache: Cache | null = null;
   try {
     edgeCache = (caches as unknown as { default?: Cache }).default ?? null;
