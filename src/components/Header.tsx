@@ -1,6 +1,6 @@
 // language: TypeScript (React), file: src/components/Header.tsx, target: Web / Mobile Browser
 import React, { useEffect, useRef, useState } from 'react';
-import { Menu, Moon, Sun, Pencil, Check, X } from 'lucide-react';
+import { Menu, Moon, Sun, Check, X } from 'lucide-react';
 import { Language } from '../types.ts';
 import { haptic } from '../utils/haptics.ts';
 import { BrandMark } from './BrandMark.tsx';
@@ -11,7 +11,6 @@ interface HeaderProps {
   onOpenDrawer: () => void;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
-  onSelectLanguage: (lang: Language) => void;
   onRenameChat?: (newTitle: string) => void;
 }
 
@@ -24,7 +23,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDrawer,
   theme,
   onToggleTheme,
-  onSelectLanguage,
   onRenameChat
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -92,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <BrandMark className="h-4 w-4" />
-              <span className="text-[15px] font-semibold tracking-[-0.01em] text-[#1c1917] dark:text-[#efede8]">
+              <span className="text-[15px] font-semibold text-[#1c1917] dark:text-[#efede8]">
                 FastLearn
               </span>
             </div>
@@ -147,45 +145,23 @@ export const Header: React.FC<HeaderProps> = ({
                   haptic.tap();
                   setIsEditingTitle(true);
                 }}
-                className="group flex h-9 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-left transition-colors duration-150 ease-unslop hover:bg-black/[0.05] dark:hover:bg-white/[0.06] sm:h-8 sm:max-w-[240px] md:max-w-[340px]"
+                className="group flex h-9 min-w-0 max-w-full items-center rounded-lg px-2 text-left transition-colors duration-150 ease-unslop hover:bg-black/[0.05] dark:hover:bg-white/[0.06] sm:h-8 sm:max-w-[320px] md:max-w-[440px]"
                 title="Натисніть, щоб змінити назву діалогу"
                 aria-label="Змінити назву діалогу"
               >
                 <span className="truncate text-[13px] text-[#57534e] group-hover:text-[#1c1917] dark:text-[#a8a29a] dark:group-hover:text-[#efede8]">
                   {chatTitle || (language === 'da' ? 'Ny samtale' : 'New conversation')}
                 </span>
-                <Pencil
-                  className="hidden h-4 w-4 shrink-0 text-[#736d65] opacity-60 transition-opacity duration-150 ease-unslop group-hover:opacity-100 dark:text-[#8a847c] min-[360px]:inline-block sm:opacity-0"
-                  strokeWidth={1.5}
-                />
               </button>
             )}
           </div>
         </div>
 
         <div
-          className={`shrink-0 items-center gap-1 ${
+          className={`shrink-0 items-center ${
             isEditingTitle ? 'hidden sm:flex' : 'flex'
           }`}
         >
-          <button
-            type="button"
-            onClick={() => {
-              haptic.tap();
-              onSelectLanguage(language === 'da' ? 'en' : 'da');
-            }}
-            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-black/[0.1] px-2.5 text-[#57534e] transition-[background-color,border-color,color,transform] duration-150 ease-unslop hover:border-black/20 hover:bg-black/[0.04] hover:text-[#1c1917] active:scale-[0.98] dark:border-white/[0.1] dark:text-[#a8a29a] dark:hover:border-white/20 dark:hover:bg-white/[0.06] dark:hover:text-[#efede8] sm:h-8"
-            title="Перемкнути мову практики"
-            aria-label={`Змінити мову. Зараз ${language === 'da' ? 'данська' : 'англійська'}`}
-          >
-            <span className="font-mono text-[12px] font-medium tabular-nums text-amber-700 dark:text-amber-400">
-              {language === 'da' ? 'DA' : 'EN'}
-            </span>
-            <span className="hidden text-[12px] font-medium sm:inline">
-              {language === 'da' ? 'Dansk' : 'English'}
-            </span>
-          </button>
-
           <button
             type="button"
             onClick={() => {

@@ -549,7 +549,8 @@ export function createSpeechBatchLoader(
   text: string,
   language: Language,
   speeds: readonly number[],
-  voice?: string
+  voice?: string,
+  signal?: AbortSignal
 ): (speed: number) => Promise<Blob> {
   const pending = new Map<
     number,
@@ -570,12 +571,12 @@ export function createSpeechBatchLoader(
     for (const [speed, entry] of pending.entries()) {
       if (entry.settled) continue;
       entry.settled = true;
-      fetchSpeechAudio(text, language, speed, undefined, voice).then(entry.resolve, entry.reject);
+      fetchSpeechAudio(text, language, speed, signal, voice).then(entry.resolve, entry.reject);
     }
   };
 
   void (async () => {
-    const batchScoped = createScopedAbort(undefined, 28_000);
+    const batchScoped = createScopedAbort(signal, 28_000);
     try {
       const response = await fetch('/api/tts/batch', {
         method: 'POST',
@@ -626,7 +627,7 @@ export function createSpeechBatchLoader(
         }
 
         entry.settled = true;
-        fetchSpeechAudio(text, language, speed, undefined, voice).then(entry.resolve, entry.reject);
+        fetchSpeechAudio(text, language, speed, signal, voice).then(entry.resolve, entry.reject);
       };
 
       while (true) {

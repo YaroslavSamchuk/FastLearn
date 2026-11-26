@@ -234,56 +234,12 @@ export async function synthesizeEdgeSpeech(
   const voice = resolveVoice(language, voiceName);
   const errors: string[] = [];
 
-  if (isChristelVoice(voice)) {
-    if (hasHealthyAgent('apim')) {
-      try {
-        const res = await synthesizeViaWebSocket('apim', text, voice, [speed], 'sequential');
-        const audio = res.get(speed);
-        if (audio) return { audio, source: 'apim', voice };
-      } catch (error) {
-        errors.push(`apim:${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    if (speed <= 0.7) {
-      try {
-        const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
-        const audio = res.get(speed);
-        if (audio) return { audio, source: 'edge', voice };
-      } catch (error) {
-        errors.push(`bing-slow:${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    if (hasHealthyAgent('bing-http')) {
-      try {
-        const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
-        return { audio, source: 'bing-http', voice };
-      } catch (error) {
-        errors.push(`bing-http:${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      try {
-        const res = await synthesizeViaWebSocket('bing', text, 'da-DK-JeppeNeural', [speed], 'sequential');
-        const audio = res.get(speed);
-        if (audio) return { audio, source: 'edge-fallback', voice: 'da-DK-JeppeNeural' };
-      } catch (error) {
-        errors.push(`jeppe-${attempt}:${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    throw new Error(errors.join(' | ') || 'Edge TTS unavailable');
-  }
-
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  if (hasHealthyAgent('bing-http')) {
     try {
-      const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
-      const audio = res.get(speed);
-      if (audio) return { audio, source: attempt === 1 ? 'edge' : 'edge-retry', voice };
+      const audio = await synthesizeBingTranslatorTts(text, voice, speed, 4_500);
+      return { audio, source: 'bing-http', voice };
     } catch (error) {
-      errors.push(`bing-${attempt}:${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`bing-http:${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -297,12 +253,32 @@ export async function synthesizeEdgeSpeech(
     }
   }
 
-  if (hasHealthyAgent('bing-http')) {
+  if (!isChristelVoice(voice) || speed <= 0.7) {
     try {
-      const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
-      return { audio, source: 'bing-http', voice };
+      const res = await synthesizeViaWebSocket('bing', text, voice, [speed], 'sequential');
+      const audio = res.get(speed);
+      if (audio) return { audio, source: 'edge', voice };
     } catch (error) {
-      errors.push(`bing-http:${error instanceof Error ? error.message : String(error)}`);
+      errors.push(`bing:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (isChristelVoice(voice)) {
+    const fallbackVoice = 'da-DK-JeppeNeural';
+    if (hasHealthyAgent('bing-http')) {
+      try {
+        const audio = await synthesizeBingTranslatorTts(text, fallbackVoice, speed, 4_500);
+        return { audio, source: 'bing-http-fallback', voice: fallbackVoice };
+      } catch (error) {
+        errors.push(`jeppe-http:${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    try {
+      const res = await synthesizeViaWebSocket('bing', text, fallbackVoice, [speed], 'sequential');
+      const audio = res.get(speed);
+      if (audio) return { audio, source: 'edge-fallback', voice: fallbackVoice };
+    } catch (error) {
+      errors.push(`jeppe-ws:${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -324,73 +300,13 @@ export async function synthesizeEdgeSpeechBatch(
     await onVariantReady({ speed, audio, source, voice: usedVoice });
   };
 
-  if (isChristelVoice(voice)) {
-    if (hasHealthyAgent('apim')) {
-      try {
-        await synthesizeViaWebSocket('apim', text, voice, [...missing], 'sequential', async (speed, audio) => {
-          await emitDone(speed, audio, 'apim', voice);
-        });
-      } catch {
-        // Remaining speeds fall through immediately.
-      }
-    }
-
-    const slowMissing = [...missing].filter((speed) => speed <= 0.7);
-    if (slowMissing.length > 0) {
-      try {
-        await synthesizeViaWebSocket('bing', text, voice, slowMissing, 'concurrent', async (speed, audio) => {
-          await emitDone(speed, audio, 'edge', voice);
-        });
-      } catch {
-        // Remaining speeds fall through immediately.
-      }
-    }
-
-    if (missing.size > 0 && hasHealthyAgent('bing-http')) {
-      await Promise.allSettled(
-        [...missing].map(async (speed) => {
-          const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
-          await emitDone(speed, audio, 'bing-http', voice);
-        })
-      );
-    }
-
-    if (missing.size > 0) {
-      try {
-        await synthesizeViaWebSocket(
-          'bing',
-          text,
-          'da-DK-JeppeNeural',
-          [...missing],
-          'concurrent',
-          async (speed, audio) => {
-            await emitDone(speed, audio, 'edge-fallback', 'da-DK-JeppeNeural');
-          }
-        );
-      } catch {
-        // Any remaining speeds reported back to caller.
-      }
-    }
-
-    return [...missing];
-  }
-
-  try {
-    await synthesizeViaWebSocket('bing', text, voice, [...missing], 'concurrent', async (speed, audio) => {
-      await emitDone(speed, audio, 'edge', voice);
-    });
-  } catch {
-    // Remaining speeds fall through immediately.
-  }
-
-  if (missing.size > 0) {
-    try {
-      await synthesizeViaWebSocket('bing', text, voice, [...missing], 'sequential', async (speed, audio) => {
-        await emitDone(speed, audio, 'edge-retry', voice);
-      });
-    } catch {
-      // Remaining speeds fall through to APIM/HTTP.
-    }
+  if (hasHealthyAgent('bing-http')) {
+    await Promise.allSettled(
+      [...missing].map(async (speed) => {
+        const audio = await synthesizeBingTranslatorTts(text, voice, speed, 4_500);
+        await emitDone(speed, audio, 'bing-http', voice);
+      })
+    );
   }
 
   if (missing.size > 0 && hasHealthyAgent('apim')) {
@@ -399,17 +315,51 @@ export async function synthesizeEdgeSpeechBatch(
         await emitDone(speed, audio, 'apim', voice);
       });
     } catch {
-      // Remaining speeds fall through to Bing HTTP.
+      // Remaining speeds fall through immediately.
     }
   }
 
-  if (missing.size > 0 && hasHealthyAgent('bing-http')) {
-    await Promise.allSettled(
-      [...missing].map(async (speed) => {
-        const audio = await synthesizeBingTranslatorTts(text, voice, speed, 5_500);
-        await emitDone(speed, audio, 'bing-http', voice);
-      })
-    );
+  if (missing.size > 0) {
+    const wsSpeeds = isChristelVoice(voice)
+      ? [...missing].filter((speed) => speed <= 0.7)
+      : [...missing];
+    if (wsSpeeds.length > 0) {
+      try {
+        await synthesizeViaWebSocket('bing', text, voice, wsSpeeds, 'concurrent', async (speed, audio) => {
+          await emitDone(speed, audio, 'edge', voice);
+        });
+      } catch {
+        // Remaining speeds fall through immediately.
+      }
+    }
+  }
+
+  if (missing.size > 0 && isChristelVoice(voice)) {
+    const fallbackVoice = 'da-DK-JeppeNeural';
+    if (hasHealthyAgent('bing-http')) {
+      await Promise.allSettled(
+        [...missing].map(async (speed) => {
+          const audio = await synthesizeBingTranslatorTts(text, fallbackVoice, speed, 4_500);
+          await emitDone(speed, audio, 'bing-http-fallback', fallbackVoice);
+        })
+      );
+    }
+    if (missing.size > 0) {
+      try {
+        await synthesizeViaWebSocket(
+          'bing',
+          text,
+          fallbackVoice,
+          [...missing],
+          'concurrent',
+          async (speed, audio) => {
+            await emitDone(speed, audio, 'edge-fallback', fallbackVoice);
+          }
+        );
+      } catch {
+        // Any remaining speeds reported back to caller.
+      }
+    }
   }
 
   return [...missing];

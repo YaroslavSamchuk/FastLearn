@@ -163,24 +163,45 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
         }
 
         if (!url && userId) {
+          const readWithBudget = <T,>(promise: Promise<T | null>): Promise<T | null> =>
+            Promise.race([
+              promise,
+              new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 20))
+            ]);
+
           let blob: Blob | null = null;
           try {
-            blob = await getCachedSpeech(
-              userId,
-              activeLanguage,
-              historyKeyText,
-              safeSpeed,
-              activeVoice,
-              { touch: Boolean(cacheTextOverride || addPhrasePauses) }
-            );
-            if (!blob && addPhrasePauses && historyKeyText !== spokenText) {
-              blob = await getCachedSpeech(userId, activeLanguage, spokenText, safeSpeed, activeVoice);
-            }
+            const [primaryBlob, fallbackBlob] = await Promise.all([
+              readWithBudget(
+                getCachedSpeech(
+                  userId,
+                  activeLanguage,
+                  historyKeyText,
+                  safeSpeed,
+                  activeVoice,
+                  { touch: Boolean(cacheTextOverride || addPhrasePauses) }
+                ).catch((error) => {
+                  log.warn('audio', 'Could not read persistent speech cache', {
+                    error: error instanceof Error ? error.message : String(error)
+                  });
+                  return null;
+                })
+              ),
+              addPhrasePauses && historyKeyText !== spokenText
+                ? readWithBudget(
+                    getCachedSpeech(userId, activeLanguage, spokenText, safeSpeed, activeVoice).catch(
+                      () => null
+                    )
+                  )
+                : Promise.resolve(null)
+            ]);
+            blob = primaryBlob ?? fallbackBlob;
           } catch (error) {
             log.warn('audio', 'Could not read persistent speech cache', {
               error: error instanceof Error ? error.message : String(error)
             });
           }
+          if (requestRef.current !== requestId) return;
           if (blob) {
             url = URL.createObjectURL(blob);
             rememberUrl(cacheKey, url);

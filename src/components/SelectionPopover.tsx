@@ -8,6 +8,7 @@ import { MAX_SELECTION_WORDS } from '../utils/textTokens.ts';
 import { log } from '../lib/logger.ts';
 import type { TranscribeResult } from '../lib/api.ts';
 import {
+  createSpeechBatchLoader,
   fetchSpeechAudio,
   getPronunciation,
   isCacheableSpeechAudio,
@@ -20,6 +21,7 @@ import {
 } from '../lib/speech.ts';
 import {
   getPrefetchedSpeechAudio,
+  hasPendingSpeechAudio,
   loadSpeechAudioVariants,
   seedPrefetchedSpeechAudio
 } from '../lib/speechAudioCache.ts';
@@ -280,49 +282,101 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         }
 
         if (missingSpeeds.length > 0) {
-          const loadVariant = (speed: number) =>
-            fetchSpeechAudio(speechText, language, speed, controller.signal, voice || undefined);
+          const primarySpeed = phraseSpeeds[0];
+          const firstMissing = missingSpeeds.includes(primarySpeed) ? [primarySpeed] : [];
+          const secondaryMissing = missingSpeeds.filter((speed) => speed !== primarySpeed);
+
+          const speechCallbacks = {
+            onSpeedReady: (speed: number, audio: Blob) => {
+              if (active) {
+                setReadyPhraseSpeeds((previous) =>
+                  previous.includes(speed) ? previous : [...previous, speed]
+                );
+              }
+              if (userId && isCacheableSpeechAudio(audio)) {
+                void saveCachedSpeech(
+                  userId,
+                  language,
+                  selection.text,
+                  speed,
+                  audio,
+                  voice,
+                  { kind: 'selection' }
+                ).catch(() => {});
+              }
+            },
+            onSpeedError: (speed: number, reason: unknown) => {
+              if (reason instanceof DOMException && reason.name === 'AbortError') return;
+              if (active) {
+                setFailedPhraseSpeeds((previous) =>
+                  previous.includes(speed) ? previous : [...previous, speed]
+                );
+              }
+              log.warn('audio', 'Could not preload selected phrase audio', {
+                speed,
+                error: reason instanceof Error ? reason.message : String(reason)
+              });
+            }
+          };
 
           tasks.push(
-            loadSpeechAudioVariants(
-              language,
-              speechText,
-              missingSpeeds,
-              loadVariant,
-              {
-                onSpeedReady: (speed, audio) => {
-                  if (active) {
-                    setReadyPhraseSpeeds((previous) =>
-                      previous.includes(speed) ? previous : [...previous, speed]
-                    );
-                  }
-                  if (userId && isCacheableSpeechAudio(audio)) {
-                    void saveCachedSpeech(
-                      userId,
+            (async () => {
+              if (firstMissing.length > 0) {
+                await loadSpeechAudioVariants(
+                  language,
+                  speechText,
+                  firstMissing,
+                  (speed) => fetchSpeechAudio(speechText, language, speed, controller.signal, voice || undefined),
+                  speechCallbacks,
+                  voice
+                ).catch(() => {});
+              }
+
+              if (!active || controller.signal.aborted || secondaryMissing.length === 0) return;
+
+              const unstartedSecondary = secondaryMissing.filter(
+                (speed) =>
+                  !getPrefetchedSpeechAudio(language, speechText, speed, voice) &&
+                  !hasPendingSpeechAudio(language, speechText, speed, voice)
+              );
+              const inFlightOrReadySecondary = secondaryMissing.filter(
+                (speed) => !unstartedSecondary.includes(speed)
+              );
+
+              if (inFlightOrReadySecondary.length > 0) {
+                await loadSpeechAudioVariants(
+                  language,
+                  speechText,
+                  inFlightOrReadySecondary,
+                  (speed) => fetchSpeechAudio(speechText, language, speed, controller.signal, voice || undefined),
+                  speechCallbacks,
+                  voice
+                ).catch(() => {});
+              }
+
+              if (!active || controller.signal.aborted || unstartedSecondary.length === 0) return;
+
+              const loadBatch =
+                unstartedSecondary.length > 1
+                  ? createSpeechBatchLoader(
+                      speechText,
                       language,
-                      selection.text,
-                      speed,
-                      audio,
-                      voice,
-                      { kind: 'selection' }
-                    ).catch(() => {});
-                  }
-                },
-                onSpeedError: (speed, reason) => {
-                  if (reason instanceof DOMException && reason.name === 'AbortError') return;
-                  if (active) {
-                    setFailedPhraseSpeeds((previous) =>
-                      previous.includes(speed) ? previous : [...previous, speed]
-                    );
-                  }
-                  log.warn('audio', 'Could not preload selected phrase audio', {
-                    speed,
-                    error: reason instanceof Error ? reason.message : String(reason)
-                  });
-                }
-              },
-              voice
-            )
+                      unstartedSecondary,
+                      voice || undefined,
+                      controller.signal
+                    )
+                  : (speed: number) =>
+                      fetchSpeechAudio(speechText, language, speed, controller.signal, voice || undefined);
+
+              await loadSpeechAudioVariants(
+                language,
+                speechText,
+                unstartedSecondary,
+                loadBatch,
+                speechCallbacks,
+                voice
+              ).catch(() => {});
+            })()
           );
         }
       }

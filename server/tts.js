@@ -231,52 +231,13 @@ async function synthesizeEdgeSingleSocket(text, voice, speed) {
 async function synthesizeEdge(text, language, speed, voiceName) {
   const primaryVoice = voiceName || VOICES[language]?.default || VOICES.en.default;
 
-  if (primaryVoice === 'da-DK-ChristelNeural') {
-    if (hasHealthyAgent('apim')) {
-      try {
-        const res = await synthesizeViaApimBatch(text, primaryVoice, [speed]);
-        const buffer = res.get(speed);
-        if (buffer) return { buffer, source: 'apim', voice: primaryVoice };
-      } catch (error) {
-        console.warn('[tts] Edge APIM Christel failed:', error.message);
-      }
-    }
-
-    if (speed <= 0.7 && Date.now() >= edgeCooldownUntil) {
-      try {
-        const buffer = await synthesizeEdgeSingleSocket(text, primaryVoice, speed);
-        return { buffer, source: 'edge', voice: primaryVoice };
-      } catch (error) {
-        console.warn('[tts] Edge Christel slow failed:', error.message);
-      }
-    }
-
+  if (hasHealthyAgent('bing-http')) {
     try {
-      const audio = await synthesizeBingTranslatorTts(text, primaryVoice, speed, 5_500);
+      const audio = await synthesizeBingTranslatorTts(text, primaryVoice, speed, 4_500);
       markEdgeSuccess();
       return { buffer: Buffer.from(audio), source: 'bing-http', voice: primaryVoice };
     } catch (error) {
-      console.warn('[tts] Bing HTTP Christel failed:', error.message);
-    }
-
-    if (Date.now() < edgeCooldownUntil) return null;
-    try {
-      const buffer = await synthesizeEdgeSingleSocket(text, 'da-DK-JeppeNeural', speed);
-      return { buffer, source: 'edge-fallback', voice: 'da-DK-JeppeNeural' };
-    } catch (error) {
-      console.warn('[tts] Edge fallback Jeppe failed:', error.message);
-      markEdgeFailure();
-      return null;
-    }
-  }
-
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    if (Date.now() < edgeCooldownUntil) break;
-    try {
-      const buffer = await synthesizeEdgeSingleSocket(text, primaryVoice, speed);
-      return { buffer, source: attempt === 1 ? 'edge' : 'edge-retry', voice: primaryVoice };
-    } catch (error) {
-      console.warn(`[tts] Edge voice ${primaryVoice} attempt ${attempt} failed:`, error.message);
+      console.warn(`[tts] Bing HTTP voice ${primaryVoice} failed:`, error.message);
     }
   }
 
@@ -290,11 +251,31 @@ async function synthesizeEdge(text, language, speed, voiceName) {
     }
   }
 
-  try {
-    const audio = await synthesizeBingTranslatorTts(text, primaryVoice, speed, 5_500);
-    return { buffer: Buffer.from(audio), source: 'bing-http', voice: primaryVoice };
-  } catch (error) {
-    console.warn(`[tts] Bing HTTP voice ${primaryVoice} failed:`, error.message);
+  if ((primaryVoice !== 'da-DK-ChristelNeural' || speed <= 0.7) && Date.now() >= edgeCooldownUntil) {
+    try {
+      const buffer = await synthesizeEdgeSingleSocket(text, primaryVoice, speed);
+      return { buffer, source: 'edge', voice: primaryVoice };
+    } catch (error) {
+      console.warn(`[tts] Edge voice ${primaryVoice} failed:`, error.message);
+    }
+  }
+
+  if (primaryVoice === 'da-DK-ChristelNeural') {
+    if (hasHealthyAgent('bing-http')) {
+      try {
+        const audio = await synthesizeBingTranslatorTts(text, 'da-DK-JeppeNeural', speed, 4_500);
+        return { buffer: Buffer.from(audio), source: 'bing-http-fallback', voice: 'da-DK-JeppeNeural' };
+      } catch (error) {
+        console.warn('[tts] Bing HTTP fallback Jeppe failed:', error.message);
+      }
+    }
+    if (Date.now() < edgeCooldownUntil) return null;
+    try {
+      const buffer = await synthesizeEdgeSingleSocket(text, 'da-DK-JeppeNeural', speed);
+      return { buffer, source: 'edge-fallback', voice: 'da-DK-JeppeNeural' };
+    } catch (error) {
+      console.warn('[tts] Edge fallback Jeppe failed:', error.message);
+    }
   }
 
   markEdgeFailure();
@@ -410,9 +391,23 @@ export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceNa
   const cached = readCache(cacheKey);
   if (cached) return { ...cached, cached: true };
 
-  const edgeResult = await synthesizeEdge(cleanText, language, safeSpeed, voice);
-  let buffer = edgeResult?.buffer ?? null;
-  let source = edgeResult?.source ?? 'edge';
+  const chunks = splitText(cleanText, TTS_CHUNK_CHARS);
+  let buffer = null;
+  let source = 'edge';
+
+  if (chunks.length <= 1) {
+    const edgeResult = await synthesizeEdge(cleanText, language, safeSpeed, voice);
+    buffer = edgeResult?.buffer ?? null;
+    source = edgeResult?.source ?? 'edge';
+  } else {
+    const partResults = await Promise.all(
+      chunks.map((chunk) => synthesizeEdge(chunk, language, safeSpeed, voice))
+    );
+    if (partResults.every((part) => part?.buffer)) {
+      buffer = Buffer.concat(partResults.map((part) => part.buffer));
+      source = partResults[0]?.source ?? 'edge';
+    }
+  }
 
   if (!buffer) {
     if (safeSpeed !== 1) {
@@ -423,7 +418,7 @@ export async function synthesizeSpeech(text, language = 'da', speed = 1, voiceNa
   }
 
   const result = { buffer, source };
-  if (source !== 'bing-http' && source !== 'google') writeCache(cacheKey, result);
+  if (source !== 'google') writeCache(cacheKey, result);
   return { ...result, cached: false };
 }
 
@@ -441,30 +436,6 @@ export async function synthesizeSpeechStream(text, language = 'da', speed = 1, v
       cached: true,
       cacheKey
     };
-  }
-
-  if (voice !== 'da-DK-ChristelNeural' && Date.now() >= edgeCooldownUntil) {
-    const tts = new MsEdgeTTS({ connectionTimeoutMs: 5_000, synthesisTimeoutMs: 8_000 });
-    try {
-      await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-      const { audioStream } = await tts.toStream(escapeSsmlText(cleanText), {
-        rate: mapSpeedToRate(safeSpeed),
-        pitch: '+0Hz'
-      });
-      audioStream.once('error', (error) => {
-        markEdgeFailure();
-        tts.close();
-        console.warn(`[tts] Edge voice ${voice} stream failed:`, error.message);
-      });
-      audioStream.once('end', () => {
-        markEdgeSuccess();
-        tts.close();
-      });
-      return { stream: audioStream, source: 'edge', cached: false, cacheKey };
-    } catch (error) {
-      tts.close();
-      console.warn(`[tts] Edge voice ${voice} stream setup failed:`, error.message);
-    }
   }
 
   const synthesized = await synthesizeSpeech(cleanText, language, safeSpeed, voice);
@@ -506,49 +477,11 @@ export async function synthesizeSpeechBatch(text, language = 'da', speeds = [1, 
   const pending = new Set(missing);
   const emit = async (speed, buffer, source) => {
     pending.delete(speed);
-    if (source !== 'bing-http' && source !== 'google') {
+    if (source !== 'google') {
       writeCache(`${language}:${speed}:${voice}:${cleanText}`, { buffer, source });
     }
     await onVariant({ speed, buffer, source });
   };
-
-  if (voice === 'da-DK-ChristelNeural' && hasHealthyAgent('apim')) {
-    try {
-      await synthesizeViaApimBatch(cleanText, voice, [...pending], async (speed, buffer) => {
-        await emit(speed, buffer, 'apim');
-      });
-    } catch {
-      // Missing speeds fall through immediately.
-    }
-  }
-
-  if (pending.size > 0 && Date.now() >= edgeCooldownUntil) {
-    const edgeSpeeds =
-      voice === 'da-DK-ChristelNeural' ? [...pending].filter((speed) => speed <= 0.7) : [...pending];
-    if (edgeSpeeds.length > 0) {
-      const tts = new MsEdgeTTS({ connectionTimeoutMs: 5_000, synthesisTimeoutMs: 9_000 });
-      try {
-        await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-        await Promise.allSettled(
-          edgeSpeeds.map(async (speed) => {
-            const { audioStream } = await tts.toStream(escapeSsmlText(cleanText), {
-              rate: mapSpeedToRate(speed),
-              pitch: '+0Hz'
-            });
-            const buffer = await collectStream(audioStream, 9_000);
-            if (buffer.byteLength > 0) {
-              markEdgeSuccess();
-              await emit(speed, buffer, 'edge');
-            }
-          })
-        );
-      } catch {
-        // Missing speeds fall through immediately.
-      } finally {
-        tts.close();
-      }
-    }
-  }
 
   if (pending.size > 0) {
     await Promise.allSettled(

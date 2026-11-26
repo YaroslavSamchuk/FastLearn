@@ -107,6 +107,20 @@ export function pickEdgeAgent(endpoint = 'bing', excludeIds = new Set()) {
   return fallback ?? EDGE_AGENT_PROFILES[start];
 }
 
+function pickStickyBingAgent(excludeIds = new Set()) {
+  const now = Date.now();
+  for (const profile of EDGE_AGENT_PROFILES) {
+    if (excludeIds.has(profile.id) || isAgentInCooldown('bing-http', profile.id)) continue;
+    const cached = bingSessions.get(profile.id);
+    if (cached && now < cached.expiresAt) return profile;
+  }
+  for (const profile of EDGE_AGENT_PROFILES) {
+    if (excludeIds.has(profile.id) || isAgentInCooldown('bing-http', profile.id)) continue;
+    if (bingSessionInflight.has(profile.id)) return profile;
+  }
+  return pickEdgeAgent('bing-http', excludeIds);
+}
+
 function generateMuid() {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -394,7 +408,7 @@ export async function synthesizeBingTranslatorTts(text, voice, speed, timeoutMs 
   let lastError = null;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const agent = pickEdgeAgent('bing-http', triedAgents);
+    const agent = pickStickyBingAgent(triedAgents);
     triedAgents.add(agent.id);
 
     try {

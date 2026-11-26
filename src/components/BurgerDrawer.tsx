@@ -1,7 +1,17 @@
 // language: TypeScript (React), file: src/components/BurgerDrawer.tsx, target: Web / Mobile Browser
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { User, Chat, Language, Quota } from '../types.ts';
-import { X, Plus, Trash2, MessageSquare, Settings, LogOut, Check } from 'lucide-react';
+import {
+  X,
+  Plus,
+  Trash2,
+  MessageSquare,
+  Settings,
+  LogOut,
+  Check,
+  Globe,
+  ChevronDown
+} from 'lucide-react';
 import { haptic } from '../utils/haptics.ts';
 import { UserAvatar } from './UserAvatar.tsx';
 import { formatResetAt } from '../lib/data.ts';
@@ -15,6 +25,7 @@ interface BurgerDrawerProps {
   onLogin: () => void;
   onLogout: () => void;
   currentLanguage: Language;
+  onSelectLanguage: (lang: Language) => void;
   chats: Chat[];
   activeChatId: string | null;
   onSelectChat: (chatId: string) => void;
@@ -24,6 +35,15 @@ interface BurgerDrawerProps {
   quota: Quota;
 }
 
+const LANGUAGE_OPTIONS: ReadonlyArray<{
+  value: Language;
+  title: string;
+  native: string;
+}> = [
+  { value: 'da', title: 'Данська мова', native: 'Dansk' },
+  { value: 'en', title: 'Англійська мова', native: 'English' }
+];
+
 export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
   isOpen,
   onClose,
@@ -32,6 +52,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
   onLogin,
   onLogout,
   currentLanguage,
+  onSelectLanguage,
   chats,
   activeChatId,
   onSelectChat,
@@ -43,11 +64,14 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isVisible, setIsVisible] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
+  const languageMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setShouldRender(true);
       setConfirmDeleteId(null);
+      setIsLanguageMenuOpen(false);
       const frameId = requestAnimationFrame(() => {
         requestAnimationFrame(() => setIsVisible(true));
       });
@@ -56,9 +80,37 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
 
     setIsVisible(false);
     setConfirmDeleteId(null);
+    setIsLanguageMenuOpen(false);
     const timer = window.setTimeout(() => setShouldRender(false), 200);
     return () => window.clearTimeout(timer);
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isLanguageMenuOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        languageMenuRef.current &&
+        event.target instanceof Node &&
+        !languageMenuRef.current.contains(event.target)
+      ) {
+        setIsLanguageMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setIsLanguageMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [isLanguageMenuOpen]);
 
   if (!shouldRender) return null;
 
@@ -79,8 +131,15 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
 
   const handleOpenSettings = () => {
     haptic.impact();
+    setIsLanguageMenuOpen(false);
     onOpenSettings();
     onClose();
+  };
+
+  const handleSelectLanguage = (language: Language) => {
+    haptic.tap();
+    setIsLanguageMenuOpen(false);
+    onSelectLanguage(language);
   };
 
   return (
@@ -104,7 +163,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.08] px-3.5 dark:border-white/[0.08] sm:h-14 sm:px-4">
           <div className="flex items-center gap-2">
             <BrandMark className="h-4 w-4" />
-            <span className="text-[15px] font-semibold tracking-[-0.01em]">FastLearn</span>
+            <span className="text-[15px] font-semibold">FastLearn</span>
           </div>
           <button
             type="button"
@@ -297,10 +356,91 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
         </div>
 
         <div className="pb-safe border-t border-black/[0.08] px-4 pt-3 dark:border-white/[0.08]">
+          <div ref={languageMenuRef} className="relative mb-2">
+            <button
+              type="button"
+              onClick={() => {
+                haptic.tap();
+                setIsLanguageMenuOpen((open) => !open);
+              }}
+              aria-expanded={isLanguageMenuOpen}
+              aria-haspopup="listbox"
+              className="flex w-full items-center gap-2 rounded-lg border border-black/[0.08] bg-white px-2 py-2 text-left transition-[background-color,border-color,transform] duration-150 ease-unslop hover:border-black/[0.16] hover:bg-[#eceae4]/70 active:scale-[0.99] dark:border-white/[0.08] dark:bg-[#1c1a18] dark:hover:border-white/[0.16] dark:hover:bg-[#262421]"
+            >
+              <Globe
+                className="h-4 w-4 shrink-0 text-[#736d65] dark:text-[#8a847c]"
+                strokeWidth={1.5}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium leading-5 text-[#1c1917] dark:text-[#efede8]">
+                  {currentLanguage === 'da' ? 'Данська мова' : 'Англійська мова'}
+                </span>
+                <span className="block truncate text-[12px] leading-4 text-[#736d65] dark:text-[#8a847c]">
+                  Натисніть для вибору мови
+                </span>
+              </span>
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-[#736d65] transition-transform duration-150 ease-unslop dark:text-[#8a847c] ${
+                  isLanguageMenuOpen ? 'rotate-180' : ''
+                }`}
+                strokeWidth={1.5}
+              />
+            </button>
+
+            {isLanguageMenuOpen && (
+              <div
+                role="listbox"
+                aria-label="Вибір мови практики"
+                className="animate-popover absolute bottom-full left-0 right-0 z-20 mb-2 rounded-xl border border-black/[0.1] bg-white p-1 shadow-[0_8px_24px_rgba(0,0,0,0.08)] dark:border-white/[0.1] dark:bg-[#1c1a18] dark:shadow-none"
+              >
+                {LANGUAGE_OPTIONS.map((option) => {
+                  const selected = currentLanguage === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => handleSelectLanguage(option.value)}
+                      className={`relative flex h-10 w-full items-center justify-between gap-2 rounded-lg px-2 text-left transition-colors duration-150 ease-unslop sm:h-9 ${
+                        selected
+                          ? 'bg-[#f6f5f1] text-[#1c1917] dark:bg-[#262421] dark:text-[#efede8]'
+                          : 'text-[#57534e] hover:bg-black/[0.04] hover:text-[#1c1917] dark:text-[#a8a29a] dark:hover:bg-white/[0.05] dark:hover:text-[#efede8]'
+                      }`}
+                    >
+                      {selected && (
+                        <span
+                          className="absolute bottom-2 left-0 top-2 w-[2px] rounded-full bg-amber-500"
+                          aria-hidden="true"
+                        />
+                      )}
+                      <span className="min-w-0 flex-1 pl-1.5">
+                        <span className="block truncate text-[13px] font-medium">
+                          {option.title}
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <span className="font-mono text-[12px] text-[#736d65] dark:text-[#8a847c]">
+                          {option.native}
+                        </span>
+                        {selected && (
+                          <Check
+                            className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400"
+                            strokeWidth={1.5}
+                          />
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={handleOpenSettings}
-            className="flex h-10 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-black/[0.05] hover:text-[#1c1917] dark:text-[#a8a29a] dark:hover:bg-white/[0.06] dark:hover:text-[#efede8] sm:h-9"
+            className="flex h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] font-medium text-[#57534e] transition-colors duration-150 ease-unslop hover:bg-black/[0.05] hover:text-[#1c1917] dark:text-[#a8a29a] dark:hover:bg-white/[0.06] dark:hover:text-[#efede8] sm:h-9"
           >
             <Settings className="h-4 w-4 shrink-0 text-[#736d65] dark:text-[#8a847c]" strokeWidth={1.5} />
             <span>Налаштування й пам’ять</span>
@@ -314,7 +454,7 @@ export const BurgerDrawer: React.FC<BurgerDrawerProps> = ({
                 onLogout();
                 onClose();
               }}
-              className="mt-1 flex h-10 w-full items-center gap-2.5 rounded-lg px-2 text-left text-[13px] font-medium text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-red-500/10 hover:text-[#dc2626] dark:text-[#8a847c] dark:hover:bg-red-500/15 dark:hover:text-[#e5484d] sm:h-9"
+              className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] font-medium text-[#736d65] transition-colors duration-150 ease-unslop hover:bg-red-500/10 hover:text-[#dc2626] dark:text-[#8a847c] dark:hover:bg-red-500/15 dark:hover:text-[#e5484d] sm:h-9"
             >
               <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.5} />
               <span>Вийти</span>

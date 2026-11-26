@@ -956,7 +956,6 @@ const AppContent: React.FC = () => {
         onOpenDrawer={handleOpenDrawer}
         theme={theme}
         onToggleTheme={handleToggleTheme}
-        onSelectLanguage={handleSelectLanguage}
         onRenameChat={handleRenameChat}
       />
 
@@ -969,6 +968,7 @@ const AppContent: React.FC = () => {
           onLogin={handleGoogleLogin}
           onLogout={handleLogout}
           currentLanguage={currentLanguage}
+          onSelectLanguage={handleSelectLanguage}
           chats={visibleChats}
           activeChatId={activeChatId}
           onSelectChat={handleSelectChat}

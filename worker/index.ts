@@ -161,7 +161,7 @@ const MAX_BODY_CHARS = 64_000;
 const MAX_MEMORY_ITEMS = MAX_FACTS_PER_SCOPE;
 const MAX_MEMORY_CHARS = 220;
 const MAX_TTS_CHARS = 1_200;
-const TTS_CHUNK_CHARS = 750;
+const TTS_CHUNK_CHARS = 240;
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -1252,18 +1252,16 @@ async function synthesizeSpeech(
   const total = results.reduce((sum, result) => sum + result.audio.byteLength, 0);
   const merged = new Uint8Array(total);
   let offset = 0;
-  let allCacheable = true;
   for (const result of results) {
     merged.set(result.audio, offset);
     offset += result.audio.byteLength;
-    if (result.source === 'bing-http') allCacheable = false;
   }
 
   const source = results.every((result) => result.source === results[0]?.source)
     ? (results[0]?.source ?? 'edge')
-    : (allCacheable ? 'edge' : 'bing-http');
+    : 'edge';
   logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice, source });
-  return { audio: merged, source, cacheable: allCacheable };
+  return { audio: merged, source, cacheable: true };
 }
 
 async function handleChat(request: Request, env: Env, id: string, user: StoredUser): Promise<Response> {
@@ -1543,14 +1541,12 @@ async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionConte
                   audioBase64: encodeBase64(variant.audio),
                   source: variant.source
                 });
-                if (variant.source !== 'bing-http') {
-                  writeCachedTts(
-                    buildTtsCacheRequest(language, voice, variant.speed, clipped),
-                    variant.audio,
-                    variant.source,
-                    ctx
-                  );
-                }
+                writeCachedTts(
+                  buildTtsCacheRequest(language, voice, variant.speed, clipped),
+                  variant.audio,
+                  variant.source,
+                  ctx
+                );
                 logEvent('tts_ok', {
                   id,
                   chunks: 1,
@@ -1610,11 +1606,9 @@ async function handleTtsBatch(request: Request, id: string, ctx?: ExecutionConte
                 offset += part.byteLength;
               }
               const speedSources = sourcesBySpeed.get(speed) ?? [];
-              const source = speedSources.includes('bing-http') ? 'bing-http' : (speedSources[0] || 'edge');
+              const source = speedSources[0] || 'edge';
               sendLine({ speed, audioBase64: encodeBase64(merged), source });
-              if (source !== 'bing-http') {
-                writeCachedTts(buildTtsCacheRequest(language, voice, speed, clipped), merged, source, ctx);
-              }
+              writeCachedTts(buildTtsCacheRequest(language, voice, speed, clipped), merged, source, ctx);
               logEvent('tts_ok', { id, chunks: chunks.length, bytes: total, language, speed, voice, source });
             }
           }
