@@ -525,7 +525,7 @@ app.get('/api/tts', requireAuth, async (req, res) => {
   try {
     const started = Date.now();
     const synthesis = await synthesizeSpeechStream(text, language, speed, voice);
-    const cacheable = synthesis.source !== 'google';
+    const cacheable = !synthesis.source.startsWith('bing-http');
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', cacheable ? 'public, max-age=86400' : 'no-store');
     res.setHeader('x-fastlearn-tts-source', synthesis.source);
@@ -567,7 +567,7 @@ app.get('/api/tts', requireAuth, async (req, res) => {
       if (bytes === 0 && synthesis.source === 'edge' && !res.destroyed) {
         console.warn('[tts] Edge stream failed before audio started; using fallback');
         const fallback = await synthesizeSpeech(text, language, speed, voice);
-        const fallbackCacheable = fallback.source !== 'google';
+        const fallbackCacheable = !fallback.source.startsWith('bing-http');
         res.setHeader('Cache-Control', fallbackCacheable ? 'public, max-age=86400' : 'no-store');
         res.setHeader('x-fastlearn-tts-source', fallback.source);
         res.send(fallback.buffer);

@@ -517,7 +517,7 @@ export async function fetchSpeechAudio(
 
     const audio = await response.blob();
     if (audio.size === 0) throw new ApiError('TTS returned an empty audio file', response.status);
-    if (response.headers.get('x-fastlearn-tts-source') === 'google') {
+    if (response.headers.get('x-fastlearn-tts-source')?.startsWith('bing-http')) {
       transientSpeechBlobs.add(audio);
     }
     return audio;
@@ -617,7 +617,7 @@ export function createSpeechBatchLoader(
         if (typeof parsed.audioBase64 === 'string' && parsed.audioBase64) {
           const blob = decodeBase64Audio(parsed.audioBase64);
           if (blob.size > 0) {
-            if (parsed.source === 'google') {
+            if (typeof parsed.source === 'string' && parsed.source.startsWith('bing-http')) {
               transientSpeechBlobs.add(blob);
             }
             entry.settled = true;

@@ -37,7 +37,12 @@ function rememberUrl(key: string, url: string) {
   }
 }
 
-export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') {
+export function useAudio(
+  language: 'da' | 'en' = 'da',
+  userId = '',
+  voice = '',
+  onError?: (message: string) => void
+) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSpeed, setCurrentSpeed] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -66,55 +71,10 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
       audioRef.current = null;
     }
 
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-
     setIsPlaying(false);
     setCurrentSpeed(null);
     log.debug('audio', 'Playback stopped');
   }, []);
-
-  const playWithWebSpeech = useCallback(
-    (text: string, speed: number, requestId: number, activeLanguage: 'da' | 'en') => {
-      if (requestRef.current !== requestId) return;
-
-      if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-        log.warn('audio', 'Web Speech API is unavailable');
-        finish(requestId);
-        return;
-      }
-
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = activeLanguage === 'da' ? 'da-DK' : 'en-US';
-      utterance.rate = Math.max(0.4, Math.min(2, speed));
-      utterance.pitch = 1;
-
-      const targetPrefix = activeLanguage === 'da' ? 'da' : 'en';
-      const matchingVoice = window.speechSynthesis
-        .getVoices()
-        .find((item) => item.lang.toLowerCase().startsWith(targetPrefix));
-      if (matchingVoice) utterance.voice = matchingVoice;
-
-      utterance.onend = () => finish(requestId);
-      utterance.onerror = (event) => {
-        if (requestRef.current !== requestId) return;
-        log.warn('audio', 'Web Speech playback failed', { error: event.error });
-        finish(requestId);
-      };
-
-      setIsPlaying(true);
-      setCurrentSpeed(speed);
-      window.speechSynthesis.speak(utterance);
-      log.info('audio', 'Fallback playback started', {
-        language: activeLanguage,
-        chars: text.length,
-        voice: matchingVoice?.name ?? 'browser default'
-      });
-    },
-    [finish]
-  );
 
   const play = useCallback(
     async (
@@ -258,9 +218,10 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
         audio.onended = () => finish(requestId);
         audio.onerror = () => {
           if (requestRef.current !== requestId) return;
-          log.warn('audio', 'Audio element could not play the TTS file, falling back');
+          log.warn('audio', 'Audio element could not play the Edge TTS file');
           audioRef.current = null;
-          playWithWebSpeech(spokenText, safeSpeed, requestId, activeLanguage);
+          finish(requestId);
+          onError?.('Не вдалося відтворити озвучку Edge TTS');
         };
 
         await audio.play();
@@ -273,15 +234,16 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
           return;
         }
 
-        log.warn('audio', 'TTS proxy unavailable, using Web Speech', {
+        log.warn('audio', 'Edge TTS unavailable', {
           error: error instanceof Error ? error.message : String(error)
         });
-        playWithWebSpeech(spokenText, safeSpeed, requestId, activeLanguage);
+        finish(requestId);
+        onError?.('Озвучка Edge TTS тимчасово недоступна');
       } finally {
         if (fetchRef.current && requestRef.current === requestId) fetchRef.current = null;
       }
     },
-    [finish, language, playWithWebSpeech, stop, userId, voice]
+    [finish, language, onError, stop, userId, voice]
   );
 
   useEffect(() => {
@@ -293,9 +255,6 @@ export function useAudio(language: 'da' | 'en' = 'da', userId = '', voice = '') 
         audioRef.current.onerror = null;
         audioRef.current.pause();
         audioRef.current = null;
-      }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
       }
     };
   }, []);

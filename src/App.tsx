@@ -168,7 +168,18 @@ const AppContent: React.FC = () => {
 
   const currentVoice = data.voices[currentLanguage];
   const currentSpeeds = data.playbackSpeeds[currentLanguage] ?? DEFAULT_PLAYBACK_SPEEDS[currentLanguage];
-  const { play, stop, isPlaying, currentSpeed } = useAudio(currentLanguage, user?.id ?? '', currentVoice);
+  const handleAudioError = useCallback(
+    (message: string) => {
+      showToast(message, 'warning');
+    },
+    [showToast]
+  );
+  const { play, stop, isPlaying, currentSpeed } = useAudio(
+    currentLanguage,
+    user?.id ?? '',
+    currentVoice,
+    handleAudioError
+  );
   const { selection, clearSelection } = useWordSelection();
 
   useEffect(() => {
