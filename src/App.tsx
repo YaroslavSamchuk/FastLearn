@@ -52,7 +52,11 @@ import { log } from './lib/logger.ts';
 import { readString, storageKeys, writeString } from './lib/storage.ts';
 import { loadSpeechAudio } from './lib/speechAudioCache.ts';
 import { SPEECH_PLAYBACK_SPEEDS, toSpeechText } from './lib/speech.ts';
-import { getCachedSpeech, saveCachedSpeech } from './lib/translationHistory.ts';
+import {
+  getCachedSpeech,
+  saveCachedSpeech,
+  warmTranslationHistory
+} from './lib/translationHistory.ts';
 import {
   DEFAULT_PLAYBACK_SPEEDS,
   normalizePlaybackSpeeds,
@@ -355,6 +359,7 @@ const AppContent: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    warmTranslationHistory();
     if (bootLoggedRef.current) return;
     bootLoggedRef.current = true;
 

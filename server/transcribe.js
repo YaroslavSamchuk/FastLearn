@@ -6,6 +6,8 @@ import {
   lookupWordFallbackFromDictionaries,
   resolveWordListPronunciation
 } from './ipa.js';
+import { keyRotator } from './llm.js';
+import { getFastThinkingConfig } from './modelConfig.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_IPA_DIR = path.resolve(__dirname, '..', 'public', 'ipa');
@@ -35,29 +37,17 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-async function translateWithMyMemory(text, sourceLang, targetLang, signal) {
-  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
-  const response = await fetchWithTimeout(
-    url,
-    {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      },
-      signal
-    },
-    3_500
-  );
+const GOOGLE_TRANSLATE_TIMEOUT_MS = 1_500;
+const GOOGLE_TRANSLATE_COOLDOWN_MS = 120_000;
+let googleTranslateCooldownUntil = 0;
 
-  if (!response.ok) throw new Error(`MyMemory returned HTTP ${response.status}`);
-  const data = await response.json();
-  const candidate = data.responseData?.translatedText;
-  if (!candidate || typeof candidate !== 'string') return '';
-  if (candidate.toUpperCase().includes('MYMEMORY WARNING')) return '';
-  return candidate.trim();
+function isSameNormalizedText(left, right) {
+  return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
 }
 
 async function translateWithGoogle(text, sourceLang, targetLang, signal) {
+  if (Date.now() < googleTranslateCooldownUntil) return '';
+
   const url = new URL('https://translate.googleapis.com/translate_a/single');
   url.searchParams.set('client', 'gtx');
   url.searchParams.set('sl', sourceLang);
@@ -65,49 +55,105 @@ async function translateWithGoogle(text, sourceLang, targetLang, signal) {
   url.searchParams.set('dt', 't');
   url.searchParams.set('q', text);
 
-  const response = await fetchWithTimeout(
-    url.toString(),
-    {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+  try {
+    const response = await fetchWithTimeout(
+      url.toString(),
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        },
+        signal
       },
-      signal
-    },
-    4_000
-  );
+      GOOGLE_TRANSLATE_TIMEOUT_MS
+    );
 
-  if (!response.ok) throw new Error(`Google Translate returned HTTP ${response.status}`);
+    if (response.status === 429 || response.status === 403) {
+      googleTranslateCooldownUntil = Date.now() + GOOGLE_TRANSLATE_COOLDOWN_MS;
+      return '';
+    }
+    if (!response.ok) return '';
 
-  const data = await response.json();
-  if (!Array.isArray(data) || !Array.isArray(data[0])) return '';
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('json') && !contentType.includes('javascript')) return '';
 
-  return data[0]
-    .map((segment) => (Array.isArray(segment) && typeof segment[0] === 'string' ? segment[0] : ''))
-    .join('')
-    .trim();
+    const data = await response.json();
+    if (!Array.isArray(data) || !Array.isArray(data[0])) return '';
+
+    const translated = data[0]
+      .map((segment) => (Array.isArray(segment) && typeof segment[0] === 'string' ? segment[0] : ''))
+      .join('')
+      .trim();
+
+    if (!translated || isSameNormalizedText(translated, text)) return '';
+    return translated;
+  } catch {
+    return '';
+  }
+}
+
+async function translateWithGemini(text, sourceLang, targetLang) {
+  const keys = keyRotator.getKeysForRequest().slice(0, 2);
+  if (keys.length === 0) return '';
+
+  const models = (process.env.GEMINI_MODELS ||
+    'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  const languageNames = { da: 'Danish', en: 'English', uk: 'Ukrainian' };
+  const prompt = `Translate this ${languageNames[sourceLang] ?? sourceLang} text into ${languageNames[targetLang] ?? targetLang}. Preserve its meaning and punctuation. Return only the translation, with no explanation or quotes.\n\n${JSON.stringify(text)}`;
+
+  for (const model of models) {
+    const thinkingConfig = getFastThinkingConfig(model);
+    for (const key of keys) {
+      try {
+        const response = await fetchWithTimeout(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: {
+                maxOutputTokens: 120,
+                temperature: 0.1,
+                ...(thinkingConfig ? { thinkingConfig } : {})
+              }
+            })
+          },
+          3_500
+        );
+
+        if (!response.ok) {
+          keyRotator.reportFailure(key, response.status);
+          continue;
+        }
+
+        keyRotator.reportSuccess(key);
+        const data = await response.json();
+        const parts = data.candidates?.[0]?.content?.parts ?? [];
+        const translation = parts
+          .filter((part) => !part.thought && typeof part.text === 'string')
+          .map((part) => part.text ?? '')
+          .join('')
+          .trim();
+        if (translation) return translation;
+      } catch {
+        // try next key/model
+      }
+    }
+  }
+
+  return '';
 }
 
 async function translateText(text, sourceLang, targetLang) {
-  const controllers = [new AbortController(), new AbortController()];
-  const providers = [
-    () => translateWithMyMemory(text, sourceLang, targetLang, controllers[0].signal),
-    () => translateWithGoogle(text, sourceLang, targetLang, controllers[1].signal)
-  ];
-
-  try {
-    return await Promise.any(providers.map(async (provider) => {
-      const result = await provider();
-      if (!result || result.toLowerCase() === text.toLowerCase()) {
-        throw new Error('Translation provider returned no translated text');
-      }
-      return result;
-    }));
-  } catch {
-    return '';
-  } finally {
-    controllers.forEach((controller) => controller.abort());
-  }
+  const googleResult = await translateWithGoogle(text, sourceLang, targetLang);
+  if (googleResult) return googleResult;
+  return translateWithGemini(text, sourceLang, targetLang);
 }
 
 async function readLocalShard(language, hash) {

@@ -351,12 +351,90 @@ function createScopedAbort(parentSignal: AbortSignal | undefined, timeoutMs: num
   };
 }
 
-export async function translateSelection(
+const MYMEMORY_TIMEOUT_MS = 1_400;
+const MYMEMORY_COOLDOWN_MS = 10 * 60 * 1000;
+let myMemoryCooldownUntil = 0;
+
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;|&#x0*27;|&apos;/gi, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function isSameNormalizedText(left: string, right: string): boolean {
+  return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
+}
+
+async function translateWithMyMemoryClient(
   text: string,
   language: Language,
-  signal?: AbortSignal
+  parentSignal?: AbortSignal
+): Promise<string | null> {
+  if (Date.now() < myMemoryCooldownUntil) return null;
+
+  const cleanInput = text.trim();
+  if (!cleanInput) return null;
+
+  const scoped = createScopedAbort(parentSignal, MYMEMORY_TIMEOUT_MS);
+  try {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(cleanInput)}&langpair=${language}|uk`;
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: scoped.signal
+    });
+
+    if (response.status === 429 || response.status === 403) {
+      myMemoryCooldownUntil = Date.now() + MYMEMORY_COOLDOWN_MS;
+      return null;
+    }
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as {
+      quotaFinished?: boolean;
+      responseStatus?: number | string;
+      responseData?: { translatedText?: unknown };
+    };
+
+    const statusCode = Number(payload.responseStatus);
+    if (payload.quotaFinished === true || statusCode === 429 || statusCode === 403) {
+      myMemoryCooldownUntil = Date.now() + MYMEMORY_COOLDOWN_MS;
+      return null;
+    }
+    if (Number.isFinite(statusCode) && statusCode !== 200) {
+      return null;
+    }
+
+    const rawTranslated = payload.responseData?.translatedText;
+    if (typeof rawTranslated !== 'string') return null;
+
+    const upper = rawTranslated.toUpperCase();
+    if (upper.includes('MYMEMORY WARNING') || upper.includes('INVALID LANGUAGE PAIR')) {
+      if (upper.includes('MYMEMORY WARNING')) {
+        myMemoryCooldownUntil = Date.now() + MYMEMORY_COOLDOWN_MS;
+      }
+      return null;
+    }
+
+    const translated = decodeHtmlEntities(rawTranslated).trim();
+    if (!translated || isSameNormalizedText(translated, cleanInput)) return null;
+    return translated;
+  } catch (error) {
+    if (parentSignal?.aborted) throw error;
+    return null;
+  } finally {
+    scoped.cleanup();
+  }
+}
+
+async function translateViaServerFallback(
+  text: string,
+  language: Language,
+  parentSignal?: AbortSignal
 ): Promise<string> {
-  const scoped = createScopedAbort(signal, 18_000);
+  const scoped = createScopedAbort(parentSignal, 12_000);
   try {
     const response = await fetch('/api/translate', {
       method: 'POST',
@@ -375,6 +453,16 @@ export async function translateSelection(
   } finally {
     scoped.cleanup();
   }
+}
+
+export async function translateSelection(
+  text: string,
+  language: Language,
+  signal?: AbortSignal
+): Promise<string> {
+  const clientTranslation = await translateWithMyMemoryClient(text, language, signal);
+  if (clientTranslation) return clientTranslation;
+  return translateViaServerFallback(text, language, signal);
 }
 
 export async function getPronunciation(

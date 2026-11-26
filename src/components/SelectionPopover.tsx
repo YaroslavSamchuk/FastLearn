@@ -117,32 +117,28 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         setReadyPhraseSpeeds(memoryReadySpeeds);
       }
 
-      const readCacheWithTimeout = <T,>(promise: Promise<T | null>): Promise<T | null> =>
+      const readCacheWithTimeout = <T,>(
+        promise: Promise<T | null>,
+        timeoutMs = 15
+      ): Promise<T | null> =>
         Promise.race([
           promise,
-          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 60))
+          new Promise<null>((resolve) => window.setTimeout(() => resolve(null), timeoutMs))
         ]);
 
       const syncCached = peekCachedTranslationHistoryEntry(userId, language, selection.text);
-      const [cached, legacySpeechCached] = syncCached
-        ? [syncCached, null]
-        : await Promise.all([
-            readCacheWithTimeout(
-              getTranslationHistoryEntry(userId, language, selection.text, { touch: true }).catch(
-                (reason: unknown) => {
-                  log.warn('translation-history', 'Could not read translation cache', {
-                    error: reason instanceof Error ? reason.message : String(reason)
-                  });
-                  return null;
-                }
-              )
-            ),
-            speechText && speechText !== selection.text
-              ? readCacheWithTimeout(
-                  getTranslationHistoryEntry(userId, language, speechText).catch(() => null)
-                )
-              : Promise.resolve(null)
-          ]);
+      const primaryEntryPromise = syncCached
+        ? Promise.resolve(syncCached)
+        : getTranslationHistoryEntry(userId, language, selection.text, { touch: true }).catch(
+            (reason: unknown) => {
+              log.warn('translation-history', 'Could not read translation cache', {
+                error: reason instanceof Error ? reason.message : String(reason)
+              });
+              return null;
+            }
+          );
+
+      const cached = syncCached ?? (await readCacheWithTimeout(primaryEntryPromise, 15));
       if (!active) return;
 
       if (syncCached) {
@@ -171,19 +167,30 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
         setPronunciationError(true);
       }
 
+      let resolvedTranslation = Boolean(cached?.translation);
+      if (!cached && !syncCached) {
+        void primaryEntryPromise.then((lateCached) => {
+          if (!active || !lateCached?.translation || resolvedTranslation) return;
+          resolvedTranslation = true;
+          setData((previous) => ({ ...(previous ?? base), translation: lateCached.translation! }));
+          setLoadingTranslation(false);
+        });
+      }
+
       const tasks: Promise<unknown>[] = [];
       if (!cached?.translation) {
         tasks.push(
           translateSelection(selection.text, language, controller.signal)
             .then((translation) => {
-              if (!active) return;
+              if (!active || resolvedTranslation) return;
+              resolvedTranslation = true;
               setData((previous) => ({ ...(previous ?? base), translation }));
               setLoadingTranslation(false);
               void saveHistory({ translation });
             })
             .catch((reason: unknown) => {
               if (reason instanceof DOMException && reason.name === 'AbortError') return;
-              if (active) {
+              if (active && !resolvedTranslation) {
                 const message = reason instanceof Error ? reason.message : String(reason);
                 log.warn('translate', 'Selection translation failed', { message });
                 setTranslationError(message);
@@ -223,6 +230,15 @@ export const SelectionPopover: React.FC<SelectionPopoverProps> = ({
       }
 
       if (speechText) {
+        const legacySpeechCached =
+          !syncCached && speechText !== selection.text
+            ? await readCacheWithTimeout(
+                getTranslationHistoryEntry(userId, language, speechText).catch(() => null),
+                20
+              )
+            : null;
+        if (!active) return;
+
         const primaryAudioEntry = matchesEntryVoice(cached, language, voice) ? cached : null;
         const legacyAudioEntry = matchesEntryVoice(legacySpeechCached, language, voice)
           ? legacySpeechCached

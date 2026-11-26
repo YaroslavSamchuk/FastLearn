@@ -5,6 +5,7 @@ import {
   buildPrimingAcknowledgement,
   buildSystemPrompt,
   getChatLanguageInstruction,
+  getFastThinkingConfig,
   getThinkingConfig,
   lockLatestUserMessage
 } from './modelConfig.js';
@@ -18,6 +19,14 @@ test('uses supported thinking settings for other Gemini model generations', () =
   assert.deepEqual(getThinkingConfig('gemini-2.5-flash'), { thinkingBudget: 4096 });
   assert.deepEqual(getThinkingConfig('gemini-3-pro-preview'), { thinkingLevel: 'low' });
   assert.equal(getThinkingConfig('gemma-4-26b-a4b-it'), null);
+});
+
+test('uses minimal or zero thinking for low-latency translation calls', () => {
+  assert.deepEqual(getFastThinkingConfig('gemini-flash-lite-latest'), { thinkingLevel: 'minimal' });
+  assert.deepEqual(getFastThinkingConfig('gemini-3-flash-preview'), { thinkingLevel: 'minimal' });
+  assert.deepEqual(getFastThinkingConfig('gemini-2.5-flash'), { thinkingBudget: 0 });
+  assert.deepEqual(getFastThinkingConfig('gemini-3-pro-preview'), { thinkingLevel: 'low' });
+  assert.equal(getFastThinkingConfig('gemma-4-26b-a4b-it'), null);
 });
 
 test('locks Danish and English chat replies exclusively to the selected language', () => {

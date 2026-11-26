@@ -9,6 +9,14 @@ export function getThinkingConfig(model: string): {
   thinkingLevel?: never;
 } | null;
 
+export function getFastThinkingConfig(model: string): {
+  thinkingLevel: 'minimal' | 'low';
+  thinkingBudget?: never;
+} | {
+  thinkingBudget: number;
+  thinkingLevel?: never;
+} | null;
+
 export function getChatLanguageInstruction(language: 'da' | 'en'): string;
 
 export const MEMORY_TOOL_DECLARATIONS: Array<{

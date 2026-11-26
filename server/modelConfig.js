@@ -23,6 +23,28 @@ export function getThinkingConfig(model) {
   return null;
 }
 
+export function getFastThinkingConfig(model) {
+  const normalized = String(model ?? '').toLowerCase();
+
+  if (normalized.includes('gemini-2.5')) {
+    return { thinkingBudget: 0 };
+  }
+
+  if (normalized === 'gemini-flash-lite-latest') {
+    return { thinkingLevel: 'minimal' };
+  }
+
+  if (/^gemini-3-pro-preview(?:-|$)/.test(normalized)) {
+    return { thinkingLevel: 'low' };
+  }
+
+  if (/^gemini-3(?:[.-]|$)/.test(normalized)) {
+    return { thinkingLevel: 'minimal' };
+  }
+
+  return null;
+}
+
 export function getChatLanguageInstruction(language) {
   const targetLanguage = language === 'da' ? 'Danish' : 'English';
   const correctionLabels = language === 'da'

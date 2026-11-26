@@ -14,6 +14,7 @@ import {
   MEMORY_TOOL_DECLARATIONS,
   buildPrimingAcknowledgement,
   buildSystemPrompt,
+  getFastThinkingConfig,
   getThinkingConfig,
   lockLatestUserMessage
 } from '../server/modelConfig.js';
@@ -858,46 +859,23 @@ function sseReply(
   });
 }
 
-async function translateWithMyMemory(
-  text: string,
-  sourceLang: string,
-  targetLang: string,
-  signal?: AbortSignal
-): Promise<string> {
-  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3_500);
-  const abort = () => controller.abort();
-  signal?.addEventListener('abort', abort, { once: true });
+const GOOGLE_TRANSLATE_TIMEOUT_MS = 1_500;
+const GOOGLE_TRANSLATE_COOLDOWN_MS = 120_000;
+let googleTranslateCooldownUntil = 0;
 
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-      },
-      signal: controller.signal
-    });
-    if (!response.ok) throw new HttpError(502, `MyMemory returned HTTP ${response.status}`);
-    const data = (await response.json()) as {
-      responseData?: { translatedText?: string };
-    };
-    const candidate = data.responseData?.translatedText;
-    if (!candidate || typeof candidate !== 'string') return '';
-    if (candidate.toUpperCase().includes('MYMEMORY WARNING')) return '';
-    return candidate.trim();
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener('abort', abort);
-  }
+function isSameNormalizedText(left: string, right: string): boolean {
+  return left.trim().toLocaleLowerCase() === right.trim().toLocaleLowerCase();
 }
 
 async function translateWithGoogle(
   text: string,
   sourceLang: string,
-  targetLang: string,
-  signal?: AbortSignal
-): Promise<string> {
+  targetLang: string
+): Promise<{ translation: string; failure?: string }> {
+  if (Date.now() < googleTranslateCooldownUntil) {
+    return { translation: '', failure: 'Google Translate in cooldown' };
+  }
+
   const url = new URL('https://translate.googleapis.com/translate_a/single');
   url.searchParams.set('client', 'gtx');
   url.searchParams.set('sl', sourceLang);
@@ -906,9 +884,7 @@ async function translateWithGoogle(
   url.searchParams.set('q', text);
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 4_000);
-  const abort = () => controller.abort();
-  signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => controller.abort(), GOOGLE_TRANSLATE_TIMEOUT_MS);
 
   try {
     const response = await fetch(url.toString(), {
@@ -918,17 +894,43 @@ async function translateWithGoogle(
       },
       signal: controller.signal
     });
-    if (!response.ok) throw new HttpError(502, `Google Translate returned HTTP ${response.status}`);
+
+    if (response.status === 429 || response.status === 403) {
+      googleTranslateCooldownUntil = Date.now() + GOOGLE_TRANSLATE_COOLDOWN_MS;
+      return { translation: '', failure: `Google Translate returned HTTP ${response.status}` };
+    }
+    if (!response.ok) {
+      return { translation: '', failure: `Google Translate returned HTTP ${response.status}` };
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('json') && !contentType.includes('javascript')) {
+      return { translation: '', failure: 'Google Translate returned a non-JSON payload' };
+    }
 
     const data = (await response.json()) as unknown;
-    if (!Array.isArray(data) || !Array.isArray(data[0])) return '';
-    return (data[0] as unknown[])
+    if (!Array.isArray(data) || !Array.isArray(data[0])) {
+      return { translation: '', failure: 'Google Translate returned an unexpected format' };
+    }
+
+    const translation = (data[0] as unknown[])
       .map((segment) => (Array.isArray(segment) && typeof segment[0] === 'string' ? segment[0] : ''))
       .join('')
       .trim();
+
+    if (!translation || isSameNormalizedText(translation, text)) {
+      return { translation: '', failure: 'Google Translate returned no translation' };
+    }
+    return { translation };
+  } catch (error) {
+    const reason = error instanceof Error && error.name === 'AbortError'
+      ? 'request timed out'
+      : error instanceof Error
+        ? error.message
+        : 'unknown error';
+    return { translation: '', failure: `Google Translate: ${reason}` };
   } finally {
     clearTimeout(timer);
-    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -953,9 +955,10 @@ async function translateWithGemini(
   const failures: string[] = [];
 
   for (const model of models) {
+    const thinkingConfig = getFastThinkingConfig(model);
     for (const key of keys) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5_000);
+      const timer = setTimeout(() => controller.abort(), 3_500);
       let response: Response;
       try {
         response = await fetch(
@@ -966,7 +969,11 @@ async function translateWithGemini(
             signal: controller.signal,
             body: JSON.stringify({
               contents: [{ role: 'user', parts: [{ text: prompt }] }],
-              generationConfig: { maxOutputTokens: 180, temperature: 0.1 }
+              generationConfig: {
+                maxOutputTokens: 120,
+                temperature: 0.1,
+                ...(thinkingConfig ? { thinkingConfig } : {})
+              }
             })
           }
         );
@@ -993,10 +1000,12 @@ async function translateWithGemini(
 
       try {
         const data = await response.json() as {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
         };
-        const translation = data.candidates?.[0]?.content?.parts
-          ?.map((part) => part.text ?? '')
+        const parts = data.candidates?.[0]?.content?.parts ?? [];
+        const translation = parts
+          .filter((part) => !part.thought && typeof part.text === 'string')
+          .map((part) => part.text ?? '')
           .join('')
           .trim();
         if (translation) return { translation, failures };
@@ -1010,55 +1019,69 @@ async function translateWithGemini(
   return { translation: '', failures };
 }
 
+function buildTranslationCacheRequest(sourceLang: string, targetLang: string, text: string): Request {
+  const normalized = text.trim().toLowerCase();
+  return new Request(
+    `https://fastlearn-cache.internal/translate?v=1&sl=${encodeURIComponent(sourceLang)}&tl=${encodeURIComponent(targetLang)}&q=${encodeURIComponent(normalized)}`,
+    { method: 'GET' }
+  );
+}
+
 async function translateText(
   text: string,
   sourceLang: string,
   targetLang: string,
   env: Env,
-  id: string
+  id: string,
+  ctx?: ExecutionContext
 ): Promise<string> {
-  const failures: string[] = [];
-  const providerControllers = [new AbortController(), new AbortController()];
-  const providers = [
-    {
-      name: 'MyMemory',
-      fetch: () => translateWithMyMemory(text, sourceLang, targetLang, providerControllers[0]?.signal)
-    },
-    {
-      name: 'Google Translate',
-      fetch: () => translateWithGoogle(text, sourceLang, targetLang, providerControllers[1]?.signal)
-    }
-  ];
-
+  let edgeCache: Cache | null = null;
+  const cacheKey = buildTranslationCacheRequest(sourceLang, targetLang, text);
   try {
-    const translation = await Promise.any(providers.map(async (provider) => {
-      try {
-        const result = await provider.fetch();
-        if (!result || result.toLowerCase() === text.toLowerCase()) {
-          throw new Error('returned no translation');
-        }
-        return result;
-      } catch (error) {
-        const reason = error instanceof Error && error.name === 'AbortError'
-          ? 'request timed out'
-          : error instanceof Error
-            ? error.message
-            : 'unknown error';
-        failures.push(`${provider.name}: ${reason}`);
-        logEvent('translation_provider_failed', { id, provider: provider.name, reason });
-        throw error;
-      }
-    }));
-    return translation;
+    edgeCache = (caches as unknown as { default?: Cache }).default ?? null;
   } catch {
-    // Both external translation providers failed; try the configured Gemini fallback.
-  } finally {
-    providerControllers.forEach((controller) => controller.abort());
+    edgeCache = null;
   }
 
-  const gemini = await translateWithGemini(text, sourceLang, targetLang, env);
-  if (gemini.translation) return gemini.translation;
-  failures.push(...gemini.failures);
+  if (edgeCache) {
+    try {
+      const hit = await edgeCache.match(cacheKey);
+      if (hit) {
+        const cached = (await hit.text()).trim();
+        if (cached) return cached;
+      }
+    } catch {
+      // Cache lookup failed; proceed to upstream providers.
+    }
+  }
+
+  const failures: string[] = [];
+  const google = await translateWithGoogle(text, sourceLang, targetLang);
+  let resolved = google.translation;
+
+  if (!resolved) {
+    if (google.failure) {
+      failures.push(google.failure);
+      logEvent('translation_provider_failed', { id, provider: 'Google Translate', reason: google.failure });
+    }
+    const gemini = await translateWithGemini(text, sourceLang, targetLang, env);
+    resolved = gemini.translation;
+    if (!resolved) failures.push(...gemini.failures);
+  }
+
+  if (resolved) {
+    if (edgeCache) {
+      const cachedResponse = new Response(resolved, {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'public, max-age=86400'
+        }
+      });
+      const putPromise = edgeCache.put(cacheKey, cachedResponse).catch(() => {});
+      if (ctx) ctx.waitUntil(putPromise);
+    }
+    return resolved;
+  }
 
   logEvent('translation_failed', { id, providers: failures });
   throw new HttpError(502, `Translation failed: ${failures.join('; ')}`);
@@ -1269,7 +1292,12 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
   );
 }
 
-async function handleTranslation(request: Request, env: Env, id: string): Promise<Response> {
+async function handleTranslation(
+  request: Request,
+  env: Env,
+  id: string,
+  ctx?: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'POST') throw new HttpError(405, 'Use POST for /api/translate');
   const body = await readJsonBody(request) as Record<string, unknown> | null;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -1282,7 +1310,7 @@ async function handleTranslation(request: Request, env: Env, id: string): Promis
   const userLang = typeof body.userLang === 'string' && /^[a-z]{2}$/.test(body.userLang)
     ? body.userLang
     : 'uk';
-  const translation = await translateText(text, body.lang, userLang, env, id);
+  const translation = await translateText(text, body.lang, userLang, env, id, ctx);
   return json({ original: text, translation, sourceLang: body.lang, userLang });
 }
 
@@ -1333,7 +1361,7 @@ async function handleTranscribe(
 
   const started = Date.now();
   const [translation, ipa] = await Promise.all([
-    translateText(text, language, userLang, env, id),
+    translateText(text, language, userLang, env, id, ctx),
     resolveIpa(text, language, env, request.url, ctx).catch((error: unknown) => {
       logEvent('ipa_lookup_failed', {
         id,
@@ -1988,7 +2016,7 @@ async function routeApi(
   const user = await requireAuthenticatedUser(request, env);
   if (url.pathname === '/api/chat') return handleChat(request, env, id, user);
   if (url.pathname === '/api/title') return handleTitle(request, env, id);
-  if (url.pathname === '/api/translate') return handleTranslation(request, env, id);
+  if (url.pathname === '/api/translate') return handleTranslation(request, env, id, ctx);
   if (url.pathname === '/api/ipa') return handlePronunciation(request, env, id, ctx);
   if (url.pathname === '/api/transcribe') return handleTranscribe(request, env, id, ctx);
   if (url.pathname === '/api/tts') return handleTts(url, id, ctx);

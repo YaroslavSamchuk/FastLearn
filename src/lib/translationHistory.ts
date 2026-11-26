@@ -230,6 +230,11 @@ function openDatabase(): Promise<IDBDatabase> {
   return pending;
 }
 
+export function warmTranslationHistory(): void {
+  if (typeof indexedDB === 'undefined') return;
+  void openDatabase().catch(() => {});
+}
+
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     let settled = false;
