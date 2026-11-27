@@ -664,6 +664,13 @@ async function fetchWithTimeout(
   }
 }
 
+interface AssistantStatusEvent {
+  phase: 'thinking' | 'searching' | 'analyzing' | 'memory';
+  tools?: string[];
+  sources?: string[];
+  count?: number;
+}
+
 async function generateReply(
   env: Env,
   messages: ClientMessage[],
@@ -673,7 +680,8 @@ async function generateReply(
   id: string,
   ownerId: string,
   onMemory: (event: MemoryToolEvent) => void,
-  onSearch: (event: { tools: string[] }) => void
+  onSearch: (event: { tools: string[] }) => void,
+  onStatus: (event: AssistantStatusEvent) => void
 ): Promise<{ text: string; model: string }> {
   const keys = rotate(getKeys(env));
   if (keys.length === 0) {
@@ -703,6 +711,7 @@ async function generateReply(
         let activeContents: unknown[] = [...contents];
 
         for (let round = 0; round < 5; round += 1) {
+          if (round === 0) onStatus({ phase: 'thinking' });
           const allowToolsThisRound = round < 4;
           const response = await fetchWithTimeout(
             url,
@@ -773,7 +782,20 @@ async function generateReply(
 
             if (searchEntries.length > 0) {
               const tools = searchEntries.map((entry) => entry.call.name);
+              const sources = Array.from(
+                new Set(
+                  searchEntries
+                    .filter((entry) => entry.call.name === 'media_search')
+                    .flatMap((entry) => {
+                      const rawArgs = entry.call.args as { sources?: unknown } | null;
+                      return String(rawArgs?.sources ?? '').split(',');
+                    })
+                    .map((s) => s.trim().toLowerCase())
+                    .filter((s) => s && s !== 'all')
+                )
+              );
               onSearch({ tools });
+              onStatus({ phase: 'searching', tools, sources, count: tools.length });
               const batchStarted = Date.now();
               const batchResults = await executeSearchBatch(
                 searchEntries.map((entry) => entry.call),
@@ -813,6 +835,16 @@ async function generateReply(
                 ms: Date.now() - started
               });
               resultsByIndex[entry.index] = operation.result;
+            }
+
+            if (searchEntries.length > 0) {
+              onStatus({
+                phase: 'analyzing',
+                tools: searchEntries.map((entry) => entry.call.name),
+                count: searchEntries.length
+              });
+            } else if (memoryEntries.length > 0) {
+              onStatus({ phase: 'memory' });
             }
 
             const responseParts = functionCallParts.flatMap((part, i) => {
@@ -887,6 +919,7 @@ function sseReply(
   generate: (callbacks: {
     onMemory: (event: MemoryToolEvent) => void;
     onSearch: (event: { tools: string[] }) => void;
+    onStatus: (event: AssistantStatusEvent) => void;
   }) => Promise<{ text: string; model: string }>,
   signal: AbortSignal
 ): Response {
@@ -916,7 +949,8 @@ function sseReply(
       try {
         const reply = await generate({
           onMemory: (event) => send({ memory: event }),
-          onSearch: (event) => send({ search: event })
+          onSearch: (event) => send({ search: event }),
+          onStatus: (status) => send({ status })
         });
         if (keepalive) {
           clearInterval(keepalive);
@@ -1390,7 +1424,7 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
   const memories = parseMemories(workspace.memories);
 
   return sseReply(
-    ({ onMemory, onSearch }) =>
+    ({ onMemory, onSearch, onStatus }) =>
       generateReply(
         env,
         messages,
@@ -1400,7 +1434,8 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
         id,
         workspace.ownerId,
         onMemory,
-        onSearch
+        onSearch,
+        onStatus
       ),
     request.signal
   );

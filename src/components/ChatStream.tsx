@@ -1,7 +1,7 @@
 // language: TypeScript (React), file: src/components/ChatStream.tsx, target: Web / Mobile Browser
 import React, { useEffect, useRef, useState } from 'react';
 import { Message, Language } from '../types.ts';
-import { AssistantPlaceholder, WaitingPhase } from './AssistantPlaceholder.tsx';
+import { AssistantPlaceholder, WaitingPhase, WaitingState } from './AssistantPlaceholder.tsx';
 import { BrandMark } from './BrandMark.tsx';
 import { ChatMessage } from './ChatMessage.tsx';
 import { ScrollToBottomButton } from './ScrollToBottomButton.tsx';
@@ -18,6 +18,7 @@ interface ChatStreamProps {
   streamingContent?: string;
   isWaiting?: boolean;
   waitingPhase?: WaitingPhase;
+  waitingStatus?: WaitingState;
   containerRef: React.RefObject<HTMLDivElement | null>;
   isPlaying?: boolean;
   playingText?: string;
@@ -36,6 +37,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   streamingContent,
   isWaiting = false,
   waitingPhase = 'thinking',
+  waitingStatus,
   containerRef,
   isPlaying = false,
   playingText,
@@ -118,7 +120,9 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 />
               ))}
 
-              {showWaitingPlaceholder && <AssistantPlaceholder phase={waitingPhase} />}
+              {showWaitingPlaceholder && (
+                <AssistantPlaceholder status={waitingStatus} phase={waitingPhase} />
+              )}
 
               {hasStreamingText && (
                 <ChatMessage

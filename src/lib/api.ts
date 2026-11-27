@@ -3,6 +3,7 @@
 import { ChatTurn, Language, MemoryToolEvent, UserMemories } from '../types.ts';
 import { normalizeAssistantText } from '../utils/textTokens.ts';
 import { log } from './logger';
+import type { AssistantStatusEvent, WaitingPhase } from './waitingStatus.ts';
 
 const API_SCOPE = 'api';
 
@@ -70,6 +71,7 @@ interface StreamChatOptions {
   onText: (text: string) => void;
   onMemory?: (event: MemoryToolEvent) => void;
   onSearch?: (tools: string[]) => void;
+  onStatus?: (status: AssistantStatusEvent) => void;
 }
 
 interface StreamChatResult {
@@ -118,9 +120,20 @@ async function readErrorMessage(response: Response): Promise<string> {
   }
 }
 
+function isWaitingPhase(value: unknown): value is WaitingPhase {
+  return value === 'thinking' || value === 'searching' || value === 'analyzing' || value === 'memory';
+}
+
 function parseSseEvent(
   raw: string
-): { token?: string; error?: string; memory?: MemoryToolEvent; search?: string[]; done?: boolean } | null {
+): {
+  token?: string;
+  error?: string;
+  memory?: MemoryToolEvent;
+  search?: string[];
+  status?: AssistantStatusEvent;
+  done?: boolean;
+} | null {
   const dataLines = raw
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data:'))
@@ -137,10 +150,25 @@ function parseSseEvent(
       error?: unknown;
       memory?: { action?: unknown; fact?: unknown; previousFact?: unknown; scope?: unknown };
       search?: { tools?: unknown };
+      status?: { phase?: unknown; tools?: unknown; sources?: unknown; count?: unknown };
       message?: unknown;
     };
     if (typeof parsed.error === 'string') return { error: parsed.error };
     if (typeof parsed.token === 'string') return { token: parsed.token };
+    if (parsed.status && isWaitingPhase(parsed.status.phase)) {
+      return {
+        status: {
+          phase: parsed.status.phase,
+          ...(Array.isArray(parsed.status.tools)
+            ? { tools: parsed.status.tools.filter((t): t is string => typeof t === 'string') }
+            : {}),
+          ...(Array.isArray(parsed.status.sources)
+            ? { sources: parsed.status.sources.filter((s): s is string => typeof s === 'string') }
+            : {}),
+          ...(typeof parsed.status.count === 'number' ? { count: parsed.status.count } : {})
+        }
+      };
+    }
     if (parsed.search && Array.isArray(parsed.search.tools)) {
       return {
         search: parsed.search.tools.filter((tool): tool is string => typeof tool === 'string')
@@ -179,7 +207,8 @@ export async function streamChat({
   signal,
   onText,
   onMemory,
-  onSearch
+  onSearch,
+  onStatus
 }: StreamChatOptions): Promise<StreamChatResult> {
   const id = requestId();
   const startedAt = performance.now();
@@ -234,6 +263,10 @@ export async function streamChat({
       }
       if (event.error) {
         streamError = event.error;
+        return;
+      }
+      if (event.status) {
+        onStatus?.(event.status);
         return;
       }
       if (event.memory) {

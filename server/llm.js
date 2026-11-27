@@ -109,7 +109,8 @@ export async function streamChatCompletion({
   onDone,
   onError,
   onToolCall,
-  onSearch
+  onSearch,
+  onStatus
 }) {
   const toolsEnabled = Boolean(enableTools && onToolCall);
   const systemPrompt = buildSystemPrompt(language, userMemories, toolsEnabled);
@@ -173,6 +174,9 @@ export async function streamChatCompletion({
         let finalCleanText = '';
 
         for (let round = 0; round < 5; round++) {
+          if (round === 0 && onStatus) {
+            onStatus({ phase: 'thinking' });
+          }
           const allowToolsThisRound = toolsEnabled && round < 4;
           const payload = {
             contents: activeContents,
@@ -220,7 +224,18 @@ export async function streamChatCompletion({
             }
 
             if (searchEntries.length > 0) {
-              if (onSearch) onSearch({ tools: searchEntries.map((entry) => entry.call.name) });
+              const tools = searchEntries.map((entry) => entry.call.name);
+              const sources = Array.from(
+                new Set(
+                  searchEntries
+                    .filter((entry) => entry.call.name === 'media_search')
+                    .flatMap((entry) => String(entry.call.args?.sources || '').split(','))
+                    .map((s) => s.trim().toLowerCase())
+                    .filter((s) => s && s !== 'all')
+                )
+              );
+              if (onSearch) onSearch({ tools });
+              if (onStatus) onStatus({ phase: 'searching', tools, sources, count: tools.length });
               const batchResults = await executeSearchBatch(
                 searchEntries.map((entry) => entry.call),
                 turnBudget,
@@ -243,6 +258,18 @@ export async function streamChatCompletion({
                 resultsByIndex[entry.index] = {
                   error: toolErr instanceof Error ? toolErr.message : String(toolErr)
                 };
+              }
+            }
+
+            if (onStatus) {
+              if (searchEntries.length > 0) {
+                onStatus({
+                  phase: 'analyzing',
+                  tools: searchEntries.map((entry) => entry.call.name),
+                  count: searchEntries.length
+                });
+              } else if (memoryEntries.length > 0) {
+                onStatus({ phase: 'memory' });
               }
             }
 

@@ -453,6 +453,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       enableTools: true,
       onToken: (token) => send({ token }),
       onSearch: (event) => send({ search: event }),
+      onStatus: (status) => send({ status }),
       onToolCall: async (name, args) => {
         const workspace = await ensureWorkspace(req.user.googleSub);
         const result = applyMemoryTool(parseMemories(workspace.memories), name, args);
