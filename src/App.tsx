@@ -11,6 +11,7 @@ import {
   UserMemories
 } from './types.ts';
 import { Header } from './components/Header.tsx';
+import { type WaitingPhase } from './components/AssistantPlaceholder.tsx';
 import { ChatStream } from './components/ChatStream.tsx';
 import { ChatInput } from './components/ChatInput.tsx';
 import { SelectionPopover } from './components/SelectionPopover.tsx';
@@ -149,7 +150,7 @@ const AppContent: React.FC = () => {
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingChatId, setStreamingChatId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
-  const [waitingMemoryUpdated, setWaitingMemoryUpdated] = useState(false);
+  const [waitingPhase, setWaitingPhase] = useState<WaitingPhase>('thinking');
   const [playingPhrase, setPlayingPhrase] = useState<string | undefined>();
   const [playingPhraseWithPauses, setPlayingPhraseWithPauses] = useState(false);
 
@@ -715,7 +716,7 @@ const AppContent: React.FC = () => {
     setPlayingPhrase(undefined);
     sendingRef.current = true;
     setIsSending(true);
-    setWaitingMemoryUpdated(false);
+    setWaitingPhase('thinking');
     setStreamingContent('');
     setStreamingChatId(chatId);
 
@@ -782,8 +783,12 @@ const AppContent: React.FC = () => {
         memories: data.memories,
         signal: controller.signal,
         onText: setStreamingContent,
+        onSearch: (tools) => {
+          setWaitingPhase('search');
+          log.info('search', 'AI invoked web/media search tools', { tools });
+        },
         onMemory: (event: MemoryToolEvent) => {
-          setWaitingMemoryUpdated(true);
+          setWaitingPhase('memory');
           setData((previous) => {
             const currentFacts = previous.memories[event.scope];
             let nextFacts: string[];
@@ -855,7 +860,7 @@ const AppContent: React.FC = () => {
       setStreamingContent('');
       setStreamingChatId(null);
       setIsSending(false);
-      setWaitingMemoryUpdated(false);
+      setWaitingPhase('thinking');
       sendingRef.current = false;
       abortRef.current = null;
     }
@@ -1035,7 +1040,7 @@ const AppContent: React.FC = () => {
         onStopAudio={handleStopAudio}
         streamingContent={activeChatId === streamingChatId ? streamingContent : ''}
         isWaiting={isSending && activeChatId === streamingChatId && !streamingContent.trim()}
-        waitingPhase={waitingMemoryUpdated ? 'memory' : 'thinking'}
+        waitingPhase={waitingPhase}
         isPlaying={isPlaying}
         playingText={playingPhrase}
         chatId={activeChatId ?? undefined}

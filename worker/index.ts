@@ -10,14 +10,26 @@ import {
   type MemoryToolEvent
 } from '../server/memory.js';
 import {
+  ALL_TOOL_DECLARATIONS,
   MAX_FACTS_PER_SCOPE,
-  MEMORY_TOOL_DECLARATIONS,
   buildPrimingAcknowledgement,
   buildSystemPrompt,
   getFastThinkingConfig,
   getThinkingConfig,
   lockLatestUserMessage
 } from '../server/modelConfig.js';
+import {
+  SEARCH_TOOL_NAMES,
+  SearchRouterState,
+  createTurnSearchBudget,
+  executeSearchBatch,
+  parseSearchServers,
+  prewarmSearchServers,
+  type SearchCoordinator,
+  type SearchJob,
+  type SearchRelease,
+  type SearchReservation
+} from '../server/searchRouter.js';
 import {
   DEFAULT_PLAYBACK_SPEEDS,
   DEFAULT_VOICES,
@@ -37,6 +49,8 @@ export interface Env {
   GOOGLE_CLIENT_SECRET: string;
   GEMINI_API_KEYS?: string;
   GEMINI_MODELS?: string;
+  SEARXNG_URLS?: string;
+  SEARXNG_API_KEY?: string;
 }
 
 type MongoCommand =
@@ -71,6 +85,7 @@ function mongoDocument(document: Record<string, unknown>): Document {
 
 export class MongoDatabase extends DurableObject<Env> {
   private clientPromise?: Promise<MongoClient>;
+  private searchState = new SearchRouterState();
 
   private async getDatabase() {
     if (!this.clientPromise) {
@@ -101,7 +116,28 @@ export class MongoDatabase extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    if (request.method !== 'POST' || new URL(request.url).pathname !== '/execute') {
+    const pathname = new URL(request.url).pathname;
+
+    if (request.method === 'POST' && pathname === '/router/reserve') {
+      const payload = await request.json() as {
+        servers: string[];
+        jobs: SearchJob[];
+        statsByUrl: Record<string, unknown>;
+      };
+      return Response.json(this.searchState.reserveBatch(payload));
+    }
+
+    if (request.method === 'POST' && pathname === '/router/release') {
+      const payload = await request.json() as { releases: SearchRelease[] };
+      this.searchState.releaseBatch(payload.releases || []);
+      return Response.json({ ok: true });
+    }
+
+    if (request.method === 'GET' && pathname === '/router/snapshot') {
+      return Response.json({ servers: this.searchState.snapshot() });
+    }
+
+    if (request.method !== 'POST' || pathname !== '/execute') {
       return Response.json({ error: 'Not found' }, { status: 404 });
     }
 
@@ -241,6 +277,28 @@ async function mongoCommand<T>(env: Env, command: MongoCommand): Promise<T> {
   if (!response.ok) throw new HttpError(503, 'MongoDB is unavailable');
   const payload = await response.json() as { result: T };
   return payload.result;
+}
+
+function createDurableSearchCoordinator(env: Env): SearchCoordinator {
+  const stub = env.MONGO.get(env.MONGO.idFromName('fastlearn-search-router'));
+  return {
+    async reserve(payload) {
+      const response = await stub.fetch('https://search-router.internal/router/reserve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new HttpError(503, 'Search router coordinator failed');
+      return response.json() as Promise<{ assignments: SearchReservation[] }>;
+    },
+    async release(payload) {
+      await stub.fetch('https://search-router.internal/router/release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).catch(() => {});
+    }
+  };
 }
 
 function getAllowedOrigin(request: Request): string {
@@ -614,7 +672,8 @@ async function generateReply(
   signal: AbortSignal,
   id: string,
   ownerId: string,
-  onMemory: (event: MemoryToolEvent) => void
+  onMemory: (event: MemoryToolEvent) => void,
+  onSearch: (event: { tools: string[] }) => void
 ): Promise<{ text: string; model: string }> {
   const keys = rotate(getKeys(env));
   if (keys.length === 0) {
@@ -623,7 +682,11 @@ async function generateReply(
 
   const models = getModels(env);
   const contents = buildContents(messages, language, memories);
-  const deadline = Date.now() + 45_000;
+  const searchServers = parseSearchServers(env.SEARXNG_URLS);
+  const searchApiKey = (env.SEARXNG_API_KEY ?? '').trim();
+  const searchCoordinator = createDurableSearchCoordinator(env);
+  const turnBudget = createTurnSearchBudget();
+  const deadline = Date.now() + 55_000;
   let lastError = 'No model responded';
 
   for (const model of models) {
@@ -639,8 +702,8 @@ async function generateReply(
       try {
         let activeContents: unknown[] = [...contents];
 
-        for (let round = 0; round < 3; round += 1) {
-          const allowToolsThisRound = round < 2;
+        for (let round = 0; round < 5; round += 1) {
+          const allowToolsThisRound = round < 4;
           const response = await fetchWithTimeout(
             url,
             {
@@ -648,20 +711,18 @@ async function generateReply(
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contents: activeContents,
-                ...(allowToolsThisRound
-                  ? {
-                      tools: [{ functionDeclarations: MEMORY_TOOL_DECLARATIONS }],
-                      toolConfig: { functionCallingConfig: { mode: 'AUTO' } }
-                    }
-                  : {}),
+                tools: [{ functionDeclarations: ALL_TOOL_DECLARATIONS }],
+                toolConfig: {
+                  functionCallingConfig: { mode: allowToolsThisRound ? 'AUTO' : 'NONE' }
+                },
                 generationConfig: {
                   temperature: 0.72,
-                  maxOutputTokens: 1024,
+                  maxOutputTokens: 1536,
                   ...(thinkingConfig ? { thinkingConfig } : {})
                 }
               })
             },
-            round === 0 ? 16_000 : 22_000,
+            round === 0 ? 18_000 : 22_000,
             signal
           );
 
@@ -692,32 +753,78 @@ async function generateReply(
             : [];
 
           if (allowToolsThisRound && functionCallParts.length > 0) {
-            const responseParts: unknown[] = [];
-            for (const part of functionCallParts) {
-              const call = part.functionCall;
+            const resultsByIndex: unknown[] = new Array(functionCallParts.length);
+            const searchEntries: Array<{ index: number; call: { name: string; args: unknown } }> = [];
+            const memoryEntries: Array<{ index: number; name: string; args: unknown }> = [];
+
+            for (let i = 0; i < functionCallParts.length; i += 1) {
+              const call = functionCallParts[i]?.functionCall;
               if (typeof call?.name !== 'string') {
-                lastError = 'The model returned an invalid memory action';
+                lastError = 'The model returned an invalid tool action';
+                resultsByIndex[i] = { error: 'Invalid tool call name' };
                 continue;
               }
+              if (SEARCH_TOOL_NAMES.has(call.name)) {
+                searchEntries.push({ index: i, call: { name: call.name, args: call.args } });
+              } else {
+                memoryEntries.push({ index: i, name: call.name, args: call.args });
+              }
+            }
 
-              const operation = await applyMemoryTool(env, ownerId, memories, call.name, call.args);
+            if (searchEntries.length > 0) {
+              const tools = searchEntries.map((entry) => entry.call.name);
+              onSearch({ tools });
+              const batchStarted = Date.now();
+              const batchResults = await executeSearchBatch(
+                searchEntries.map((entry) => entry.call),
+                turnBudget,
+                {
+                  servers: searchServers,
+                  apiKey: searchApiKey,
+                  coordinator: searchCoordinator,
+                  signal
+                }
+              );
+              for (let j = 0; j < searchEntries.length; j += 1) {
+                const targetIndex = searchEntries[j]?.index;
+                if (typeof targetIndex === 'number') {
+                  resultsByIndex[targetIndex] = batchResults[j];
+                }
+              }
+              logEvent('gemini_search_batch', {
+                id,
+                model,
+                tools,
+                webUsed: turnBudget.webUsed,
+                mediaUsed: turnBudget.mediaUsed,
+                ms: Date.now() - batchStarted
+              });
+            }
+
+            for (const entry of memoryEntries) {
+              const operation = await applyMemoryTool(env, ownerId, memories, entry.name, entry.args);
               memories = operation.memories;
               if (operation.event) onMemory(operation.event);
               logEvent('gemini_memory_tool', {
                 id,
                 model,
-                action: call.name,
+                action: entry.name,
                 scope: operation.event?.scope,
                 ms: Date.now() - started
               });
-
-              responseParts.push({
-                functionResponse: {
-                  name: call.name,
-                  response: { result: operation.result }
-                }
-              });
+              resultsByIndex[entry.index] = operation.result;
             }
+
+            const responseParts = functionCallParts.flatMap((part, i) => {
+              const name = part.functionCall?.name;
+              if (typeof name !== 'string') return [];
+              return [{
+                functionResponse: {
+                  name,
+                  response: { result: resultsByIndex[i] ?? { ok: true } }
+                }
+              }];
+            });
 
             if (responseParts.length === 0) break;
 
@@ -732,7 +839,7 @@ async function generateReply(
           const text = extractReplyText(payload);
           if (!text) {
             lastError = round > 0
-              ? 'The model returned no response after the memory action'
+              ? 'The model returned no response after tool execution'
               : 'The model returned an empty reply';
             logEvent('gemini_empty', { id, model, key: `#${index + 1}`, ms: Date.now() - started });
             break;
@@ -777,7 +884,10 @@ function tokenize(text: string): string[] {
 }
 
 function sseReply(
-  generate: (onMemory: (event: MemoryToolEvent) => void) => Promise<{ text: string; model: string }>,
+  generate: (callbacks: {
+    onMemory: (event: MemoryToolEvent) => void;
+    onSearch: (event: { tools: string[] }) => void;
+  }) => Promise<{ text: string; model: string }>,
   signal: AbortSignal
 ): Response {
   const encoder = new TextEncoder();
@@ -804,7 +914,10 @@ function sseReply(
       keepalive = setInterval(ping, 4_000);
 
       try {
-        const reply = await generate((event) => send({ memory: event }));
+        const reply = await generate({
+          onMemory: (event) => send({ memory: event }),
+          onSearch: (event) => send({ search: event })
+        });
         if (keepalive) {
           clearInterval(keepalive);
           keepalive = undefined;
@@ -1277,7 +1390,7 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
   const memories = parseMemories(workspace.memories);
 
   return sseReply(
-    (onMemory) =>
+    ({ onMemory, onSearch }) =>
       generateReply(
         env,
         messages,
@@ -1286,7 +1399,8 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
         request.signal,
         id,
         workspace.ownerId,
-        onMemory
+        onMemory,
+        onSearch
       ),
     request.signal
   );
@@ -1987,11 +2101,17 @@ async function routeApi(
 
   if (url.pathname === '/api/health') {
     const configured = getKeys(env).length > 0;
+    const searchServers = parseSearchServers(env.SEARXNG_URLS);
+    const warmPromise = prewarmSearchServers(searchServers, {
+      apiKey: (env.SEARXNG_API_KEY ?? '').trim()
+    });
+    if (ctx) ctx.waitUntil(warmPromise);
     return json({
       status: configured ? 'online' : 'degraded',
       edge: 'Cloudflare Worker',
       provider: 'Google Gemini',
       models: getModels(env),
+      searchServers,
       configured,
       time: new Date().toISOString()
     });

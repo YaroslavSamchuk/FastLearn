@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ALL_TOOL_DECLARATIONS,
   BASE_PROMPTS,
+  SEARCH_TOOL_DECLARATIONS,
   buildPrimingAcknowledgement,
   buildSystemPrompt,
   getChatLanguageInstruction,
@@ -56,7 +58,28 @@ test('builds adaptive coaching and memory protocol prompts without hardcoding co
   assert.match(daPrompt, /Працює інженером/);
   assert.match(daPrompt, /Рівень A2/);
   assert.match(daPrompt, /save_memory/);
+  assert.match(daPrompt, /web_search/);
+  assert.match(daPrompt, /media_search/);
   assert.match(daPrompt, /ADAPTIV UNDERVISNING/);
   assert.match(buildPrimingAcknowledgement('da'), /udelukkende på dansk/);
   assert.match(buildPrimingAcknowledgement('en'), /strictly in English/);
+});
+
+test('exposes valid Gemini functionDeclarations for all search and memory tools', () => {
+  const names = ALL_TOOL_DECLARATIONS.map((tool) => tool.name);
+  assert.equal(SEARCH_TOOL_DECLARATIONS.length, 7);
+  for (const expected of [
+    'save_memory',
+    'update_memory',
+    'forget_memory',
+    'web_search',
+    'media_search',
+    'wiki_search',
+    'wiki_page',
+    'news_search',
+    'fetch_url',
+    'research_topic'
+  ]) {
+    assert.equal(names.includes(expected), true);
+  }
 });

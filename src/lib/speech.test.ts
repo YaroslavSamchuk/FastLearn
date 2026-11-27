@@ -38,4 +38,8 @@ test('strips non-target and UI correction labels from English speech text', () =
     toSpeechText('Rettet: Jeg gik hjem.\n\nDet var **hyggeligt**!', 'da'),
     'Rettet: Jeg gik hjem. Det var hyggeligt!'
   );
+  assert.equal(
+    toSpeechText('Se her https://example.com/test mere.', 'da'),
+    'Se her mere.'
+  );
 });

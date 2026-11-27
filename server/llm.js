@@ -1,16 +1,29 @@
 import {
+  ALL_TOOL_DECLARATIONS,
   BASE_PROMPTS,
-  MEMORY_TOOL_DECLARATIONS,
   buildPrimingAcknowledgement,
   buildSystemPrompt,
   getThinkingConfig,
   lockLatestUserMessage
 } from './modelConfig.js';
+import {
+  SEARCH_TOOL_NAMES,
+  createTurnSearchBudget,
+  executeSearchBatch,
+  parseSearchServers
+} from './searchRouter.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
 export { BASE_PROMPTS, buildSystemPrompt };
-export const AI_TOOLS = MEMORY_TOOL_DECLARATIONS;
+export const AI_TOOLS = ALL_TOOL_DECLARATIONS;
+
+export function getSearchConfigFromEnv(env = process.env) {
+  return {
+    servers: parseSearchServers(env.SEARXNG_URLS),
+    apiKey: typeof env.SEARXNG_API_KEY === 'string' ? env.SEARXNG_API_KEY.trim() : ''
+  };
+}
 
 // ==========================================
 // 1. SMART KEY ROTATION (NEXT KEY PER REQUEST + COOLDOWN)
@@ -95,10 +108,13 @@ export async function streamChatCompletion({
   onToken,
   onDone,
   onError,
-  onToolCall
+  onToolCall,
+  onSearch
 }) {
   const toolsEnabled = Boolean(enableTools && onToolCall);
   const systemPrompt = buildSystemPrompt(language, userMemories, toolsEnabled);
+  const searchConfig = getSearchConfigFromEnv();
+  const turnBudget = createTurnSearchBudget();
 
   // Clamp history: last 12 messages for richer conversational continuity without token bloat
   const clampedHistory = messages.slice(-12);
@@ -149,23 +165,23 @@ export async function streamChatCompletion({
     for (let kIdx = 0; kIdx < requestKeys.length; kIdx++) {
       const key = requestKeys[kIdx];
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 24000);
+      const timeout = setTimeout(() => controller.abort(), 55000);
 
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
         let activeContents = [...contents];
         let finalCleanText = '';
 
-        for (let round = 0; round < 3; round++) {
-          const allowToolsThisRound = toolsEnabled && round < 2;
+        for (let round = 0; round < 5; round++) {
+          const allowToolsThisRound = toolsEnabled && round < 4;
           const payload = {
             contents: activeContents,
-            ...(allowToolsThisRound ? { tools: [{ functionDeclarations: AI_TOOLS }] } : {}),
-            ...(allowToolsThisRound
-              ? { toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }
+            ...(toolsEnabled ? { tools: [{ functionDeclarations: AI_TOOLS }] } : {}),
+            ...(toolsEnabled
+              ? { toolConfig: { functionCallingConfig: { mode: allowToolsThisRound ? 'AUTO' : 'NONE' } } }
               : {}),
             generationConfig: {
-              maxOutputTokens: 1024,
+              maxOutputTokens: 1536,
               temperature: 0.72,
               ...(thinkingConfig ? { thinkingConfig } : {})
             }
@@ -190,23 +206,52 @@ export async function streamChatCompletion({
           const functionCallParts = parts.filter((p) => p && typeof p === 'object' && p.functionCall);
 
           if (allowToolsThisRound && functionCallParts.length > 0) {
-            const responseParts = [];
-            for (const part of functionCallParts) {
-              const { name, args } = part.functionCall;
-              let toolResult;
+            const resultsByIndex = new Array(functionCallParts.length);
+            const searchEntries = [];
+            const memoryEntries = [];
+
+            for (let i = 0; i < functionCallParts.length; i += 1) {
+              const { name, args } = functionCallParts[i].functionCall;
+              if (SEARCH_TOOL_NAMES.has(name)) {
+                searchEntries.push({ index: i, call: { name, args } });
+              } else {
+                memoryEntries.push({ index: i, name, args });
+              }
+            }
+
+            if (searchEntries.length > 0) {
+              if (onSearch) onSearch({ tools: searchEntries.map((entry) => entry.call.name) });
+              const batchResults = await executeSearchBatch(
+                searchEntries.map((entry) => entry.call),
+                turnBudget,
+                {
+                  servers: searchConfig.servers,
+                  apiKey: searchConfig.apiKey,
+                  signal: controller.signal
+                }
+              );
+              for (let j = 0; j < searchEntries.length; j += 1) {
+                resultsByIndex[searchEntries[j].index] = batchResults[j];
+              }
+            }
+
+            for (const entry of memoryEntries) {
               try {
-                toolResult = await onToolCall(name, args);
+                resultsByIndex[entry.index] = await onToolCall(entry.name, entry.args);
               } catch (toolErr) {
                 console.warn('[Tool Execution Error]', toolErr.message);
-                toolResult = { error: toolErr instanceof Error ? toolErr.message : String(toolErr) };
+                resultsByIndex[entry.index] = {
+                  error: toolErr instanceof Error ? toolErr.message : String(toolErr)
+                };
               }
-              responseParts.push({
-                functionResponse: {
-                  name,
-                  response: { result: toolResult ?? { ok: true } }
-                }
-              });
             }
+
+            const responseParts = functionCallParts.map((part, i) => ({
+              functionResponse: {
+                name: part.functionCall.name,
+                response: { result: resultsByIndex[i] ?? { ok: true } }
+              }
+            }));
 
             activeContents = [
               ...activeContents,
@@ -252,11 +297,11 @@ export async function streamChatCompletion({
 
 // Micro-delay word streamer for natural chat feeling
 async function streamWords(text, onToken) {
-  const words = text.split(' ');
-  for (let i = 0; i < words.length; i++) {
-    const wordToken = (i === 0 ? '' : ' ') + words[i];
-    onToken(wordToken);
-    await new Promise(r => setTimeout(r, 14));
+  const words = text.match(/\S+\s*/g) ?? [text];
+  for (let i = 0; i < words.length; i += 2) {
+    const chunk = words.slice(i, i + 2).join('');
+    onToken(chunk);
+    await new Promise((r) => setTimeout(r, 6));
   }
 }
 

@@ -3,6 +3,7 @@ import { normalizeSpeedValue } from '../../server/ttsConfig.js';
 
 const CODE_FENCE = /```[\s\S]*?```/g;
 const MARKDOWN_LINK = /\[([^\]]+)\]\([^)]+\)/g;
+const BARE_URL = /https?:\/\/\S+/gi;
 const MARKUP = /[*_`#~]+/g;
 const PICTOGRAPHS = /[\p{Extended_Pictographic}\uFE0F\u200D]/gu;
 const ENGLISH_UI_LABELS = /(^|\n)\s*(?:Corrected|More natural|Виправлено|Розмовніше)\s*:\s*/giu;
@@ -12,7 +13,7 @@ export const PHRASE_PLAYBACK_SPEEDS = SPEECH_PLAYBACK_SPEEDS;
 
 /**
  * Strips formatting that would otherwise be read aloud as characters:
- * asterisks, backticks, code fences, emoji, and non-target correction labels.
+ * asterisks, backticks, code fences, emoji, raw URLs, and non-target correction labels.
  */
 export function toSpeechText(input: string, language?: 'da' | 'en'): string {
   const withoutUiLabels =
@@ -21,6 +22,7 @@ export function toSpeechText(input: string, language?: 'da' | 'en'): string {
   return withoutUiLabels
     .replace(CODE_FENCE, ' ')
     .replace(MARKDOWN_LINK, '$1')
+    .replace(BARE_URL, ' ')
     .replace(MARKUP, '')
     .replace(PICTOGRAPHS, '')
     .replace(/\s+/g, ' ')

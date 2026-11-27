@@ -69,6 +69,7 @@ interface StreamChatOptions {
   signal?: AbortSignal;
   onText: (text: string) => void;
   onMemory?: (event: MemoryToolEvent) => void;
+  onSearch?: (tools: string[]) => void;
 }
 
 interface StreamChatResult {
@@ -119,7 +120,7 @@ async function readErrorMessage(response: Response): Promise<string> {
 
 function parseSseEvent(
   raw: string
-): { token?: string; error?: string; memory?: MemoryToolEvent; done?: boolean } | null {
+): { token?: string; error?: string; memory?: MemoryToolEvent; search?: string[]; done?: boolean } | null {
   const dataLines = raw
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data:'))
@@ -135,10 +136,16 @@ function parseSseEvent(
       token?: unknown;
       error?: unknown;
       memory?: { action?: unknown; fact?: unknown; previousFact?: unknown; scope?: unknown };
+      search?: { tools?: unknown };
       message?: unknown;
     };
     if (typeof parsed.error === 'string') return { error: parsed.error };
     if (typeof parsed.token === 'string') return { token: parsed.token };
+    if (parsed.search && Array.isArray(parsed.search.tools)) {
+      return {
+        search: parsed.search.tools.filter((tool): tool is string => typeof tool === 'string')
+      };
+    }
     if (
       parsed.memory &&
       typeof parsed.memory.fact === 'string' &&
@@ -171,12 +178,13 @@ export async function streamChat({
   memories,
   signal,
   onText,
-  onMemory
+  onMemory,
+  onSearch
 }: StreamChatOptions): Promise<StreamChatResult> {
   const id = requestId();
   const startedAt = performance.now();
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), 50_000);
+  const timeout = window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), 75_000);
 
   const forwardAbort = () => controller.abort(new DOMException('Request cancelled', 'AbortError'));
   signal?.addEventListener('abort', forwardAbort, { once: true });
@@ -230,6 +238,10 @@ export async function streamChat({
       }
       if (event.memory) {
         onMemory?.(event.memory);
+        return;
+      }
+      if (event.search) {
+        onSearch?.(event.search);
         return;
       }
       if (event.token) {

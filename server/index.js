@@ -3,7 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
-import { generateChatTitle, keyRotator, streamChatCompletion } from './llm.js';
+import { generateChatTitle, getSearchConfigFromEnv, keyRotator, streamChatCompletion } from './llm.js';
+import { prewarmSearchServers } from './searchRouter.js';
 import { applyMemoryTool } from './memory.js';
 import { MAX_FACTS_PER_SCOPE } from './modelConfig.js';
 import {
@@ -394,6 +395,8 @@ app.put('/api/workspace', requireAuth, async (req, res, next) => {
 });
 
 app.get('/api/health', (_req, res) => {
+  const searchConfig = getSearchConfigFromEnv();
+  void prewarmSearchServers(searchConfig.servers, { apiKey: searchConfig.apiKey });
   res.json({
     status: keyRotator.totalKeys > 0 ? 'online' : 'degraded',
     server: 'Express',
@@ -403,6 +406,7 @@ app.get('/api/health', (_req, res) => {
       .map((model) => model.trim())
       .filter(Boolean),
     configured: keyRotator.totalKeys > 0,
+    searchServers: searchConfig.servers,
     voices: VOICES
   });
 });
@@ -448,6 +452,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
       userMemories: memories,
       enableTools: true,
       onToken: (token) => send({ token }),
+      onSearch: (event) => send({ search: event }),
       onToolCall: async (name, args) => {
         const workspace = await ensureWorkspace(req.user.googleSub);
         const result = applyMemoryTool(parseMemories(workspace.memories), name, args);

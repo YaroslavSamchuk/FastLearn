@@ -5,6 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 DB_NAME = "fastlearn"
+SEARXNG_URLS = "https://search-swzb.onrender.com,https://search-dhne.onrender.com"
 
 [[durable_objects.bindings]]
 name = "MONGO"

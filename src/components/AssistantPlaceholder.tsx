@@ -2,7 +2,7 @@
 import React from 'react';
 import { BrandMark } from './BrandMark.tsx';
 
-export type WaitingPhase = 'thinking' | 'memory';
+export type WaitingPhase = 'thinking' | 'memory' | 'search';
 
 interface AssistantPlaceholderProps {
   phase?: WaitingPhase;
@@ -21,7 +21,11 @@ export const AssistantPlaceholder: React.FC<AssistantPlaceholderProps> = ({
   phase = 'thinking'
 }) => {
   const statusText =
-    phase === 'memory' ? 'Пам’ять оновлено · готує відповідь…' : 'Готує відповідь…';
+    phase === 'search'
+      ? 'Шукає в мережі…'
+      : phase === 'memory'
+        ? 'Пам’ять оновлено · готує відповідь…'
+        : 'Готує відповідь…';
 
   return (
     <div

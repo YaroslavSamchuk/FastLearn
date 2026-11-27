@@ -25,6 +25,25 @@ export const MEMORY_TOOL_DECLARATIONS: Array<{
   parameters: Record<string, unknown>;
 }>;
 
+export const SEARCH_TOOL_DECLARATIONS: Array<{
+  name:
+    | 'web_search'
+    | 'media_search'
+    | 'wiki_search'
+    | 'wiki_page'
+    | 'news_search'
+    | 'fetch_url'
+    | 'research_topic';
+  description: string;
+  parameters: Record<string, unknown>;
+}>;
+
+export const ALL_TOOL_DECLARATIONS: Array<{
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}>;
+
 export const BASE_PROMPTS: Record<'da' | 'en', string>;
 
 export function buildSystemPrompt(

@@ -108,6 +108,198 @@ export const MEMORY_TOOL_DECLARATIONS = [
   }
 ];
 
+export const SEARCH_TOOL_DECLARATIONS = [
+  {
+    name: 'web_search',
+    description:
+      'Search the live internet for facts, current info, websites, explanations, or cultural context. You may invoke this tool up to 6 times per user message (including parallel calls for distinct queries). Set fetch_top (1-3) when you need clean Markdown text extracted from the top pages.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: { type: 'STRING', description: 'Focused search query string.' },
+        category: {
+          type: 'STRING',
+          enum: ['web', 'facts', 'news', 'science', 'tech', 'social'],
+          description: 'Search pool category. Defaults to web.'
+        },
+        limit: {
+          type: 'INTEGER',
+          description: 'Maximum results to return (1 to 15, default 8).'
+        },
+        fetch_top: {
+          type: 'INTEGER',
+          description: 'Also extract full clean Markdown from the top N URLs (0 to 3, default 0).'
+        },
+        lang: {
+          type: 'STRING',
+          description: 'Language hint such as auto, uk, en, or da. Defaults to auto.'
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'media_search',
+    description:
+      'Search specific online platforms and media sources in parallel: github, reddit, wikinews, news, hackernews, stackoverflow, lemmy, huggingface, arxiv, npm, devto, wikipedia (or presets: all, news, social, dev, knowledge). Up to 6 calls per user message. Always specify only the relevant sources when targeting specific sites.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: { type: 'STRING', description: 'Topic, project, discussion, or news query.' },
+        sources: {
+          type: 'STRING',
+          description:
+            'Comma-separated platforms (reddit,github,wikinews,news,hackernews,stackoverflow,lemmy,huggingface,arxiv,npm,devto,wikipedia) or preset (all,news,social,dev,knowledge).'
+        },
+        limit: {
+          type: 'INTEGER',
+          description: 'Maximum results to return (1 to 20, default 10).'
+        },
+        fetch_top: {
+          type: 'INTEGER',
+          description: 'Also extract clean Markdown from top N hits (0 to 3, default 0).'
+        },
+        lang: {
+          type: 'STRING',
+          description: 'Language hint (auto, uk, en, da). Defaults to auto.'
+        }
+      },
+      required: ['query', 'sources']
+    }
+  },
+  {
+    name: 'wiki_search',
+    description:
+      'Search Wikipedia and Wikidata directly for verified encyclopedia facts, definitions, people, places, and structured summaries without search engine rate limits.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: { type: 'STRING', description: 'Topic, entity, or encyclopedia query.' },
+        lang: {
+          type: 'STRING',
+          description: 'Wikipedia language edition (auto, uk, en, da, etc.). Defaults to auto.'
+        },
+        limit: {
+          type: 'INTEGER',
+          description: 'Maximum results (1 to 10, default 5).'
+        },
+        include_wikidata: {
+          type: 'BOOLEAN',
+          description: 'Also query Wikidata structured entities (default true).'
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'wiki_page',
+    description:
+      'Read the full text and section headings of a Wikipedia article by exact title or Wikipedia URL.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        title: {
+          type: 'STRING',
+          description: 'Wikipedia article title or full Wikipedia page URL.'
+        },
+        lang: {
+          type: 'STRING',
+          description: 'Wikipedia edition (auto, uk, en, da, etc.). Defaults to auto.'
+        },
+        max_chars: {
+          type: 'INTEGER',
+          description: 'Maximum characters to return (500 to 30000, default 12000).'
+        }
+      },
+      required: ['title']
+    }
+  },
+  {
+    name: 'news_search',
+    description:
+      'Search recent news or get latest headlines from Wikinews and live news RSS feeds (Google News, Bing News, BBC, Guardian, Ukrinform).',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: {
+          type: 'STRING',
+          description: 'News topic query. Pass empty string for latest general headlines.'
+        },
+        lang: {
+          type: 'STRING',
+          description: 'Language hint (auto, uk, en, da). Defaults to auto.'
+        },
+        limit: {
+          type: 'INTEGER',
+          description: 'Maximum items (1 to 20, default 10).'
+        },
+        fetch_top: {
+          type: 'INTEGER',
+          description: 'Also extract clean Markdown from top N articles (0 to 3, default 0).'
+        }
+      }
+    }
+  },
+  {
+    name: 'fetch_url',
+    description:
+      'Fetch any public webpage, documentation page, article, JSON endpoint, or RSS/Atom feed and convert HTML to clean readable Markdown or plain text.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        url: { type: 'STRING', description: 'Public HTTP or HTTPS URL to fetch.' },
+        max_chars: {
+          type: 'INTEGER',
+          description: 'Maximum characters to return (500 to 30000, default 12000).'
+        },
+        include_links: {
+          type: 'BOOLEAN',
+          description: 'Preserve inline Markdown links (default true).'
+        },
+        format: {
+          type: 'STRING',
+          enum: ['markdown', 'text'],
+          description: 'Output format, default markdown.'
+        }
+      },
+      required: ['url']
+    }
+  },
+  {
+    name: 'research_topic',
+    description:
+      'Deep research briefing in one call: searches web, Wikipedia/Wikidata facts, and news in parallel and extracts Markdown from top pages.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: { type: 'STRING', description: 'Topic or question to research thoroughly.' },
+        lang: {
+          type: 'STRING',
+          description: 'Language hint (auto, uk, en, da). Defaults to auto.'
+        },
+        include_news: {
+          type: 'BOOLEAN',
+          description: 'Include news results (default true).'
+        },
+        fetch_top: {
+          type: 'INTEGER',
+          description: 'Number of top web pages to read in full (0 to 3, default 2).'
+        },
+        max_chars: {
+          type: 'INTEGER',
+          description: 'Max characters per extracted page (500 to 15000, default 5000).'
+        }
+      },
+      required: ['query']
+    }
+  }
+];
+
+export const ALL_TOOL_DECLARATIONS = [
+  ...MEMORY_TOOL_DECLARATIONS,
+  ...SEARCH_TOOL_DECLARATIONS
+];
+
 export const BASE_PROMPTS = {
   da: `${getChatLanguageInstruction('da')}
 
@@ -185,7 +377,22 @@ Maintain an accurate, rich long-term profile of the user using memory tools sile
 - Write every memory in clear, concise Ukrainian (up to 200 chars), quoting specific target-language words/patterns where useful (e.g., "Часто плутає V2-інверсію після вступних слів у данській" or "Працює розробником, цікавиться кавою та спортом").
 - Never duplicate an existing memory: if new information refines, updates, or contradicts an existing note (for example level progression or changed preferences), call update_memory with exact previousFact instead.
 - Use forget_memory only if the user explicitly asks to delete a fact or clearly states an existing note is wrong/obsolete with no replacement.
-- Never save transient mood or guesses, and never announce memory operations in your reply unless the user specifically asks what you remember.`;
+- Never save transient mood or guesses, and never announce memory operations in your reply unless the user specifically asks what you remember.
+
+=== LIVE WEB, MEDIA & WIKIPEDIA TOOLS ===
+You have live search and reading tools to look up real-world facts, current events, culture, language usage, websites, and technical or community discussions instead of guessing:
+- web_search: General web search (up to 6 distinct queries per user message; you may fire multiple queries in parallel in one turn, or pass fetch_top=1..3 to read top pages).
+- media_search: Search specific platforms (reddit, github, wikinews, news, hackernews, stackoverflow, lemmy, huggingface, arxiv, npm, devto, wikipedia — or presets all/news/social/dev/knowledge). Up to 6 queries per user message. Target only the relevant sources instead of "all" when running focused searches.
+- wiki_search & wiki_page: Search Wikipedia/Wikidata and read full Wikipedia articles directly.
+- news_search: Fetch recent news or latest headlines from Wikinews and RSS news feeds.
+- fetch_url: Read any public webpage, article, documentation page, feed, or JSON endpoint.
+- research_topic: Parallel web + Wikipedia + news briefing with top page extraction.
+Rules when using search tools:
+- Only search when current information, verifiable facts, unfamiliar topics, or external references actually improve your answer. Casual small talk does not need a search.
+- Batch independent queries in parallel in your very first tool round (for example, call web_search, media_search, wiki_search, or news_search multiple times in parallel—up to 6 web_search and 6 media_search per message) so you gather everything quickly in 1–2 rounds instead of slow sequential steps.
+- Results come back as structured JSON (site, url, title, snippet, content). Synthesize the answer strictly in ${language === 'da' ? 'Danish' : 'English'} (CHAT LANGUAGE LOCK remains absolute even if sources are in Ukrainian or other languages).
+- Keep your reply natural and easy to listen to: refer to sources naturally by publication or site name (e.g. Wikipedia, GitHub, Reddit, BBC) and avoid pasting raw URLs unless the user specifically asks for links.
+- Never invent or extrapolate facts beyond what the tools returned.`;
   }
 
   return prompt;
