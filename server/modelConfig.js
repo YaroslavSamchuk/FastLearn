@@ -1,5 +1,11 @@
 export const MAX_FACT_CHARS = 200;
 export const MAX_FACTS_PER_SCOPE = 100;
+export const DEFAULT_GEMINI_MODEL_LIST = [
+  'gemma-4-31b-it',
+  'gemma-4-26b-a4b-it',
+  'gemini-flash-lite-latest'
+];
+export const DEFAULT_GEMINI_MODELS = DEFAULT_GEMINI_MODEL_LIST.join(',');
 
 export function getThinkingConfig(model) {
   const normalized = model.toLowerCase();
@@ -38,7 +44,7 @@ export function getFastThinkingConfig(model) {
     return { thinkingLevel: 'low' };
   }
 
-  if (/^gemini-3(?:[.-]|$)/.test(normalized)) {
+  if (/^gemini-3(?:[.-]|$)/.test(normalized) || /^gemma-4(?:[.-]|$)/.test(normalized)) {
     return { thinkingLevel: 'minimal' };
   }
 
@@ -124,7 +130,7 @@ export const SEARCH_TOOL_DECLARATIONS = [
         },
         limit: {
           type: 'INTEGER',
-          description: 'Maximum results to return (1 to 15, default 8).'
+          description: 'Number of results/sites to return (1 to 15, default 8).'
         },
         fetch_top: {
           type: 'INTEGER',
@@ -153,7 +159,7 @@ export const SEARCH_TOOL_DECLARATIONS = [
         },
         limit: {
           type: 'INTEGER',
-          description: 'Maximum results to return (1 to 20, default 10).'
+          description: 'Number of results/items to return (1 to 15, default 8).'
         },
         fetch_top: {
           type: 'INTEGER',
@@ -181,7 +187,7 @@ export const SEARCH_TOOL_DECLARATIONS = [
         },
         limit: {
           type: 'INTEGER',
-          description: 'Maximum results (1 to 10, default 5).'
+          description: 'Number of Wikipedia/Wikidata results to return (1 to 15, default 5).'
         },
         include_wikidata: {
           type: 'BOOLEAN',
@@ -231,7 +237,7 @@ export const SEARCH_TOOL_DECLARATIONS = [
         },
         limit: {
           type: 'INTEGER',
-          description: 'Maximum items (1 to 20, default 10).'
+          description: 'Number of news items to return (1 to 15, default 8).'
         },
         fetch_top: {
           type: 'INTEGER',
@@ -280,6 +286,10 @@ export const SEARCH_TOOL_DECLARATIONS = [
         include_news: {
           type: 'BOOLEAN',
           description: 'Include news results (default true).'
+        },
+        limit: {
+          type: 'INTEGER',
+          description: 'Max results per section (1 to 15, default 6).'
         },
         fetch_top: {
           type: 'INTEGER',
@@ -389,7 +399,7 @@ You have live search and reading tools to look up real-world facts, current even
 - research_topic: Parallel web + Wikipedia + news briefing with top page extraction.
 Rules when using search tools:
 - Only search when current information, verifiable facts, unfamiliar topics, or external references actually improve your answer. Casual small talk does not need a search.
-- Batch independent queries in parallel in your very first tool round (for example, call web_search, media_search, wiki_search, or news_search multiple times in parallel—up to 6 web_search and 6 media_search per message) so you gather everything quickly in 1–2 rounds instead of slow sequential steps.
+- Batch independent queries in parallel in your first tool round, and if initial results leave gaps after analyzing them, you may run follow-up search or fetch rounds (search -> analyze -> refine search -> analyze). Stay strictly within the cumulative per-message total of 6 web_search and 6 media_search calls across all rounds combined (check budget_remaining in tool responses).
 - Results come back as structured JSON (site, url, title, snippet, content). Synthesize the answer strictly in ${language === 'da' ? 'Danish' : 'English'} (CHAT LANGUAGE LOCK remains absolute even if sources are in Ukrainian or other languages).
 - Keep your reply natural and easy to listen to: refer to sources naturally by publication or site name (e.g. Wikipedia, GitHub, Reddit, BBC) and avoid pasting raw URLs unless the user specifically asks for links.
 - Never invent or extrapolate facts beyond what the tools returned.`;

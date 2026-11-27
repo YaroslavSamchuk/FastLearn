@@ -33,6 +33,13 @@ export interface Chat {
   updatedAt: string;
 }
 
+export interface CompactSource {
+  site: string;
+  title: string;
+  url?: string;
+  note?: string;
+}
+
 export interface Message {
   _id?: string;
   chatId: string;
@@ -40,6 +47,7 @@ export interface Message {
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+  sources?: CompactSource[];
 }
 
 export interface WordVaultItem {
@@ -82,6 +90,8 @@ export interface SelectionData {
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
+  createdAt?: string;
+  sources?: CompactSource[];
 }
 
 declare global {

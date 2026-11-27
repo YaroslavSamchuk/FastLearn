@@ -11,6 +11,7 @@ import {
 } from '../server/memory.js';
 import {
   ALL_TOOL_DECLARATIONS,
+  DEFAULT_GEMINI_MODEL_LIST,
   MAX_FACTS_PER_SCOPE,
   buildPrimingAcknowledgement,
   buildSystemPrompt,
@@ -18,6 +19,17 @@ import {
   getThinkingConfig,
   lockLatestUserMessage
 } from '../server/modelConfig.js';
+import {
+  MAX_CHAT_HISTORY_MESSAGES,
+  buildChatContextTurns,
+  compactActiveContentsToolHistory,
+  compactMessagesSources,
+  extractSearchDigest,
+  sanitizeCreatedAt,
+  sanitizeMessageSources,
+  sanitizeTimeZone,
+  type CompactSource
+} from '../server/historyCompactor.js';
 import {
   SEARCH_TOOL_NAMES,
   SearchRouterState,
@@ -184,15 +196,11 @@ export class MongoDatabase extends DurableObject<Env> {
   }
 }
 
-const DEFAULT_MODELS = [
-  'gemini-flash-lite-latest',
-  'gemini-3-flash-preview',
-  'gemma-4-26b-a4b-it'
-];
+const DEFAULT_MODELS = [...DEFAULT_GEMINI_MODEL_LIST];
 
-const MAX_MESSAGES = 20;
+const MAX_MESSAGES = MAX_CHAT_HISTORY_MESSAGES;
 const MAX_MESSAGE_CHARS = 4_000;
-const MAX_TOTAL_CHARS = 14_000;
+const MAX_TOTAL_CHARS = 18_000;
 const MAX_BODY_CHARS = 64_000;
 const MAX_MEMORY_ITEMS = MAX_FACTS_PER_SCOPE;
 const MAX_MEMORY_CHARS = 220;
@@ -209,6 +217,8 @@ const CORS_HEADERS: Record<string, string> = {
 interface ClientMessage {
   role: 'user' | 'assistant';
   content: string;
+  createdAt?: string;
+  sources?: CompactSource[];
 }
 
 interface UserMemories {
@@ -554,7 +564,14 @@ function parseMessages(value: unknown): ClientMessage[] {
     const role = record.role === 'assistant' ? 'assistant' : record.role === 'user' ? 'user' : null;
     const content = cleanString(record.content, MAX_MESSAGE_CHARS);
     if (!role || !content) continue;
-    cleaned.push({ role, content });
+    const createdAt = sanitizeCreatedAt(record.createdAt);
+    const sources = role === 'assistant' ? sanitizeMessageSources(record.sources) : [];
+    cleaned.push({
+      role,
+      content,
+      ...(createdAt ? { createdAt } : {}),
+      ...(sources.length > 0 ? { sources } : {})
+    });
   }
 
   if (cleaned.length === 0) throw new HttpError(400, 'At least one message is required');
@@ -562,17 +579,22 @@ function parseMessages(value: unknown): ClientMessage[] {
     throw new HttpError(400, 'The last message must be from the user');
   }
 
-  const recent = cleaned.slice(-MAX_MESSAGES);
+  const recent = compactMessagesSources(cleaned.slice(-MAX_MESSAGES));
   let total = recent.reduce((sum, message) => sum + message.content.length, 0);
   while (total > MAX_TOTAL_CHARS && recent.length > 1) {
     const removed = recent.shift();
     total -= removed?.content.length ?? 0;
   }
 
-  return recent;
+  return compactMessagesSources(recent);
 }
 
-function buildContents(messages: ClientMessage[], language: 'da' | 'en', memories: UserMemories) {
+function buildContents(
+  messages: ClientMessage[],
+  language: 'da' | 'en',
+  memories: UserMemories,
+  timeZone: string
+) {
   const systemPrompt = buildSystemPrompt(language, memories, true);
 
   return [
@@ -581,14 +603,12 @@ function buildContents(messages: ClientMessage[], language: 'da' | 'en', memorie
       role: 'model',
       parts: [{ text: buildPrimingAcknowledgement(language) }]
     },
-    ...messages.map((message, index) => ({
-      role: message.role === 'assistant' ? 'model' : 'user',
-      parts: [{
-        text: message.role === 'user' && index === messages.length - 1
-          ? lockLatestUserMessage(message.content, language)
-          : message.content
-      }]
-    }))
+    ...buildChatContextTurns(messages, {
+      language,
+      timeZone,
+      lockLatestMessage: lockLatestUserMessage,
+      maxMessages: MAX_CHAT_HISTORY_MESSAGES
+    })
   ];
 }
 
@@ -675,12 +695,14 @@ async function generateReply(
   env: Env,
   messages: ClientMessage[],
   language: 'da' | 'en',
+  timeZone: string,
   memories: UserMemories,
   signal: AbortSignal,
   id: string,
   ownerId: string,
   onMemory: (event: MemoryToolEvent) => void,
   onSearch: (event: { tools: string[] }) => void,
+  onSources: (sources: CompactSource[]) => void,
   onStatus: (event: AssistantStatusEvent) => void
 ): Promise<{ text: string; model: string }> {
   const keys = rotate(getKeys(env));
@@ -689,7 +711,7 @@ async function generateReply(
   }
 
   const models = getModels(env);
-  const contents = buildContents(messages, language, memories);
+  const contents = buildContents(messages, language, memories, timeZone);
   const searchServers = parseSearchServers(env.SEARXNG_URLS);
   const searchApiKey = (env.SEARXNG_API_KEY ?? '').trim();
   const searchCoordinator = createDurableSearchCoordinator(env);
@@ -709,6 +731,8 @@ async function generateReply(
 
       try {
         let activeContents: unknown[] = [...contents];
+        const allSearchResults: unknown[] = [];
+        let modelUnavailable = false;
 
         for (let round = 0; round < 5; round += 1) {
           if (round === 0) onStatus({ phase: 'thinking' });
@@ -726,7 +750,7 @@ async function generateReply(
                 },
                 generationConfig: {
                   temperature: 0.72,
-                  maxOutputTokens: 1536,
+                  maxOutputTokens: 2048,
                   ...(thinkingConfig ? { thinkingConfig } : {})
                 }
               })
@@ -737,6 +761,7 @@ async function generateReply(
 
           if (!response.ok) {
             lastError = await readUpstreamError(response);
+            modelUnavailable = response.status === 503 || response.status === 404;
             logEvent('gemini_error', {
               id,
               model,
@@ -803,6 +828,7 @@ async function generateReply(
                 {
                   servers: searchServers,
                   apiKey: searchApiKey,
+                  decisionApiKey: keys[index] || keys[0] || '',
                   coordinator: searchCoordinator,
                   signal
                 }
@@ -813,6 +839,7 @@ async function generateReply(
                   resultsByIndex[targetIndex] = batchResults[j];
                 }
               }
+              allSearchResults.push(...batchResults);
               logEvent('gemini_search_batch', {
                 id,
                 model,
@@ -860,11 +887,11 @@ async function generateReply(
 
             if (responseParts.length === 0) break;
 
-            activeContents = [
+            activeContents = compactActiveContentsToolHistory([
               ...activeContents,
               { role: 'model', parts },
               { role: 'user', parts: responseParts }
-            ];
+            ]);
             continue;
           }
 
@@ -877,6 +904,8 @@ async function generateReply(
             break;
           }
 
+          const digest = extractSearchDigest(allSearchResults);
+          if (digest.length > 0) onSources(digest);
           logEvent('gemini_ok', {
             id,
             model,
@@ -886,10 +915,12 @@ async function generateReply(
           });
           return { text, model };
         }
+        if (modelUnavailable) break;
         continue;
       } catch (error) {
         if (signal.aborted) throw error;
         lastError = error instanceof Error ? error.message : String(error);
+        const isTimeout = error instanceof Error && (error.name === 'AbortError' || /timeout/i.test(error.message));
         logEvent('gemini_exception', {
           id,
           model,
@@ -897,6 +928,7 @@ async function generateReply(
           ms: Date.now() - started,
           error: lastError
         });
+        if (isTimeout) break;
       }
     }
 
@@ -919,6 +951,7 @@ function sseReply(
   generate: (callbacks: {
     onMemory: (event: MemoryToolEvent) => void;
     onSearch: (event: { tools: string[] }) => void;
+    onSources: (sources: CompactSource[]) => void;
     onStatus: (event: AssistantStatusEvent) => void;
   }) => Promise<{ text: string; model: string }>,
   signal: AbortSignal
@@ -950,6 +983,9 @@ function sseReply(
         const reply = await generate({
           onMemory: (event) => send({ memory: event }),
           onSearch: (event) => send({ search: event }),
+          onSources: (sources) => {
+            if (sources.length > 0) send({ sources });
+          },
           onStatus: (status) => send({ status })
         });
         if (keepalive) {
@@ -1419,22 +1455,25 @@ async function handleChat(request: Request, env: Env, id: string, user: StoredUs
   if (!body || typeof body !== 'object') throw new HttpError(400, 'Request body must be an object');
 
   const language = body.language === 'en' ? 'en' : 'da';
+  const timeZone = sanitizeTimeZone(body.timeZone);
   const messages = parseMessages(body.messages);
   const workspace = await getWorkspace(env, user.googleSub);
   const memories = parseMemories(workspace.memories);
 
   return sseReply(
-    ({ onMemory, onSearch, onStatus }) =>
+    ({ onMemory, onSearch, onSources, onStatus }) =>
       generateReply(
         env,
         messages,
         language,
+        timeZone,
         memories,
         request.signal,
         id,
         workspace.ownerId,
         onMemory,
         onSearch,
+        onSources,
         onStatus
       ),
     request.signal
@@ -1812,6 +1851,7 @@ async function handleTitle(request: Request, env: Env, id: string): Promise<Resp
     : `Generate a very short, concise title (2-5 words, max 35 characters) for a conversation that starts with: "${message.slice(0, 300)}". Respond ONLY with the title itself, without quotes, periods, or explanations.`;
 
   for (const model of models) {
+    const thinkingConfig = getFastThinkingConfig(model);
     for (const key of keys) {
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
@@ -1820,13 +1860,20 @@ async function handleTitle(request: Request, env: Env, id: string): Promise<Resp
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 30, temperature: 0.3 }
+            generationConfig: {
+              maxOutputTokens: 120,
+              temperature: 0.3,
+              ...(thinkingConfig ? { thinkingConfig } : {})
+            }
           })
         });
-        if (!upstream.ok) continue;
-        const data = (await upstream.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawText && typeof rawText === 'string') {
+        if (!upstream.ok) {
+          if (upstream.status === 503 || upstream.status === 404) break;
+          continue;
+        }
+        const data = await upstream.json();
+        const rawText = extractReplyText(data);
+        if (rawText) {
           const title = rawText.replace(/["'\n\r#*_]/g, '').trim().slice(0, 45);
           if (title) {
             logEvent('title_ok', { id, model, title });
@@ -2073,21 +2120,25 @@ async function handleWorkspace(request: Request, env: Env, user: StoredUser): Pr
     const cleaned: Record<string, unknown[]> = {};
     for (const [chatId, list] of Object.entries(messages)) {
       if (!chatIds.has(chatId) || !Array.isArray(list)) continue;
-      cleaned[chatId] = list.slice(-300).flatMap((message) => {
-        if (!message || typeof message !== 'object') return [];
-        const item = message as Record<string, unknown>;
-        if (item.role !== 'assistant' && item.role !== 'user') return [];
-        const content = cleanString(item.content, MAX_MESSAGE_CHARS);
-        if (!content) return [];
-        return [{
-          _id: cleanString(item._id, 160),
-          chatId,
-          userId: item.role === 'user' ? `google_${user.googleSub}` : 'ai',
-          role: item.role,
-          content,
-          createdAt: cleanString(item.createdAt, 40) || new Date().toISOString()
-        }];
-      });
+      cleaned[chatId] = compactMessagesSources(
+        list.slice(-300).flatMap((message) => {
+          if (!message || typeof message !== 'object') return [];
+          const item = message as Record<string, unknown>;
+          if (item.role !== 'assistant' && item.role !== 'user') return [];
+          const content = cleanString(item.content, MAX_MESSAGE_CHARS);
+          if (!content) return [];
+          const sources = item.role === 'assistant' ? sanitizeMessageSources(item.sources) : [];
+          return [{
+            _id: cleanString(item._id, 160),
+            chatId,
+            userId: item.role === 'user' ? `google_${user.googleSub}` : 'ai',
+            role: item.role,
+            content,
+            createdAt: cleanString(item.createdAt, 40) || new Date().toISOString(),
+            ...(sources.length > 0 ? { sources } : {})
+          }];
+        })
+      );
     }
     update.messages = cleaned;
   }

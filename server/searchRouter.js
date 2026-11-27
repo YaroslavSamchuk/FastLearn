@@ -1,5 +1,12 @@
 // language: JavaScript, file: server/searchRouter.js, target: Node.js & Cloudflare Workers
 
+import {
+  MAX_FETCH_TOP_CONTENT_CHARS,
+  distillToolPayloadContent,
+  extractMainContentExcerpt,
+  rankSearchCandidatesWithDecision1
+} from './decisionRouter.js';
+
 export const DEFAULT_SEARCH_SERVERS = [
   'https://search-swzb.onrender.com',
   'https://search-dhne.onrender.com'
@@ -8,6 +15,7 @@ export const DEFAULT_SEARCH_SERVERS = [
 export const MAX_WEB_SEARCHES_PER_MESSAGE = 6;
 export const MAX_MEDIA_SEARCHES_PER_MESSAGE = 6;
 export const MAX_AUX_SEARCHES_PER_MESSAGE = 8;
+export const MAX_RESULTS_PER_QUERY = 15;
 
 export const DEFAULT_COOLDOWN_MIN_MS = 20_000;
 export const DEFAULT_COOLDOWN_MAX_MS = 30_000;
@@ -847,23 +855,35 @@ function balanceMediaResults(rawResults, requestedSources, limit) {
   return picked;
 }
 
-function buildToolEndpointSpec(call, activeMediaSources) {
+function buildToolEndpointSpec(call, activeMediaSources, smartFetchSelection = false) {
   const name = call.name;
   const args = call.args && typeof call.args === 'object' ? call.args : {};
 
   if (name === 'web_search') {
     const query = cleanString(args.query, 400);
+    const limit = clampInt(args.limit, 8, 1, MAX_RESULTS_PER_QUERY);
+    const requestedFetchTop = clampInt(args.fetch_top, 0, 0, 3);
+    const useSmartFetch = Boolean(smartFetchSelection && requestedFetchTop > 0);
+    const searchLimit = useSmartFetch
+      ? Math.min(MAX_RESULTS_PER_QUERY, Math.max(limit, requestedFetchTop * 4))
+      : limit;
     const params = new URLSearchParams({
       q: query,
       category: cleanString(args.category, 32) || 'web',
-      limit: String(clampInt(args.limit, 8, 1, 15)),
+      limit: String(searchLimit),
       multi: '1',
-      fetch_top: String(clampInt(args.fetch_top, 0, 0, 3)),
+      fetch_top: String(useSmartFetch ? 0 : requestedFetchTop),
       lang: cleanString(args.lang, 16) || 'auto'
     });
     return {
       path: `/api/search?${params.toString()}`,
       headers: { 'X-Router-Peer-Hop': '1' },
+      smartMeta: {
+        kind: 'results',
+        query,
+        requestedLimit: limit,
+        fetchTop: useSmartFetch ? requestedFetchTop : 0
+      },
       transform: (data, serverUrl) => ({
         ok: true,
         query: data?.query || query,
@@ -872,26 +892,37 @@ function buildToolEndpointSpec(call, activeMediaSources) {
         engines_used: data?.engines_used || [],
         answers: data?.answers || [],
         infoboxes: (data?.infoboxes || []).slice(0, 2),
-        results: (data?.results || []).map((item) => normalizeResultItem(item))
+        results: (data?.results || []).slice(0, searchLimit).map((item) => normalizeResultItem(item))
       })
     };
   }
 
   if (name === 'media_search') {
     const query = cleanString(args.query, 400);
-    const limit = clampInt(args.limit, 10, 1, 20);
+    const limit = clampInt(args.limit, 8, 1, MAX_RESULTS_PER_QUERY);
+    const requestedFetchTop = clampInt(args.fetch_top, 0, 0, 3);
+    const useSmartFetch = Boolean(smartFetchSelection && requestedFetchTop > 0);
+    const searchLimit = useSmartFetch
+      ? Math.min(MAX_RESULTS_PER_QUERY, Math.max(limit, requestedFetchTop * 4))
+      : limit;
     const sources = activeMediaSources.length > 0 ? activeMediaSources : resolveMediaSources(args.sources);
-    const upstreamLimit = Math.min(30, Math.max(limit * 2, sources.length * 3));
+    const upstreamLimit = Math.min(30, Math.max(searchLimit * 2, sources.length * 3));
     const params = new URLSearchParams({
       q: query,
       sources: sources.join(','),
       limit: String(upstreamLimit),
-      fetch_top: String(clampInt(args.fetch_top, 0, 0, 3)),
+      fetch_top: String(useSmartFetch ? 0 : requestedFetchTop),
       lang: cleanString(args.lang, 16) || 'auto'
     });
     return {
       path: `/api/media?${params.toString()}`,
       headers: { 'X-Router-Peer-Hop': '1' },
+      smartMeta: {
+        kind: 'results',
+        query,
+        requestedLimit: limit,
+        fetchTop: useSmartFetch ? requestedFetchTop : 0
+      },
       transform: (data, serverUrl) => ({
         ok: true,
         query: data?.query || query,
@@ -899,17 +930,18 @@ function buildToolEndpointSpec(call, activeMediaSources) {
         sources_requested: sources,
         sources_used: data?.sources_used || [],
         source_counts: data?.source_counts || {},
-        results: balanceMediaResults(data?.results || [], sources, limit)
+        results: balanceMediaResults(data?.results || [], sources, searchLimit)
       })
     };
   }
 
   if (name === 'wiki_search') {
     const query = cleanString(args.query, 400);
+    const limit = clampInt(args.limit, 5, 1, MAX_RESULTS_PER_QUERY);
     const params = new URLSearchParams({
       q: query,
       lang: cleanString(args.lang, 16) || 'auto',
-      limit: String(clampInt(args.limit, 5, 1, 10)),
+      limit: String(limit),
       include_wikidata: args.include_wikidata === false ? 'false' : 'true',
       include_web: 'false'
     });
@@ -921,9 +953,9 @@ function buildToolEndpointSpec(call, activeMediaSources) {
         query: data?.query || query,
         lang: data?.lang || 'auto',
         server_used: serverUrl,
-        wikipedia: (data?.wikipedia || []).map((item) => normalizeResultItem(item, 'wikipedia')),
-        wikidata: (data?.wikidata || []).map((item) => normalizeResultItem(item, 'wikidata')),
-        results: (data?.results || []).map((item) => normalizeResultItem(item, 'wikipedia'))
+        wikipedia: (data?.wikipedia || []).slice(0, limit).map((item) => normalizeResultItem(item, 'wikipedia')),
+        wikidata: (data?.wikidata || []).slice(0, limit).map((item) => normalizeResultItem(item, 'wikidata')),
+        results: (data?.results || []).slice(0, limit).map((item) => normalizeResultItem(item, 'wikipedia'))
       })
     };
   }
@@ -955,23 +987,35 @@ function buildToolEndpointSpec(call, activeMediaSources) {
 
   if (name === 'news_search') {
     const query = cleanString(args.query, 400);
+    const limit = clampInt(args.limit, 8, 1, MAX_RESULTS_PER_QUERY);
+    const requestedFetchTop = clampInt(args.fetch_top, 0, 0, 3);
+    const useSmartFetch = Boolean(smartFetchSelection && requestedFetchTop > 0);
+    const searchLimit = useSmartFetch
+      ? Math.min(MAX_RESULTS_PER_QUERY, Math.max(limit, requestedFetchTop * 4))
+      : limit;
     const params = new URLSearchParams({
       q: query,
       lang: cleanString(args.lang, 16) || 'auto',
-      limit: String(clampInt(args.limit, 10, 1, 20)),
+      limit: String(searchLimit),
       sources: 'all',
-      fetch_top: String(clampInt(args.fetch_top, 0, 0, 3))
+      fetch_top: String(useSmartFetch ? 0 : requestedFetchTop)
     });
     return {
       path: `/api/news?${params.toString()}`,
       headers: { 'X-Router-Peer-Hop': '1' },
+      smartMeta: {
+        kind: 'results',
+        query,
+        requestedLimit: limit,
+        fetchTop: useSmartFetch ? requestedFetchTop : 0
+      },
       transform: (data, serverUrl) => ({
         ok: true,
         query: data?.query ?? query,
         mode: data?.mode || (query ? 'search' : 'latest'),
         server_used: serverUrl,
         sources_used: data?.sources_used || [],
-        results: (data?.results || []).map((item) => normalizeResultItem(item))
+        results: (data?.results || []).slice(0, searchLimit).map((item) => normalizeResultItem(item))
       })
     };
   }
@@ -996,7 +1040,7 @@ function buildToolEndpointSpec(call, activeMediaSources) {
         title: data?.title || '',
         description: data?.description || '',
         content: data?.content || '',
-        items: Array.isArray(data?.items) ? data.items.slice(0, 10) : undefined,
+        items: Array.isArray(data?.items) ? data.items.slice(0, MAX_RESULTS_PER_QUERY) : undefined,
         truncated: Boolean(data?.truncated)
       })
     };
@@ -1004,16 +1048,24 @@ function buildToolEndpointSpec(call, activeMediaSources) {
 
   // research_topic
   const query = cleanString(args.query, 400);
+  const limit = clampInt(args.limit, 6, 1, MAX_RESULTS_PER_QUERY);
   const params = new URLSearchParams({
     q: query,
     lang: cleanString(args.lang, 16) || 'auto',
     include_news: args.include_news === false ? 'false' : 'true',
+    limit: String(limit),
     fetch_top: String(clampInt(args.fetch_top, 2, 0, 3)),
     max_chars: String(clampInt(args.max_chars, 5000, 500, 15000))
   });
   return {
     path: `/api/research?${params.toString()}`,
     headers: { 'X-Router-Peer-Hop': '1' },
+    smartMeta: {
+      kind: 'research',
+      query,
+      requestedLimit: limit,
+      fetchTop: 0
+    },
     transform: (data, serverUrl) => ({
       ok: true,
       query: data?.query || query,
@@ -1021,16 +1073,16 @@ function buildToolEndpointSpec(call, activeMediaSources) {
       web: {
         engines_used: data?.web?.engines_used || [],
         answers: data?.web?.answers || [],
-        results: (data?.web?.results || []).map((item) => normalizeResultItem(item))
+        results: (data?.web?.results || []).slice(0, limit).map((item) => normalizeResultItem(item))
       },
       facts: {
         lang: data?.facts?.lang || 'auto',
-        wikipedia: (data?.facts?.wikipedia || []).map((item) => normalizeResultItem(item, 'wikipedia')),
-        wikidata: (data?.facts?.wikidata || []).map((item) => normalizeResultItem(item, 'wikidata'))
+        wikipedia: (data?.facts?.wikipedia || []).slice(0, limit).map((item) => normalizeResultItem(item, 'wikipedia')),
+        wikidata: (data?.facts?.wikidata || []).slice(0, limit).map((item) => normalizeResultItem(item, 'wikidata'))
       },
       news: {
         sources_used: data?.news?.sources_used || [],
-        results: (data?.news?.results || []).map((item) => normalizeResultItem(item))
+        results: (data?.news?.results || []).slice(0, limit).map((item) => normalizeResultItem(item))
       }
     })
   };
@@ -1176,6 +1228,8 @@ export async function executeSearchBatch(
   {
     servers = DEFAULT_SEARCH_SERVERS,
     apiKey = '',
+    decisionApiKey = '',
+    decisionFetchImpl = null,
     coordinator = defaultSearchCoordinator,
     fetchImpl = fetch,
     statsTimeoutMs = DEFAULT_STATS_TIMEOUT_MS,
@@ -1186,7 +1240,9 @@ export async function executeSearchBatch(
   } = {}
 ) {
   const serverUrls = parseSearchServers(Array.isArray(servers) ? servers.join(',') : servers);
+  const smartFetchSelection = Boolean(typeof decisionApiKey === 'string' && decisionApiKey.trim());
   const results = new Array(calls.length);
+  const smartMetaByIndex = new Map();
   const activeItems = [];
 
   for (let i = 0; i < calls.length; i += 1) {
@@ -1198,7 +1254,19 @@ export async function executeSearchBatch(
     }
   }
 
-  if (activeItems.length === 0) return results;
+  const attachBudgetRemaining = (list) => {
+    const budgetRemaining = {
+      web_search: Math.max(0, turnBudget.maxWeb - turnBudget.webUsed),
+      media_search: Math.max(0, turnBudget.maxMedia - turnBudget.mediaUsed)
+    };
+    return list.map((entry) =>
+      entry && typeof entry === 'object'
+        ? { ...entry, budget_remaining: budgetRemaining }
+        : entry
+    );
+  };
+
+  if (activeItems.length === 0) return attachBudgetRemaining(results);
 
   // Step 1: 2 parallel `/stats` probes across the 2 search servers.
   let statsByUrl = await fetchAllServerStats(serverUrls, {
@@ -1262,7 +1330,8 @@ export async function executeSearchBatch(
 
   async function runAssignedItem(item, assignment) {
     const idx = item.job.id;
-    const spec = buildToolEndpointSpec(item.call, assignment.mediaSources || []);
+    const spec = buildToolEndpointSpec(item.call, assignment.mediaSources || [], smartFetchSelection);
+    if (spec.smartMeta) smartMetaByIndex.set(idx, spec.smartMeta);
     let serverError = false;
     const additionalEngines = [];
 
@@ -1390,5 +1459,117 @@ export async function executeSearchBatch(
     }
   }
 
-  return results;
+  // Step 5: Smart `gemini-decision-1` filtering/selection + selective `/api/fetch` + main-content distillation.
+  const activeDecisionFetch = decisionFetchImpl || fetchImpl;
+  const fetchRequests = [];
+
+  await Promise.all(
+    results.map(async (entry, idx) => {
+      if (!entry || typeof entry !== 'object' || entry.ok !== true) return;
+      const meta = smartMetaByIndex.get(idx);
+
+      if (meta?.kind === 'results' && Array.isArray(entry.results) && entry.results.length > 0) {
+        const ranked = await rankSearchCandidatesWithDecision1(entry.results, {
+          query: meta.query || entry.query || '',
+          apiKey: decisionApiKey,
+          fetchTop: meta.fetchTop || 0,
+          maxKeep: meta.requestedLimit || MAX_RESULTS_PER_QUERY,
+          fetchImpl: activeDecisionFetch,
+          signal
+        });
+        entry.results = ranked.items;
+        if (ranked.usedDecisionApi) entry.decision_filtered = true;
+        if (ranked.fetchCandidateIndices.length > 0) {
+          for (const itemIdx of ranked.fetchCandidateIndices) {
+            const targetUrl = entry.results[itemIdx]?.url;
+            if (typeof targetUrl === 'string' && /^https?:\/\//i.test(targetUrl)) {
+              fetchRequests.push({
+                entryIndex: idx,
+                itemIndex: itemIdx,
+                url: targetUrl,
+                query: meta.query || entry.query || ''
+              });
+            }
+          }
+        }
+        return;
+      }
+
+      if (meta?.kind === 'research') {
+        if (Array.isArray(entry.web?.results) && entry.web.results.length > 0) {
+          const rankedWeb = await rankSearchCandidatesWithDecision1(entry.web.results, {
+            query: meta.query || entry.query || '',
+            apiKey: decisionApiKey,
+            fetchTop: 0,
+            maxKeep: meta.requestedLimit || MAX_RESULTS_PER_QUERY,
+            fetchImpl: activeDecisionFetch,
+            signal
+          });
+          entry.web.results = rankedWeb.items;
+          if (rankedWeb.usedDecisionApi) entry.decision_filtered = true;
+        }
+        if (Array.isArray(entry.news?.results) && entry.news.results.length > 0) {
+          const rankedNews = await rankSearchCandidatesWithDecision1(entry.news.results, {
+            query: meta.query || entry.query || '',
+            apiKey: '',
+            fetchTop: 0,
+            maxKeep: meta.requestedLimit || MAX_RESULTS_PER_QUERY
+          });
+          entry.news.results = rankedNews.items;
+        }
+      }
+    })
+  );
+
+  if (fetchRequests.length > 0 && !signal?.aborted) {
+    const onlineServers = serverUrls.filter((url) => statsByUrl[url]?.ok);
+    const fetchPool = onlineServers.length > 0 ? onlineServers : serverUrls;
+    const uniqueUrls = Array.from(new Set(fetchRequests.map((req) => req.url)));
+    const fetchedByUrl = new Map();
+
+    await Promise.all(
+      uniqueUrls.map(async (targetUrl, pos) => {
+        const chosenServer = fetchPool[pos % fetchPool.length];
+        if (!chosenServer) return;
+        const params = new URLSearchParams({
+          url: targetUrl,
+          max_chars: '4500',
+          include_links: 'false',
+          format: 'markdown'
+        });
+        try {
+          const res = await fetchJsonWithTimeout(
+            `${chosenServer}/api/fetch?${params.toString()}`,
+            { method: 'GET', headers: baseHeaders },
+            requestTimeoutMs,
+            fetchImpl,
+            signal
+          );
+          if (res.ok && typeof res.data?.content === 'string' && res.data.content.trim()) {
+            fetchedByUrl.set(targetUrl, res.data.content);
+          }
+        } catch {
+          // non-fatal: keep snippet when single page fetch times out
+        }
+      })
+    );
+
+    for (const req of fetchRequests) {
+      const rawContent = fetchedByUrl.get(req.url);
+      if (!rawContent) continue;
+      const targetItem = results[req.entryIndex]?.results?.[req.itemIndex];
+      if (!targetItem) continue;
+      const cleanExcerpt = extractMainContentExcerpt(rawContent, req.query, MAX_FETCH_TOP_CONTENT_CHARS);
+      if (cleanExcerpt) {
+        targetItem.content = cleanExcerpt;
+      }
+    }
+  }
+
+  for (let i = 0; i < results.length; i += 1) {
+    const meta = smartMetaByIndex.get(i);
+    results[i] = distillToolPayloadContent(results[i], meta?.query || results[i]?.query || '');
+  }
+
+  return attachBudgetRemaining(results);
 }

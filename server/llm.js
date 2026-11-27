@@ -1,11 +1,19 @@
 import {
   ALL_TOOL_DECLARATIONS,
   BASE_PROMPTS,
+  DEFAULT_GEMINI_MODELS,
   buildPrimingAcknowledgement,
   buildSystemPrompt,
+  getFastThinkingConfig,
   getThinkingConfig,
   lockLatestUserMessage
 } from './modelConfig.js';
+import {
+  MAX_CHAT_HISTORY_MESSAGES,
+  buildChatContextTurns,
+  compactActiveContentsToolHistory,
+  extractSearchDigest
+} from './historyCompactor.js';
 import {
   SEARCH_TOOL_NAMES,
   createTurnSearchBudget,
@@ -103,6 +111,7 @@ export const keyRotator = new KeyRotator(parsedKeys);
 export async function streamChatCompletion({
   messages,
   language = 'da',
+  timeZone = 'UTC',
   userMemories = null,
   enableTools = false,
   onToken,
@@ -110,6 +119,7 @@ export async function streamChatCompletion({
   onError,
   onToolCall,
   onSearch,
+  onSources,
   onStatus
 }) {
   const toolsEnabled = Boolean(enableTools && onToolCall);
@@ -117,11 +127,7 @@ export async function streamChatCompletion({
   const searchConfig = getSearchConfigFromEnv();
   const turnBudget = createTurnSearchBudget();
 
-  // Clamp history: last 12 messages for richer conversational continuity without token bloat
-  const clampedHistory = messages.slice(-12);
-
-  // Initial priming + latest message language lock (compatible with both Gemini & Gemma models)
-  const latestMessageIndex = clampedHistory.length - 1;
+  // Initial priming + 15-message chronological window + latest message language lock
   const contents = [
     {
       role: 'user',
@@ -131,19 +137,16 @@ export async function streamChatCompletion({
       role: 'model',
       parts: [{ text: buildPrimingAcknowledgement(language) }]
     },
-    ...clampedHistory.map((m, index) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{
-        text: m.role === 'user' && index === latestMessageIndex
-          ? lockLatestUserMessage(m.content, language)
-          : m.content
-      }]
-    }))
+    ...buildChatContextTurns(messages, {
+      language,
+      timeZone,
+      lockLatestMessage: lockLatestUserMessage,
+      maxMessages: MAX_CHAT_HISTORY_MESSAGES
+    })
   ];
 
   // Ordered model candidates. Override with GEMINI_MODELS (comma separated) when needed.
-  const candidateModels = (process.env.GEMINI_MODELS ||
-    'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it,gemma-4-31b-it')
+  const candidateModels = (process.env.GEMINI_MODELS || DEFAULT_GEMINI_MODELS)
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean);
@@ -153,8 +156,10 @@ export async function streamChatCompletion({
 
   let success = false;
   let lastError = null;
+  const deadline = Date.now() + 65_000;
 
   for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
+    if (Date.now() > deadline) break;
     const model = candidateModels[mIdx];
     const isPrimary = (mIdx === 0);
 
@@ -164,14 +169,16 @@ export async function streamChatCompletion({
     const thinkingConfig = getThinkingConfig(model);
 
     for (let kIdx = 0; kIdx < requestKeys.length; kIdx++) {
+      if (Date.now() > deadline) break;
       const key = requestKeys[kIdx];
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 55000);
+      const searchController = new AbortController();
+      const searchTimeout = setTimeout(() => searchController.abort(), Math.max(5_000, deadline - Date.now()));
 
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
         let activeContents = [...contents];
         let finalCleanText = '';
+        const allSearchResults = [];
 
         for (let round = 0; round < 5; round++) {
           if (round === 0 && onStatus) {
@@ -185,23 +192,36 @@ export async function streamChatCompletion({
               ? { toolConfig: { functionCallingConfig: { mode: allowToolsThisRound ? 'AUTO' : 'NONE' } } }
               : {}),
             generationConfig: {
-              maxOutputTokens: 1536,
+              maxOutputTokens: 2048,
               temperature: 0.72,
               ...(thinkingConfig ? { thinkingConfig } : {})
             }
           };
 
-          const res = await fetch(url, {
-            method: 'POST',
-            signal: controller.signal,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
+          const roundController = new AbortController();
+          const roundTimeoutMs = Math.max(4_000, Math.min(round === 0 ? 22_000 : 25_000, deadline - Date.now()));
+          const roundTimer = setTimeout(() => roundController.abort(), roundTimeoutMs);
+          let res;
+          try {
+            res = await fetch(url, {
+              method: 'POST',
+              signal: roundController.signal,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+          } finally {
+            clearTimeout(roundTimer);
+          }
 
           if (!res.ok) {
-            keyRotator.reportFailure(key, res.status);
+            const isModelLevelSpike = res.status === 503 || res.status === 404;
+            if (!isModelLevelSpike) {
+              keyRotator.reportFailure(key, res.status);
+            }
             const errJson = await res.json().catch(() => ({}));
-            throw new Error(`Gemini HTTP ${res.status}: ${errJson.error?.message || res.statusText}`);
+            const err = new Error(`Gemini HTTP ${res.status}: ${errJson.error?.message || res.statusText}`);
+            err.modelUnavailable = isModelLevelSpike;
+            throw err;
           }
 
           keyRotator.reportSuccess(key);
@@ -242,12 +262,14 @@ export async function streamChatCompletion({
                 {
                   servers: searchConfig.servers,
                   apiKey: searchConfig.apiKey,
-                  signal: controller.signal
+                  decisionApiKey: key,
+                  signal: searchController.signal
                 }
               );
               for (let j = 0; j < searchEntries.length; j += 1) {
                 resultsByIndex[searchEntries[j].index] = batchResults[j];
               }
+              allSearchResults.push(...batchResults);
             }
 
             for (const entry of memoryEntries) {
@@ -280,24 +302,29 @@ export async function streamChatCompletion({
               }
             }));
 
-            activeContents = [
+            activeContents = compactActiveContentsToolHistory([
               ...activeContents,
               { role: 'model', parts },
               { role: 'user', parts: responseParts }
-            ];
+            ]);
             continue;
           }
 
-          const textPart = parts.find((p) => p.text && !p.thought) || parts.find((p) => p.text);
-          if (textPart && textPart.text && textPart.text.trim()) {
-            finalCleanText = textPart.text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim();
+          const cleanTextParts = parts
+            .filter((p) => p && typeof p === 'object' && !p.thought && typeof p.text === 'string')
+            .map((p) => p.text.replace(/<thought>[\s\S]*?<\/thought>/gi, '').trim())
+            .filter(Boolean);
+          if (cleanTextParts.length > 0) {
+            finalCleanText = cleanTextParts.join('\n').trim();
           }
           break;
         }
 
-        clearTimeout(timeout);
+        clearTimeout(searchTimeout);
 
         if (finalCleanText) {
+          const digest = extractSearchDigest(allSearchResults);
+          if (digest.length > 0 && onSources) onSources(digest);
           await streamWords(finalCleanText, onToken);
           success = true;
           if (onDone) onDone();
@@ -305,9 +332,10 @@ export async function streamChatCompletion({
         }
 
       } catch (err) {
-        clearTimeout(timeout);
+        clearTimeout(searchTimeout);
         lastError = err;
         console.warn(`[Gemini API] Model ${model} (Key #${kIdx + 1}/${requestKeys.length}) failed:`, err.message);
+        if (err?.modelUnavailable || err?.name === 'AbortError') break;
         // Brief settling delay before trying the next key
         await new Promise(r => setTimeout(r, 500));
       }
@@ -341,8 +369,7 @@ export async function generateChatTitle({ message, language = 'da' }) {
     ? `Giv en meget kort og præcis overskrift (2-5 ord, maks 35 tegn) til en samtale, der starter med: "${cleanMsg}". Svar KUN med selve overskriften uden citationstegn, punktum eller forklaringer.`
     : `Generate a very short, concise title (2-5 words, max 35 characters) for a conversation that starts with: "${cleanMsg}". Respond ONLY with the title itself, without quotes, periods, or explanations.`;
 
-  const candidateModels = (process.env.GEMINI_MODELS ||
-    'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it,gemma-4-31b-it')
+  const candidateModels = (process.env.GEMINI_MODELS || DEFAULT_GEMINI_MODELS)
     .split(',')
     .map((m) => m.trim())
     .filter(Boolean);
@@ -350,6 +377,7 @@ export async function generateChatTitle({ message, language = 'da' }) {
   const requestKeys = keyRotator.getKeysForRequest();
 
   for (const model of candidateModels) {
+    const thinkingConfig = getFastThinkingConfig(model);
     for (const key of requestKeys) {
       try {
         const controller = new AbortController();
@@ -361,14 +389,27 @@ export async function generateChatTitle({ message, language = 'da' }) {
           signal: controller.signal,
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { maxOutputTokens: 30, temperature: 0.3 }
+            generationConfig: {
+              maxOutputTokens: 120,
+              temperature: 0.3,
+              ...(thinkingConfig ? { thinkingConfig } : {})
+            }
           })
         });
         clearTimeout(timeout);
-        if (!res.ok) continue;
+        if (!res.ok) {
+          if (res.status === 503 || res.status === 404) break;
+          continue;
+        }
         const data = await res.json();
-        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawText && typeof rawText === 'string') {
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        const rawText = parts
+          .filter((p) => p && typeof p === 'object' && !p.thought && typeof p.text === 'string')
+          .map((p) => p.text)
+          .join(' ')
+          .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
+          .trim();
+        if (rawText) {
           const title = rawText
             .replace(/["'\n\r#*_]/g, '')
             .trim()

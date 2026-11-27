@@ -1,6 +1,7 @@
 // language: TypeScript, file: src/lib/api.ts, target: Web
 
-import { ChatTurn, Language, MemoryToolEvent, UserMemories } from '../types.ts';
+import { ChatTurn, CompactSource, Language, MemoryToolEvent, UserMemories } from '../types.ts';
+import { sanitizeMessageSources } from '../../server/historyCompactor.js';
 import { normalizeAssistantText } from '../utils/textTokens.ts';
 import { log } from './logger';
 import type { AssistantStatusEvent, WaitingPhase } from './waitingStatus.ts';
@@ -78,6 +79,7 @@ interface StreamChatResult {
   text: string;
   model?: string;
   status: number;
+  sources?: CompactSource[];
 }
 
 export interface TranscribeResult {
@@ -131,6 +133,7 @@ function parseSseEvent(
   error?: string;
   memory?: MemoryToolEvent;
   search?: string[];
+  sources?: CompactSource[];
   status?: AssistantStatusEvent;
   done?: boolean;
 } | null {
@@ -150,11 +153,16 @@ function parseSseEvent(
       error?: unknown;
       memory?: { action?: unknown; fact?: unknown; previousFact?: unknown; scope?: unknown };
       search?: { tools?: unknown };
+      sources?: unknown;
       status?: { phase?: unknown; tools?: unknown; sources?: unknown; count?: unknown };
       message?: unknown;
     };
     if (typeof parsed.error === 'string') return { error: parsed.error };
     if (typeof parsed.token === 'string') return { token: parsed.token };
+    if (Array.isArray(parsed.sources)) {
+      const cleaned = sanitizeMessageSources(parsed.sources);
+      return cleaned.length > 0 ? { sources: cleaned } : null;
+    }
     if (parsed.status && isWaitingPhase(parsed.status.phase)) {
       return {
         status: {
@@ -200,6 +208,14 @@ function parseSseEvent(
   }
 }
 
+function getClientTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
+}
+
 export async function streamChat({
   messages,
   language,
@@ -212,6 +228,7 @@ export async function streamChat({
 }: StreamChatOptions): Promise<StreamChatResult> {
   const id = requestId();
   const startedAt = performance.now();
+  const timeZone = getClientTimeZone();
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), 75_000);
 
@@ -230,7 +247,12 @@ export async function streamChat({
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, language, memories }),
+      body: JSON.stringify({
+        messages,
+        language,
+        memories,
+        ...(timeZone ? { timeZone } : {})
+      }),
       signal: controller.signal
     });
 
@@ -251,6 +273,7 @@ export async function streamChat({
     const decoder = new TextDecoder();
     let buffer = '';
     let text = '';
+    let latestSources: CompactSource[] | undefined;
     let streamError: string | null = null;
     let done = false;
 
@@ -275,6 +298,10 @@ export async function streamChat({
       }
       if (event.search) {
         onSearch?.(event.search);
+        return;
+      }
+      if (event.sources) {
+        latestSources = event.sources;
         return;
       }
       if (event.token) {
@@ -311,7 +338,12 @@ export async function streamChat({
       model
     });
 
-    return { text: normalizeAssistantText(text.trim()), model, status: response.status };
+    return {
+      text: normalizeAssistantText(text.trim()),
+      model,
+      status: response.status,
+      ...(latestSources && latestSources.length > 0 ? { sources: latestSources } : {})
+    };
   } catch (error) {
     const duration = Math.round(performance.now() - startedAt);
     if (error instanceof DOMException && error.name === 'AbortError') {

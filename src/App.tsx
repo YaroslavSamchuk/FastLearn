@@ -11,6 +11,7 @@ import {
   UserMemories
 } from './types.ts';
 import { Header } from './components/Header.tsx';
+import { compactMessagesSources } from '../server/historyCompactor.js';
 import { ChatStream } from './components/ChatStream.tsx';
 import {
   createInitialWaitingState,
@@ -726,8 +727,15 @@ const AppContent: React.FC = () => {
 
     const userMessage = createUserMessage(chatId, text, user.id);
     const history = [...(data.messages[chatId] ?? []), userMessage]
-      .slice(-20)
-      .map((message) => ({ role: message.role, content: message.content }));
+      .slice(-15)
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+        createdAt: message.createdAt,
+        ...(message.role === 'assistant' && message.sources && message.sources.length > 0
+          ? { sources: message.sources }
+          : {})
+      }));
     const isFirstMessage = (data.messages[chatId]?.length ?? 0) === 0;
     const now = new Date().toISOString();
     const optimisticTitle = text.slice(0, 36).trim();
@@ -832,13 +840,13 @@ const AppContent: React.FC = () => {
         }
       });
 
-      const assistantMessage = createAssistantMessage(chatId, result.text);
+      const assistantMessage = createAssistantMessage(chatId, result.text, result.sources);
       preloadAssistantAudio(result.text, user.id, currentLanguage, currentVoice, currentSpeeds);
       setData((previous) => ({
         ...previous,
         messages: {
           ...previous.messages,
-          [chatId]: [...(previous.messages[chatId] ?? []), assistantMessage]
+          [chatId]: compactMessagesSources([...(previous.messages[chatId] ?? []), assistantMessage])
         },
         chats: previous.chats.map((chat) =>
           chat._id === chatId ? { ...chat, updatedAt: new Date().toISOString() } : chat

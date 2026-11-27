@@ -4,9 +4,16 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
 import { generateChatTitle, getSearchConfigFromEnv, keyRotator, streamChatCompletion } from './llm.js';
+import {
+  MAX_CHAT_HISTORY_MESSAGES,
+  compactMessagesSources,
+  sanitizeCreatedAt,
+  sanitizeMessageSources,
+  sanitizeTimeZone
+} from './historyCompactor.js';
 import { prewarmSearchServers } from './searchRouter.js';
 import { applyMemoryTool } from './memory.js';
-import { MAX_FACTS_PER_SCOPE } from './modelConfig.js';
+import { DEFAULT_GEMINI_MODELS, MAX_FACTS_PER_SCOPE } from './modelConfig.js';
 import {
   cacheSpeechResult,
   synthesizeSpeech,
@@ -31,9 +38,9 @@ dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
-const MAX_MESSAGES = 20;
+const MAX_MESSAGES = MAX_CHAT_HISTORY_MESSAGES;
 const MAX_MESSAGE_CHARS = 4_000;
-const MAX_TOTAL_CHARS = 14_000;
+const MAX_TOTAL_CHARS = 18_000;
 const MAX_TTS_CHARS = 1_200;
 
 app.use(cors());
@@ -164,7 +171,13 @@ function parseMessages(value) {
     const role = item.role === 'assistant' ? 'assistant' : item.role === 'user' ? 'user' : null;
     const content = cleanString(item.content, MAX_MESSAGE_CHARS);
     if (!role || !content) continue;
-    cleaned.push({ role, content });
+    const createdAt = sanitizeCreatedAt(item.createdAt);
+    const entry = { role, content, ...(createdAt ? { createdAt } : {}) };
+    if (role === 'assistant') {
+      const sources = sanitizeMessageSources(item.sources);
+      if (sources.length > 0) entry.sources = sources;
+    }
+    cleaned.push(entry);
   }
 
   if (cleaned.length === 0) throw new Error('At least one message is required');
@@ -172,13 +185,13 @@ function parseMessages(value) {
     throw new Error('The last message must be from the user');
   }
 
-  const recent = cleaned.slice(-MAX_MESSAGES);
+  const recent = compactMessagesSources(cleaned.slice(-MAX_MESSAGES));
   let total = recent.reduce((sum, message) => sum + message.content.length, 0);
   while (total > MAX_TOTAL_CHARS && recent.length > 1) {
     total -= recent.shift().content.length;
   }
 
-  return recent;
+  return compactMessagesSources(recent);
 }
 
 function parseMemories(value) {
@@ -379,7 +392,27 @@ app.put('/api/workspace', requireAuth, async (req, res, next) => {
     const update = {};
     for (const key of allowed) {
       if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) {
-        update[key] = key === 'playbackSpeeds' ? normalizePlaybackSpeeds(req.body[key]) : req.body[key];
+        if (key === 'playbackSpeeds') {
+          update[key] = normalizePlaybackSpeeds(req.body[key]);
+        } else if (key === 'messages' && req.body[key] && typeof req.body[key] === 'object' && !Array.isArray(req.body[key])) {
+          const compacted = {};
+          for (const [chatId, list] of Object.entries(req.body[key])) {
+            if (!Array.isArray(list)) continue;
+            compacted[chatId] = compactMessagesSources(
+              list.slice(-300).map((message) => {
+                if (!message || typeof message !== 'object' || message.role !== 'assistant') return message;
+                const sources = sanitizeMessageSources(message.sources);
+                if (sources.length > 0) return { ...message, sources };
+                const copy = { ...message };
+                delete copy.sources;
+                return copy;
+              })
+            );
+          }
+          update[key] = compacted;
+        } else {
+          update[key] = req.body[key];
+        }
       }
     }
     update.updatedAt = new Date();
@@ -401,7 +434,7 @@ app.get('/api/health', (_req, res) => {
     status: keyRotator.totalKeys > 0 ? 'online' : 'degraded',
     server: 'Express',
     provider: 'Google Gemini',
-    models: (process.env.GEMINI_MODELS || 'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it')
+    models: (process.env.GEMINI_MODELS || DEFAULT_GEMINI_MODELS)
       .split(',')
       .map((model) => model.trim())
       .filter(Boolean),
@@ -424,6 +457,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
   }
 
   const language = req.body?.language === 'en' ? 'en' : 'da';
+  const timeZone = sanitizeTimeZone(req.body?.timeZone);
 
   if (keyRotator.totalKeys === 0) {
     res.status(503).json({ error: 'AI is not configured. Add GEMINI_API_KEYS to .env.' });
@@ -449,10 +483,14 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     await streamChatCompletion({
       messages,
       language,
+      timeZone,
       userMemories: memories,
       enableTools: true,
       onToken: (token) => send({ token }),
       onSearch: (event) => send({ search: event }),
+      onSources: (sources) => {
+        if (Array.isArray(sources) && sources.length > 0) send({ sources });
+      },
       onStatus: (status) => send({ status }),
       onToolCall: async (name, args) => {
         const workspace = await ensureWorkspace(req.user.googleSub);
@@ -721,6 +759,7 @@ app.post('/api/title', requireAuth, async (req, res) => {
   }
 
   const language = req.body?.language === 'en' ? 'en' : 'da';
+  const timeZone = sanitizeTimeZone(req.body?.timeZone);
 
   try {
     const title = await generateChatTitle({ message, language });

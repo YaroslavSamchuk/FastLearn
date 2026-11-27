@@ -1,6 +1,7 @@
 // language: TypeScript, file: src/lib/data.ts, target: Web
 
-import { AppData, Chat, Language, Message, Quota, UserMemories, WordVaultItem } from '../types.ts';
+import { AppData, Chat, CompactSource, Language, Message, Quota, UserMemories, WordVaultItem } from '../types.ts';
+import { compactMessagesSources, sanitizeMessageSources } from '../../server/historyCompactor.js';
 import {
   DEFAULT_PLAYBACK_SPEEDS,
   DEFAULT_VOICES,
@@ -68,14 +69,20 @@ export function createUserMessage(chatId: string, content: string, userId = 'loc
   };
 }
 
-export function createAssistantMessage(chatId: string, content: string): Message {
+export function createAssistantMessage(
+  chatId: string,
+  content: string,
+  sources?: CompactSource[]
+): Message {
+  const cleanedSources = sanitizeMessageSources(sources);
   return {
     _id: newMessageId(),
     chatId,
     userId: 'ai',
     role: 'assistant',
     content,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    ...(cleanedSources.length > 0 ? { sources: cleanedSources } : {})
   };
 }
 
@@ -159,13 +166,15 @@ function normalizeMessage(value: unknown, chatId: string): Message | null {
   const message = value as Record<string, unknown>;
   if (message.role !== 'user' && message.role !== 'assistant') return null;
   if (typeof message.content !== 'string' || !message.content.trim()) return null;
+  const sources = message.role === 'assistant' ? sanitizeMessageSources(message.sources) : [];
   return {
     _id: typeof message._id === 'string' ? message._id : newMessageId(),
     chatId,
     userId: typeof message.userId === 'string' ? message.userId : 'local',
     role: message.role,
     content: message.content.trim(),
-    createdAt: typeof message.createdAt === 'string' ? message.createdAt : new Date().toISOString()
+    createdAt: typeof message.createdAt === 'string' ? message.createdAt : new Date().toISOString(),
+    ...(sources.length > 0 ? { sources } : {})
   };
 }
 

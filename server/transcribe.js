@@ -7,7 +7,7 @@ import {
   resolveWordListPronunciation
 } from './ipa.js';
 import { keyRotator } from './llm.js';
-import { getFastThinkingConfig } from './modelConfig.js';
+import { DEFAULT_GEMINI_MODELS, getFastThinkingConfig } from './modelConfig.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_IPA_DIR = path.resolve(__dirname, '..', 'public', 'ipa');
@@ -96,8 +96,7 @@ async function translateWithGemini(text, sourceLang, targetLang) {
   const keys = keyRotator.getKeysForRequest().slice(0, 2);
   if (keys.length === 0) return '';
 
-  const models = (process.env.GEMINI_MODELS ||
-    'gemini-flash-lite-latest,gemini-3-flash-preview,gemma-4-26b-a4b-it')
+  const models = (process.env.GEMINI_MODELS || DEFAULT_GEMINI_MODELS)
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean)

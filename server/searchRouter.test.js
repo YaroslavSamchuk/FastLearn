@@ -380,3 +380,209 @@ test('reports cooldown=true and retry_after_sec when all servers are in 20-30s c
   assert.equal(results[1].cooldown, true);
   assert.ok(results[1].retry_after_sec >= 15);
 });
+
+test('enforces cumulative 6 web and 6 media cap across multiple search-and-analyze rounds', async () => {
+  const servers = ['https://s1.example', 'https://s2.example'];
+  const state = new SearchRouterState({ servers, cooldownMinMs: 0, cooldownMaxMs: 0 });
+  const coordinator = createInMemoryCoordinator(state);
+  const budget = createTurnSearchBudget();
+
+  const mockFetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === '/stats') {
+      return new Response(
+        JSON.stringify(
+          makeStatsPayload({
+            readyWeb: ['bing', 'google', 'startpage', 'yahoo', 'yandex', 'wiby']
+          })
+        ),
+        { status: 200 }
+      );
+    }
+    return new Response(
+      JSON.stringify({ query: 'ok', engines_used: ['bing'], sources_used: ['github'], results: [] }),
+      { status: 200 }
+    );
+  };
+
+  const round1 = await executeSearchBatch(
+    [
+      { name: 'web_search', args: { query: 'w1' } },
+      { name: 'web_search', args: { query: 'w2' } },
+      { name: 'web_search', args: { query: 'w3' } },
+      { name: 'web_search', args: { query: 'w4' } },
+      { name: 'media_search', args: { query: 'm1', sources: 'github' } },
+      { name: 'media_search', args: { query: 'm2', sources: 'reddit' } },
+      { name: 'media_search', args: { query: 'm3', sources: 'wikinews' } }
+    ],
+    budget,
+    { servers, coordinator, fetchImpl: mockFetch, maxCooldownWaitMs: 0 }
+  );
+
+  assert.equal(round1.every((r) => r.ok === true), true);
+  assert.deepEqual(round1[0].budget_remaining, { web_search: 2, media_search: 3 });
+
+  const round2 = await executeSearchBatch(
+    [
+      { name: 'web_search', args: { query: 'w5' } },
+      { name: 'web_search', args: { query: 'w6' } },
+      { name: 'web_search', args: { query: 'w7-over' } },
+      { name: 'media_search', args: { query: 'm4', sources: 'hackernews' } },
+      { name: 'media_search', args: { query: 'm5', sources: 'stackoverflow' } },
+      { name: 'media_search', args: { query: 'm6', sources: 'wikipedia' } },
+      { name: 'media_search', args: { query: 'm7-over', sources: 'arxiv' } }
+    ],
+    budget,
+    { servers, coordinator, fetchImpl: mockFetch, maxCooldownWaitMs: 0 }
+  );
+
+  assert.equal(round2[0].ok, true);
+  assert.equal(round2[1].ok, true);
+  assert.equal(round2[2].limit_reached, true);
+  assert.equal(round2[3].ok, true);
+  assert.equal(round2[4].ok, true);
+  assert.equal(round2[5].ok, true);
+  assert.equal(round2[6].limit_reached, true);
+  assert.deepEqual(round2[6].budget_remaining, { web_search: 0, media_search: 0 });
+  assert.equal(budget.webUsed, 6);
+  assert.equal(budget.mediaUsed, 6);
+});
+
+test('allows AI-requested result limits up to 15 and clamps larger limits to 15', async () => {
+  const servers = ['https://s1.example', 'https://s2.example'];
+  const state = new SearchRouterState({ servers, cooldownMinMs: 0, cooldownMaxMs: 0 });
+  const coordinator = createInMemoryCoordinator(state);
+  const forwardedRequests = [];
+
+  const mockFetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === '/stats') {
+      return new Response(
+        JSON.stringify(makeStatsPayload({ readyWeb: ['bing', 'google'], readyDomains: { github: true } })),
+        { status: 200 }
+      );
+    }
+    forwardedRequests.push({
+      path: parsed.pathname,
+      limit: Number(parsed.searchParams.get('limit'))
+    });
+    const fakeItems = Array.from({ length: 24 }, (_, idx) => ({
+      url: `https://github.com/org/repo-${idx}`,
+      title: `Result ${idx}`,
+      snippet: `Snippet ${idx}`
+    }));
+    if (parsed.pathname === '/api/research') {
+      return new Response(
+        JSON.stringify({
+          query: 'ok',
+          web: { engines_used: ['bing'], results: fakeItems },
+          facts: { lang: 'en', wikipedia: fakeItems, wikidata: fakeItems },
+          news: { sources_used: ['wikinews'], results: fakeItems }
+        }),
+        { status: 200 }
+      );
+    }
+    return new Response(
+      JSON.stringify({ query: 'ok', engines_used: ['bing'], sources_used: ['github'], results: fakeItems }),
+      { status: 200 }
+    );
+  };
+
+  const results = await executeSearchBatch(
+    [
+      { name: 'web_search', args: { query: 'custom 12', limit: 12 } },
+      { name: 'media_search', args: { query: 'over cap', sources: 'github', limit: 99 } },
+      { name: 'research_topic', args: { query: 'topic cap', limit: 40 } }
+    ],
+    createTurnSearchBudget(),
+    { servers, coordinator, fetchImpl: mockFetch, maxCooldownWaitMs: 0 }
+  );
+
+  assert.equal(results.every((r) => r.ok === true), true);
+  assert.equal(forwardedRequests[0].limit, 12);
+  assert.equal(results[0].results.length, 12);
+  assert.equal(results[1].results.length, 15);
+  assert.equal(forwardedRequests[2].limit, 15);
+  assert.equal(results[2].web.results.length, 15);
+  assert.equal(results[2].facts.wikipedia.length, 15);
+  assert.equal(results[2].news.results.length, 15);
+});
+
+test('uses gemini-decision-1 to select best URL for selective fetch_top without sending full pages to decision API', async () => {
+  const servers = ['https://s1.example', 'https://s2.example'];
+  const state = new SearchRouterState({ servers, cooldownMinMs: 0, cooldownMaxMs: 0 });
+  const coordinator = createInMemoryCoordinator(state);
+  const fetchedUrls = [];
+  let searchUrlCalled = '';
+
+  const mockSearchFetch = async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === '/stats') {
+      return new Response(JSON.stringify(makeStatsPayload({ readyWeb: ['bing'] })), { status: 200 });
+    }
+    if (parsed.pathname === '/api/search') {
+      searchUrlCalled = url;
+      return new Response(
+        JSON.stringify({
+          query: 'Node.js 22',
+          engines_used: ['bing'],
+          results: [
+            { site: 'junk.example', title: 'Buy mugs', url: 'https://junk.example/mugs', snippet: 'Shopping deal.' },
+            { site: 'nodejs.org', title: 'Node.js 22 Release Notes', url: 'https://nodejs.org/en/blog/release/v22', snippet: 'Official V8 12.4 and WebSocket release notes.' },
+            { site: 'blog.example', title: 'Random link roundup', url: 'https://blog.example/links', snippet: 'Weekly bookmarks.' }
+          ]
+        }),
+        { status: 200 }
+      );
+    }
+    if (parsed.pathname === '/api/fetch') {
+      fetchedUrls.push(parsed.searchParams.get('url'));
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          url: parsed.searchParams.get('url'),
+          content: 'Skip to main content\n\nNode.js 22 brings V8 12.4 and built-in WebSocket client.\n\nPrivacy Policy'
+        }),
+        { status: 200 }
+      );
+    }
+    return new Response('{}', { status: 404 });
+  };
+
+  const mockDecisionFetch = async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    assert.equal(payload.model, 'gemini-decision-1');
+    return new Response(
+      JSON.stringify({
+        answers: {
+          s_0: { score: 0.2, confidence: 0.9 },
+          s_1: { score: 3.9, confidence: 0.96 },
+          s_2: { score: 1.5, confidence: 0.7 },
+          best_primary: { choice: '1', confidence: 0.95 }
+        },
+        usage: { total_input_tokens: 340, total_output_tokens: 0 }
+      }),
+      { status: 200 }
+    );
+  };
+
+  const results = await executeSearchBatch(
+    [{ name: 'web_search', args: { query: 'Node.js 22', fetch_top: 1, limit: 5 } }],
+    createTurnSearchBudget(),
+    {
+      servers,
+      coordinator,
+      fetchImpl: mockSearchFetch,
+      decisionApiKey: 'test-decision-key',
+      decisionFetchImpl: mockDecisionFetch,
+      maxCooldownWaitMs: 0
+    }
+  );
+
+  assert.equal(new URL(searchUrlCalled).searchParams.get('fetch_top'), '0');
+  assert.equal(results[0].ok, true);
+  assert.equal(results[0].decision_filtered, true);
+  assert.deepEqual(fetchedUrls, ['https://nodejs.org/en/blog/release/v22']);
+  assert.equal(results[0].results[0].site, 'nodejs.org');
+  assert.equal(results[0].results[0].content, 'Node.js 22 brings V8 12.4 and built-in WebSocket client.');
+});

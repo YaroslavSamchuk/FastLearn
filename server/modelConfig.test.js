@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   ALL_TOOL_DECLARATIONS,
   BASE_PROMPTS,
+  DEFAULT_GEMINI_MODEL_LIST,
   SEARCH_TOOL_DECLARATIONS,
   buildPrimingAcknowledgement,
   buildSystemPrompt,
@@ -13,6 +14,11 @@ import {
 } from './modelConfig.js';
 
 test('sets medium thinking on supported Gemini 3 chat models', () => {
+  assert.deepEqual(DEFAULT_GEMINI_MODEL_LIST, [
+    'gemma-4-31b-it',
+    'gemma-4-26b-a4b-it',
+    'gemini-flash-lite-latest'
+  ]);
   assert.deepEqual(getThinkingConfig('gemini-3-flash-preview'), { thinkingLevel: 'medium' });
   assert.deepEqual(getThinkingConfig('gemini-flash-lite-latest'), { thinkingLevel: 'medium' });
 });
@@ -28,7 +34,8 @@ test('uses minimal or zero thinking for low-latency translation calls', () => {
   assert.deepEqual(getFastThinkingConfig('gemini-3-flash-preview'), { thinkingLevel: 'minimal' });
   assert.deepEqual(getFastThinkingConfig('gemini-2.5-flash'), { thinkingBudget: 0 });
   assert.deepEqual(getFastThinkingConfig('gemini-3-pro-preview'), { thinkingLevel: 'low' });
-  assert.equal(getFastThinkingConfig('gemma-4-26b-a4b-it'), null);
+  assert.deepEqual(getFastThinkingConfig('gemma-4-26b-a4b-it'), { thinkingLevel: 'minimal' });
+  assert.deepEqual(getFastThinkingConfig('gemma-4-31b-it'), { thinkingLevel: 'minimal' });
 });
 
 test('locks Danish and English chat replies exclusively to the selected language', () => {

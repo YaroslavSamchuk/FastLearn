@@ -1,5 +1,7 @@
 export const MAX_FACT_CHARS: number;
 export const MAX_FACTS_PER_SCOPE: number;
+export const DEFAULT_GEMINI_MODEL_LIST: string[];
+export const DEFAULT_GEMINI_MODELS: string;
 
 export function getThinkingConfig(model: string): {
   thinkingLevel: 'medium' | 'low';

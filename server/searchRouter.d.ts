@@ -95,6 +95,8 @@ export function executeSearchBatch(
   options?: {
     servers?: string[] | string;
     apiKey?: string;
+    decisionApiKey?: string;
+    decisionFetchImpl?: typeof fetch;
     coordinator?: SearchCoordinator;
     fetchImpl?: typeof fetch;
     statsTimeoutMs?: number;
